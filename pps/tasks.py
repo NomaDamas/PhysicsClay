@@ -235,8 +235,29 @@ class Tasks:
         kps += [place_hand + np.array([-0.10, 0, 0.07]), self.home_palm[palm]]
         side = "right" if palm.startswith("right") else "left"
         self.done_msg = f"Placed the mug on {label}."
-        self._launch(tid, "pick_place", kps, palm, ev, "task",
-                     f"Every waypoint is reachable. Picking up the mug with my {side} hand and placing it on {label}.")
+        ok = self._launch(tid, "pick_place", kps, palm, ev, "task",
+                          f"Every waypoint is reachable. Picking up the mug with my {side} hand and placing it on {label}.")
+        if not ok:
+            self.suggest(tid, dest, palm, off)
+
+    def suggest(self, tid, dest, palm, off):
+        """Infeasible target: walk it toward the robot until the hand can place there, and offer that spot as a marker."""
+        sh = self.rt.retargeter.robot_shoulders[palm]
+        for k in range(1, 10):
+            cand = np.array(dest, float)
+            direction = np.array([sh[0] - cand[0], sh[1] - cand[1]])
+            n = np.linalg.norm(direction)
+            if n < 1e-6:
+                break
+            cand[:2] += direction / n * 0.04 * k
+            if not self.on_table(cand):
+                break
+            hand = np.array([cand[0], cand[1], TABLE_TOP + self.mug_half_h]) + off
+            okp = self.rt.precheck(np.array([hand + np.array([0, 0, 0.12]), hand]), palm)
+            if all(okp):
+                mid = self.add_marker(np.array([cand[0], cand[1], TABLE_TOP]))
+                self.task["message"] += f" The closest spot I can reach is marker {mid}, {4 * k} cm nearer. Say 'put the mug on {mid}'."
+                return
 
     def reach(self, tid, target, target_uv, cam, aspect):
         dest, label = self.resolve(target, target_uv, cam, aspect)
