@@ -3,11 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#0b0b0c">
+<meta name="theme-color" content="#fbfbfd">
 <title>PhysicsClay</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
@@ -45,7 +42,7 @@
 
   <div class="bar-right">
     <div class="meter" title="Physically feasible share of recent frames">
-      <span class="meter-label mono">FEASIBLE</span>
+      <span class="meter-label">Feasible</span>
       <span class="meter-track"><span id="feasFill" class="meter-fill"></span></span>
       <span id="feasTxt" class="meter-val mono">--</span>
     </div>
@@ -59,7 +56,7 @@
 <main class="stage">
   <section class="panel robot" aria-label="Robot view">
     <div class="panel-head">
-      <span class="label mono">ROBOT VIEW</span>
+      <span class="label">Robot view</span>
       <div class="seg" role="group" aria-label="Camera">
         <button type="button" class="seg-btn" data-view="robot" aria-pressed="true">Robot eye</button>
         <button type="button" class="seg-btn" data-view="orbit" aria-pressed="false">Orbit</button>
@@ -150,20 +147,20 @@
   <aside class="side">
     <section class="panel teach" id="teachPanel" data-phase="idle" aria-label="Teach by showing">
       <div class="panel-head">
-        <span class="label mono">TEACH BY SHOWING</span>
+        <h2 class="label teach-title">Teach by showing</h2>
         <span id="teachRec" class="badge rec" hidden>REC 0.0s</span>
         <span class="grow"></span>
-        <span id="teachPhase" class="muted small mono">ready</span>
+        <span id="teachPhase" class="phase-chip">ready</span>
         <button type="button" id="teachCancel" class="btn sm ghost" hidden>Start over</button>
       </div>
       <ol class="teach-strip" aria-label="How it works">
-        <li data-k="show"><b>1</b>Show · Tell</li><li data-k="understand"><b>2</b>Robot understands</li>
-        <li data-k="practice"><b>3</b>Practice in sim</li><li data-k="correct"><b>4</b>You correct</li>
+        <li data-k="show"><b>1</b>Show &amp; tell</li><li data-k="understand"><b>2</b>Robot understands</li>
+        <li data-k="practice"><b>3</b>Practice</li><li data-k="correct"><b>4</b>You correct</li>
       </ol>
       <div class="teach-body">
         <div class="t-idle">
           <button type="button" class="btn primary teach-go" id="teachStart"><svg aria-hidden="true"><use href="#i-play"/></svg>Start teaching</button>
-          <p class="muted small">Show the task on your camera and explain it out loud, like teaching a friend. The robot won't copy you live — it learns the task, asks, then practices.</p>
+          <p class="muted small">Show the task on camera and say what matters. The robot learns the task, asks about anything unclear, then practices in sim.</p>
         </div>
         <div class="t-rec">
           <div class="t-evidence mono small" id="teachEvidence"></div>
@@ -172,7 +169,7 @@
         </div>
         <div class="t-spec">
           <div class="t-card">
-            <div class="t-card-head"><span class="label mono">ROBOT UNDERSTOOD</span><span class="grow"></span><span id="teachSummary" class="mono small muted"></span></div>
+            <div class="t-card-head"><span class="label">Robot understood</span><span class="grow"></span><span id="teachSummary" class="mono small muted"></span></div>
             <div class="t-goal" id="teachGoal"></div>
             <ol class="t-steps" id="teachSteps"></ol>
             <div class="t-cons" id="teachCons"></div>
@@ -196,7 +193,7 @@
 
     <section class="panel cam" aria-label="Your camera">
       <div class="panel-head">
-        <span class="label mono">YOUR CAMERA</span>
+        <span class="label">Your camera</span>
         <span id="followBadge" class="badge follow" hidden>FOLLOWING YOU</span>
         <span id="recBadge" class="badge rec" hidden>REC 0.0s</span>
         <span id="gestureChip" class="chip mono gesture-chip" hidden></span>
@@ -218,7 +215,7 @@
     <section class="panel feed" id="feedPanel" aria-label="Intent feed">
       <div class="panel-head">
         <button id="feedToggle" class="head-toggle" type="button" aria-expanded="true" aria-controls="feed">
-          <span class="label mono">INTENT FEED</span>
+          <span class="label">Intent feed</span>
           <svg class="chev" aria-hidden="true"><use href="#i-chev"/></svg>
         </button>
         <span class="grow"></span>
@@ -231,7 +228,7 @@
 
     <section class="panel says" aria-label="Robot says">
       <div class="panel-head">
-        <span class="label mono">ROBOT SAYS</span>
+        <span class="label">Robot says</span>
         <span class="grow"></span>
         <span id="saysFeas" class="muted small mono"></span>
       </div>
