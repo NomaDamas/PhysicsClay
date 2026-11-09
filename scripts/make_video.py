@@ -23,7 +23,7 @@ OUT = ROOT / "recordings" / "video"
 OUT.mkdir(parents=True, exist_ok=True)
 TMP = OUT / "parts"
 TMP.mkdir(exist_ok=True)
-APP = "http://127.0.0.1:8777"
+APP = os.environ.get("PC_APP", "http://127.0.0.1:8777")
 CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
 W, H, FPS = 1920, 1080, 25
 import imageio_ffmpeg  # noqa: E402
