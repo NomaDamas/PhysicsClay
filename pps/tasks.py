@@ -53,7 +53,7 @@ class Tasks:
                 continue
             sz = m.geom_size[vg]
             box = m.geom_type[vg] == mujoco.mjtGeom.mjGEOM_BOX
-            self.obstacles[name] = {"pos": d.geom_xpos[vg].copy(), "r": float(np.hypot(sz[0], sz[1]) if box else sz[0]),
+            self.obstacles[name] = {"pos": d.geom_xpos[vg].copy(), "r": float(max(sz[0], sz[1]) if box else sz[0]),
                                     "h": float(sz[2] if box else sz[1])}
         self.vase = self.obstacles.get("vase")
         self.robot_root = m.body(ROBOT_BODIES_ROOT).id
@@ -87,6 +87,8 @@ class Tasks:
 
     def obj_name(self, text):
         t = str(text or "").lower()
+        if any(k in t for k in ("blue", "파란", "vase", "꽃병", "화병")):
+            return None
         if any(k in t for k in ("block", "cube", "red", "블록", "빨간", "큐브")):
             return "red_block" if "red_block" in self.objs else None
         if any(k in t for k in ("mug", "cup", "컵", "머그")) or not t:
@@ -191,6 +193,33 @@ class Tasks:
                     return np.array([c[0], c[1], TABLE_TOP]), self.pretty(oname)
             return None, f"I don't know where '{target}' is. Tap it on my view or use left, right, center, front or back"
         return None, "no target given"
+
+    def free_spot(self, dest, moving):
+        """dest is occupied by an obstacle or another object? -> nearest free point on the table, plus who was in the way."""
+        r_me = self.objs[moving]["r"] if moving in self.objs else 0.04
+        others = [(n, o["pos"], o["r"]) for n, o in self.obstacles.items()] + \
+                 [(n, self.mug_center(n), o["r"]) for n, o in self.objs.items() if n != moving]
+
+        def blocker_at(p):
+            for n, c, r in others:
+                if np.linalg.norm(np.asarray(p)[:2] - np.asarray(c)[:2]) < r + r_me + 0.01:
+                    return n
+            return None
+
+        who = blocker_at(dest)
+        if who is None:
+            return dest, None
+        best = None
+        for rad in (0.08, 0.11, 0.14, 0.17):
+            for ang in np.linspace(0, 2 * np.pi, 16, endpoint=False):
+                cand = np.array([dest[0] + rad * np.cos(ang), dest[1] + rad * np.sin(ang), dest[2]])
+                if self.on_table(cand) and blocker_at(cand) is None:
+                    score = rad + 0.5 * max(0.0, cand[0] - 0.33) + 0.5 * max(0.0, abs(cand[1]) - 0.24)   # near, reachable
+                    if best is None or score < best[0]:
+                        best = (score, cand)
+            if best is not None:
+                break
+        return (None if best is None else best[1]), who
 
     def on_table(self, p):
         return TABLE_X[0] + 0.03 < p[0] < TABLE_X[1] - 0.03 and TABLE_Y[0] + 0.03 < p[1] < TABLE_Y[1] - 0.03
@@ -338,6 +367,13 @@ class Tasks:
         if not self.on_table(dest):
             self.set_task(tid, "pick_place", "failed", f"I can't place it there: {label} is not on the table.")
             return
+        if via is None:
+            free, blocker = self.free_spot(dest, name)
+            if free is None:
+                self.set_task(tid, "pick_place", "failed", f"{label[0].upper() + label[1:]} is taken by {self.pretty(blocker)} and there is no free spot nearby.")
+                return
+            if blocker:
+                dest, label = free, f"{label} (beside {self.pretty(blocker)}, which is there)"
         held = next((h for h, o in self.holding.items() if o == name), None)
         c = self.mug_center()
         palm = held or ("right_palm" if c[1] <= 0 else "left_palm")
@@ -493,6 +529,9 @@ class Tasks:
         rt = self.rt
         rt.engaged = False
         rt.mode = "MIRROR"
+        if self.task and self.task.get("status") in ("running", "planning") and self.task.get("id") != tid:
+            self.task["status"], self.task["message"] = "failed", "Stopped by you before it finished."
+            self.stopped_task = dict(self.task)
         self.kind = None
         self.set_task(tid, "stop", "done", "Stopped. Holding this pose.")
 

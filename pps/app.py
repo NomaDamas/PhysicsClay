@@ -375,6 +375,8 @@ def worker(args, shared):
                     tasks.set_path_world(c.get("points") or [], c.get("hand") if c.get("hand") in ("left", "right") else None)
                 elif t == "mock":
                     brain.enabled = bool(c.get("enabled"))
+                    if tasks.task:
+                        brain._last_task = (tasks.task.get("id"), tasks.task.get("status"))
                     if brain.enabled:
                         brain.utter("Mock AI on: point at the table, raise both hands to stop, or wave.", "vision")
                 elif t == "draw" and cam_params is not None:
@@ -434,7 +436,7 @@ def worker(args, shared):
             tasks.tick()
         teacher.observe(pts if lm else None, grip, [o[0] for o in scene])
         teacher.tick()
-        brain.update(lm, rt, tasks)
+        brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None))
         brain.narrate(tasks.task)
 
         # ---------------- robot view

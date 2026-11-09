@@ -314,7 +314,10 @@ class Teacher:
         if self.phase != "practice" or self.step_i < 0 or self.step_i >= len(self.spec["steps"]):
             return
         task = self.tasks.task
-        if not task or task.get("id") != self.step_tid:
+        st = getattr(self.tasks, "stopped_task", None)
+        if st and st.get("id") == self.step_tid:
+            task, self.tasks.stopped_task = st, None
+        elif not task or task.get("id") != self.step_tid:
             return
         s = self.spec["steps"][self.step_i]
         s["message"] = task["message"]

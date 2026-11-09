@@ -46,8 +46,8 @@ class MockBrain:
         self.utter(task.get("message", ""), "robot")
 
     # -------------------------------------------------------------- gestures
-    def update(self, lm, rt, tasks):
-        if not self.enabled or not lm:
+    def update(self, lm, rt, tasks, busy=False):
+        if not self.enabled or not lm or busy or rt.engaged:
             self.gesture = None
             return
         need = ("l_shoulder", "r_shoulder", "l_elbow", "r_elbow", "l_wrist", "r_wrist", "nose")
