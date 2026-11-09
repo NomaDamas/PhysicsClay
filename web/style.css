@@ -903,3 +903,8 @@ dialog { width: min(520px, calc(100vw - 32px)); }
   .caption-bar { font-size: 20px; padding: 10px 16px; top: 10%; }
   .subtitle-bar { font-size: 13px; max-width: 70%; bottom: 10px; }
 }
+
+/* 3D: path editor behind a toggle */
+.v3d-toggle { position: absolute; left: 16px; top: 16px; z-index: 6; }
+.v3d-panel { top: 60px !important; }
+.v3d-hint summary { cursor: pointer; color: var(--t2); }

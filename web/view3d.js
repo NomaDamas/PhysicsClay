@@ -187,7 +187,7 @@ function carry() {
   if (wps.length >= 2 && dirty) check();
   if (PC().runTask) PC().runTask("pick_place", { object: "mug", target: "along my path" }, "3d");
 }
-const CAMS = {
+const CAMS = { stage: [[1.9, -1.3, 1.15], [0.1, 0, 0.65]], orbit: [[2.6, 1.8, 2.0], [0.3, 0, 0.7]],
   reset: [[2.0, -1.6, 1.7], [0.3, 0, 0.75]], top: [[0.52, -0.001, 3.0], [0.52, 0, 0.74]],
   front: [[2.6, 0, 1.05], [0.45, 0, 0.82]], side: [[0.5, -2.5, 0.98], [0.5, 0, 0.84]],
 };
@@ -307,7 +307,8 @@ function onKey(ev) {
 // ------------------------------------------------------------------ mount / loop
 function buildUi(container) {
   container.innerHTML = `
-    <div class="v3d-panel" role="group" aria-label="3D path editor">
+    <button type="button" class="btn sm v3d-toggle" aria-expanded="false" title="Show the 3D path editor">✎ Path editor</button>
+    <div class="v3d-panel" role="group" aria-label="3D path editor" hidden>
       <div class="v3d-row"><span class="label mono">3D PATH</span><span class="grow"></span>
         <div class="seg" role="group" aria-label="Hand">
           <button type="button" class="seg-btn" data-hand="auto" aria-pressed="true">Auto</button>
@@ -322,18 +323,22 @@ function buildUi(container) {
       </div>
       <div class="v3d-sum mono"></div>
       <ol class="v3d-list"></ol>
-      <div class="v3d-hint muted small">Click the table to add a waypoint · click one to move it (Z = height) · Del removes · Esc deselects · drag to orbit, right-drag to pan</div>
+      <details class="v3d-hint muted small"><summary>How to</summary>Click the table to add a waypoint · click one to move it (Z = height) · Del removes · Esc deselects · drag to orbit, right-drag to pan</details>
     </div>
     <div class="v3d-views seg" role="group" aria-label="Camera presets">
-      <button type="button" class="seg-btn" data-cam="reset">Reset view</button>
+      <button type="button" class="seg-btn" data-cam="stage">Stage</button>
+      <button type="button" class="seg-btn" data-cam="orbit">Orbit</button>
       <button type="button" class="seg-btn" data-cam="top">Top</button>
-      <button type="button" class="seg-btn" data-cam="front">Front</button>
       <button type="button" class="seg-btn" data-cam="side">Side</button>
+      <button type="button" class="seg-btn" data-cam="reset" aria-label="Reset view">↺</button>
     </div>
     <div class="v3d-msg" hidden></div>`;
   msgEl = container.querySelector(".v3d-msg"); listEl = container.querySelector(".v3d-list");
   sumEl = container.querySelector(".v3d-sum"); hintEl = container.querySelector(".v3d-hint");
   const panel = container.querySelector(".v3d-panel");
+  const tog = container.querySelector(".v3d-toggle");
+  ["pointerdown", "pointerup", "pointermove"].forEach((t) => tog.addEventListener(t, (e) => e.stopPropagation()));
+  tog.addEventListener("click", () => { panel.hidden = !panel.hidden; tog.setAttribute("aria-expanded", String(!panel.hidden)); tog.textContent = panel.hidden ? "✎ Path editor" : "✕ Close editor"; });
   ["pointerdown", "pointerup", "pointermove", "wheel"].forEach((t) => panel.addEventListener(t, (e) => e.stopPropagation()));
   panel.querySelectorAll("[data-hand]").forEach((b) => b.addEventListener("click", () => {
     hand = b.dataset.hand; dirty = true;
