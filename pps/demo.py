@@ -168,13 +168,16 @@ class Demo:
 
     # ------------------------------------------------------------------ runtime
     def start(self, name):
+        self.loop_name = "full" if name == "loop" else None
+        if name == "loop":
+            name = "full"
         steps = self.script(name)
         if steps is None:
             return
         self.steps, self.i, self.name, self.t_wait, self.cond = steps, 0, name, 0.0, None
 
     def stop(self):
-        self.steps, self.name = [], None
+        self.steps, self.name, self.loop_name = [], None, None
 
     def tick(self):
         if not self.steps:
@@ -199,6 +202,11 @@ class Demo:
             elif kind == "until":
                 self.cond = (a, now + b)
                 return
+        if getattr(self, "loop_name", None):          # endless mode: start over
+            again = self.loop_name
+            self.start("loop")
+            self.t_wait = time.time() + 2.0
+            return
         self.steps, self.name = [], None
 
     def state(self):
