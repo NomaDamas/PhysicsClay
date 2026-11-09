@@ -1,0 +1,17 @@
+{
+  "label": "KUKA iiwa 14",
+  "kind": "arm",
+  "tagline": "Strong collaborative arm: heavier boxes and full bottles.",
+  "examples": [
+    "Move the box to the back of the table",
+    "Put the bottle upright in the center, slowly",
+    "Stack the plates on the left",
+    "Clear the table into the box"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "path"
+  ]
+}

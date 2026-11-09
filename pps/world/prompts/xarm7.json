@@ -1,0 +1,17 @@
+{
+  "label": "uFactory xArm7",
+  "kind": "arm",
+  "tagline": "Compact 7-joint arm: short reach, works close to its base.",
+  "examples": [
+    "Put the fruit in the bowl",
+    "Bring the cup closer to you",
+    "Can you reach the bottle at the back?",
+    "Put the block on the bottom shelf"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "path"
+  ]
+}

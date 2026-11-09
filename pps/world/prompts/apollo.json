@@ -1,0 +1,18 @@
+{
+  "label": "Apptronik Apollo",
+  "kind": "humanoid",
+  "tagline": "Full-size humanoid: two-handed carries, high shelves, learns by watching.",
+  "examples": [
+    "Carry the box to the top shelf with both hands",
+    "Put the bottle on the shelf at chest height",
+    "Let me show you how to pack the box",
+    "Copy my arms"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "show",
+    "path"
+  ]
+}

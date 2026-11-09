@@ -1,0 +1,18 @@
+{
+  "label": "Stanford TidyBot",
+  "kind": "mobile_manipulator",
+  "tagline": "Mobile base with a Kinova arm: drives around and tidies up.",
+  "examples": [
+    "Tidy up: put the cups and bowls on the counter",
+    "Pick up the block on the floor and put it in the box",
+    "Drive to the shelf and put the bottle on the middle level",
+    "Bring the mug to me"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "path",
+    "drive"
+  ]
+}

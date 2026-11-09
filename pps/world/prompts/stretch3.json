@@ -1,0 +1,17 @@
+{
+  "label": "Hello Robot Stretch 3",
+  "kind": "mobile_manipulator",
+  "tagline": "Slim home robot: drives to a spot, lifts and reaches sideways.",
+  "examples": [
+    "Drive to the counter and bring me the cup",
+    "Pick up the can from the floor",
+    "Put the mug on the low shelf",
+    "Move the fruit from the counter to the table"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "drive"
+  ]
+}
