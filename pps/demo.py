@@ -162,8 +162,9 @@ class Demo:
             self.cap("③ Real-time video understanding"), self.wait(4.5),
             self.act(lambda: self.brain.utter(er_line(), "robot")), self.wait(4.0),
         ]
-        return {"keyfeatures": keyfeatures + outro, "pitch": pitch + outro, "text_vs_spatial": text_vs_spatial + outro, "teach": teach + outro, "video": video + outro,
-                "full": text_vs_spatial + video + teach + outro}.get(name)
+        teach_short = teach[1:]
+        return {"full": keyfeatures + teach_short + outro, "keyfeatures": keyfeatures + outro, "pitch": pitch + outro, "text_vs_spatial": text_vs_spatial + outro, "teach": teach + outro, "video": video + outro,
+                "full_old": text_vs_spatial + video + teach + outro}.get(name)
 
     # ------------------------------------------------------------------ runtime
     def start(self, name):

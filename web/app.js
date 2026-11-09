@@ -687,6 +687,7 @@
     if (first) return; // never replay an old caption / voice line on load
     const text = String(sy.text), k = String(sy.kind || "robot");
     if (k === "caption") { showOverlay("caption", text, 4000); addLine("sys", text); return; }
+    if (k === "narrator") { showOverlay("caption", text, 5000); addLine("sys", text); speak(text, "en-US", "alloy"); return; }
     if (k === "user") { addLine("user", text); showOverlay("subtitle", text, 3000); return; }
     const d = addLine("robot", text);
     if (k === "vision") {
@@ -783,18 +784,19 @@
   const ttsQ = []; let ttsBusy = false, ttsOK = true;
   function ttsNext() {
     if (ttsBusy || !ttsQ.length) return;
-    const text = ttsQ.shift(); ttsBusy = true;
-    const a = new Audio("/tts?voice=coral&text=" + encodeURIComponent(text));
+    const item = ttsQ.shift(); ttsBusy = true;
+    const text = item.text;
+    const a = new Audio("/tts?voice=" + item.voice + "&text=" + encodeURIComponent(text));
     const done = () => { ttsBusy = false; ttsNext(); };
     a.onended = done; a.onerror = () => { ttsOK = false; ttsBusy = false; speakBrowser(text); ttsNext(); };
     a.play().catch(() => { ttsBusy = false; speakBrowser(text); ttsNext(); });
   }
-  function speak(msg, lang) {
+  function speak(msg, lang, voice) {
     if (live.session || !msg) return;
     if (ttsOK && (!lang || String(lang).startsWith("en"))) {
       const short = String(msg).split(/(?<=[.!?])\s/).slice(0, 2).join(" ");
       if (ttsQ.length > 2) ttsQ.splice(0, ttsQ.length - 2);
-      ttsQ.push(short); ttsNext(); return;
+      ttsQ.push({ text: short, voice: voice || "coral" }); ttsNext(); return;
     }
     speakBrowser(msg, lang);
   }
