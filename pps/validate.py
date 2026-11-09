@@ -48,6 +48,8 @@ class Validator:
                 pass
         self.palm_sites = {"left_palm": model.site("left_palm").id, "right_palm": model.site("right_palm").id}
         self._vel_ema = 0.0
+        self.foot_sites = [model.site("left_foot").id, model.site("right_foot").id]
+        self.ground_z = None
         self._fromto = np.zeros(6)
 
     def evaluate(self, targets, vel):
@@ -73,6 +75,23 @@ class Validator:
                 flags[n1] = "collision"
                 flags[n2] = "collision"
                 msgs.append(f"{pretty(n1).capitalize()} would hit {pretty(n2)}")
+        # balance: centre of mass over the support feet (kinematic check, no dynamics)
+        fz = np.array([d.site_xpos[s][2] for s in self.foot_sites])
+        if self.ground_z is None:
+            self.ground_z = float(fz.min())
+        down = [s for s, z in zip(self.foot_sites, fz) if z < self.ground_z + 0.03]
+        com = d.subtree_com[1][:2]
+        if not down:
+            flags["balance"] = "balance"
+            msgs.append("Would tip over: both feet are off the ground")
+        else:
+            pts = np.array([d.site_xpos[s][:2] for s in down])
+            lo, hi = pts.min(0) - np.array([0.07, 0.035]), pts.max(0) + np.array([0.10, 0.035])
+            out = np.maximum(np.maximum(lo - com, com - hi), 0.0)
+            gap = float(np.linalg.norm(out))
+            if gap > 0.01:
+                flags["balance"] = "balance"
+                msgs.append(f"Would tip over: centre of mass {gap * 100:.0f} cm outside the {'feet' if len(down) == 2 else 'standing foot'}")
         vmax_obs = float(np.max(np.abs(vel[self.joint_dof]))) if vel is not None else 0.0
         self._vel_ema = 0.8 * self._vel_ema + 0.2 * vmax_obs
         speed_scale = min(1.0, self.vmax / self._vel_ema) if self._vel_ema > 1e-6 else 1.0

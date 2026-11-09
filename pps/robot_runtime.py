@@ -19,6 +19,7 @@ from loop_rate_limiters import RateLimiter
 from .fake import fake_landmarks
 from .ir import IntentRecorder
 from .protocol import PERCEIVE_TO_ROBOT, ROBOT_TO_PERCEIVE, make_receiver, make_sender
+from .body import BodyRetargeter
 from .retarget import Retargeter
 from .validate import ARM_JOINTS, Validator
 
@@ -71,6 +72,11 @@ class Runtime:
             + np.linalg.norm(d.site_xpos[self.palm_sid[f"{s}_palm"]] - d.xpos[m.body(f"{s}_elbow_link").id])
             for s in ("left", "right")])
         self.retargeter = Retargeter(sh, arm_len, mirror=mirror)
+        self.body_rt = BodyRetargeter()
+        self.body_home = {"com": d.mocap_pos[self.com_mid].copy(),
+                          "feet": {f: d.mocap_pos[mid].copy() for f, mid in zip(FEET, self.feet_mid)},
+                          "torso": self.torso_task.transform_target_to_world.copy()}
+        self.body_now = None
         self.validator = Validator(m, d)
         self.recorder = IntentRecorder("unitree_g1", [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(m.njnt)], mirror)
 
@@ -107,6 +113,10 @@ class Runtime:
             mink.move_mocap_to_frame(m, d, f"{f}_target", f, "site")
             mink.move_mocap_to_frame(m, d, f"{h}_target", h, "site")
         d.mocap_pos[self.com_mid] = d.subtree_com[1]
+        if hasattr(self, "body_home"):
+            self.torso_task.set_target(self.body_home["torso"])
+            self.body_now = None
+            self.body_rt.reset()
 
     # --------------------------------------------------------------- messages
     def handle_message(self, msg):
@@ -171,6 +181,44 @@ class Runtime:
         self.last_precheck_dists = dists
         return ok
 
+    # ------------------------------------------------------------- whole body
+    def apply_body(self, b):
+        """b = {"squat": 0..0.45, "lift": {"l": xyz, "r": xyz} (human side), "yaw": rad} or None (home)."""
+        d, home = self.data, self.body_home
+        com = home["com"].copy()
+        feet = {f: p.copy() for f, p in home["feet"].items()}
+        yaw = 0.0
+        if b is not None:
+            com[2] -= 0.42 * float(b["squat"])
+            for hs, off in b["lift"].items():
+                off = np.asarray(off, float)
+                if np.linalg.norm(off) < 1e-3:
+                    continue
+                foot = ("left_foot" if hs == "r" else "right_foot") if self.retargeter.mirror else ("right_foot" if hs == "r" else "left_foot")
+                feet[foot] = feet[foot] + off
+                stance = "right_foot" if foot == "left_foot" else "left_foot"
+                w = float(np.clip(off[2] / 0.05, 0.0, 1.0))
+                com[:2] = (1 - w) * com[:2] + w * home["feet"][stance][:2]
+            yaw = float(b["yaw"])
+        d.mocap_pos[self.com_mid] = com
+        for f, mid in zip(FEET, self.feet_mid):
+            d.mocap_pos[mid] = feet[f]
+        t0 = home["torso"]
+        self.torso_task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3.from_z_radians(yaw) @ t0.rotation(), t0.translation()))
+        self.body_now = None if b is None else {"com": com.tolist(), "left_foot": feet["left_foot"].tolist(),
+                                                "right_foot": feet["right_foot"].tolist(), "yaw": yaw}
+
+    def apply_body_frame(self, bf):
+        if not bf:
+            return self.apply_body(None)
+        d = self.data
+        d.mocap_pos[self.com_mid] = bf["com"]
+        for f, mid in zip(FEET, self.feet_mid):
+            d.mocap_pos[mid] = bf[f]
+        t0 = self.body_home["torso"]
+        self.torso_task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3.from_z_radians(bf["yaw"]) @ t0.rotation(), t0.translation()))
+        self.body_now = bf
+
     def handle_key(self, key):
         if key == "F":
             if self.path is not None:
@@ -234,6 +282,10 @@ class Runtime:
             if self.engaged and self.last_lm is not None:
                 for palm, tgt in self.retargeter.targets(self.last_lm).items():
                     d.mocap_pos[self.hands_mid[palm]] = tgt
+                if self.new_pose:
+                    self.apply_body(self.body_rt(self.last_lm, self.retargeter.mirror))
+            elif self.body_now is not None:
+                self.apply_body(None)
             # else: leave mocap where it is -> user may drag the ghosts in the viewer.
         elif self.mode == "FOLLOW" and self.path is not None:
             pts, cum = self.path["pts"], self.path["cum"]
@@ -253,9 +305,12 @@ class Runtime:
             while self.preview_idx + 1 < len(frames) and frames[self.preview_idx + 1]["t"] <= self.preview_t:
                 self.preview_idx += 1
             for palm, tgt in frames[self.preview_idx]["targets"].items():
-                d.mocap_pos[self.hands_mid[palm]] = np.asarray(tgt)
+                if palm in self.hands_mid:
+                    d.mocap_pos[self.hands_mid[palm]] = np.asarray(tgt)
+            self.apply_body_frame(frames[self.preview_idx].get("body"))
             if self.preview_t >= self.recorder.duration:
                 self.mode = "MIRROR"
+                self.apply_body(None)
 
     def step(self, dt):
         d = self.data
@@ -274,6 +329,7 @@ class Runtime:
             self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"], {"source": "drawn_path"})
         if self.mode == "REC" and self.new_pose:
             self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"], self.last_context)
+            self.recorder.frames[-1]["body"] = self.body_now
         self.new_pose = False
         self.last_result = res
         return res

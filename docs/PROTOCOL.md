@@ -18,7 +18,7 @@ Per frame (~20-30 Hz), three messages:
 State JSON keys (all always present):
 ```
 mode            "IDLE" | "FOLLOW" | "TASK" | "PATH" | "PREVIEW"     (FOLLOW = imitating the user)
-view            "robot" | "orbit"
+view            "robot" | "orbit" | "stage"   (stage = full-body view, used automatically while imitating a video)
 feasibility     0..1                    messages  [str]  robot read-back (unreachable, joint limit, collision, too fast)
 speed_scale     float                   mirror    bool
 fps, ik_hz      float                   source    "webcam" | "video" | "synthetic"
@@ -33,15 +33,24 @@ regions         ["left","right","center","front","back"]  named table regions us
 skills          [str]   learned skill names
 recording       {active:bool, seconds:float}
 saved           str|null   last export folder
+video           {name, progress 0..1} | null    an uploaded video being imitated (max 90 s used)
+skills_meta     [{name, duration}]
+user_holding    {"l": label|null, "r": label|null}   the user's hands vs objects detected in your camera
 ```
+`path.uv` entries can be null (behind the camera): skip them.
+
+## Video upload
+`POST /upload` multipart, field `video` -> `{ok, name, message}`. The server switches your-camera to that video, the robot
+imitates it whole-body (arms, torso twist, squat, foot lifts) in the stage view, and saves a skill named after the file
+when it ends, then returns to the webcam.
 
 ## Browser -> server (TEXT JSON)
 ```
 {type:"tap",  u, v}                       tap on robot view -> raycast -> new marker (A, B, C...). Max 6, oldest dropped.
 {type:"draw", points:[[u,v]...], hand?}   stroke on robot view -> raycast each -> 3D path for that hand, pre-checked. Then {type:"task",action:"follow_path"}.
 {type:"clear"}                            clear markers and path
-{type:"view", name:"robot"|"orbit"}
-{type:"camera", dazimuth?, delevation?, zoom?}   orbit camera only
+{type:"view", name:"robot"|"orbit"|"stage"}
+{type:"camera", dazimuth?, delevation?, zoom?}   orbit / stage camera
 {type:"task", id, action, ...args}        see actions; server answers via state.task (same id)
 ```
 Task actions (these mirror the Gemini tool declarations 1:1):
@@ -58,6 +67,8 @@ Task actions (these mirror the Gemini tool declarations 1:1):
 | `home` | | back to the start pose, mug kept where it is |
 | `reset_scene` | | home + mug back to the start |
 | `export` | | write intent.json / trajectory.json / report.json, returns folder in `saved` |
+| `edit_skill` | `name`, `t0`, `t1`, `part` (left_arm/right_arm/arms/legs/body), `speed`?, `amplitude`? | edit one body part over a time range |
+| `compile_for` | `robot` ("ur5e") | compile the current path / last recording for another robot and report reachability |
 
 `state.task.message` is a short natural sentence the assistant can speak back, e.g.
 "Planned 9 waypoints, all reachable. Picking up the mug." or "I can't: the back of the table is 18 cm beyond my right arm's reach."

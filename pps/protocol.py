@@ -26,6 +26,8 @@ LANDMARKS = {
     "l_index": 19, "r_index": 20,
     "l_thumb": 21, "r_thumb": 22,
     "l_hip": 23, "r_hip": 24,
+    "l_knee": 25, "r_knee": 26,
+    "l_ankle": 27, "r_ankle": 28,
 }
 
 

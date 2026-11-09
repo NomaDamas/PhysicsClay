@@ -2,60 +2,214 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0c">
 <title>PhysicsClay</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-<header class="bar">
-  <div class="brand"><span class="logo"></span>PhysicsClay <span class="tag">a new way to prompt Physical AI</span></div>
-  <div id="mode" class="chip mode">MIRROR</div>
-  <button id="clutch" class="btn clutch" title="space">Engage</button>
-  <div class="meter" title="feasible frames over the last 2 s"><div id="feas" class="fill"></div><span id="feasTxt">feasible 0%</span></div>
-  <div class="chip" id="speed">speed x1.0</div>
-  <button id="mirror" class="chip btnchip" title="M">mirror on</button>
-  <div class="spacer"></div>
-  <div class="mono dim" id="stats">connecting…</div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></g></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 9l6 6 6-6"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"></span>
+    <div class="brand-text">
+      <span class="name">PhysicsClay</span>
+      <span class="tag">A new way to prompt Physical AI</span>
+    </div>
+  </div>
+
+  <div class="bar-mid">
+    <span id="mode" class="mode-chip" data-mode="IDLE" role="status" aria-label="Robot mode"><i></i><b>IDLE</b></span>
+    <button id="talk" class="talk" type="button" aria-label="Talk to the robot (Space)" aria-pressed="false" data-state="off">
+      <span class="ring" aria-hidden="true"></span>
+      <svg class="ico" aria-hidden="true"><use href="#i-mic"/></svg>
+    </button>
+    <div class="talk-meta">
+      <span id="talkLabel" class="talk-label">Talk</span>
+      <span id="talkSub" class="talk-sub mono">press space</span>
+    </div>
+    <button id="settingsBtnM" class="icon-btn mobile-gear" type="button" aria-label="Settings"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
+  </div>
+
+  <div class="bar-right">
+    <div class="meter" title="Physically feasible share of recent frames">
+      <span class="meter-label mono">FEASIBLE</span>
+      <span class="meter-track"><span id="feasFill" class="meter-fill"></span></span>
+      <span id="feasTxt" class="meter-val mono">--</span>
+    </div>
+    <span id="speed" class="chip mono" title="Speed scale">×1.0</span>
+    <span id="stats" class="stats mono" data-conn="off"><i></i><span id="statsTxt">connecting</span></span>
+    <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
+  </div>
 </header>
 
-<main class="views">
-  <section class="view cam">
-    <div class="viewhead"><span>Show it</span><span class="dim" id="source">camera</span><span class="hint">draw a path with the mouse · drag a waypoint to edit · F follow · C clear</span></div>
-    <div class="frame" id="camFrame">
-      <img id="cam" alt="camera">
-      <canvas id="overlay"></canvas>
-      <div id="noPose" class="toast hidden">No person detected</div>
+<main class="stage">
+  <section class="panel robot" aria-label="Robot view">
+    <div class="panel-head">
+      <span class="label mono">ROBOT VIEW</span>
+      <div class="seg" role="group" aria-label="Camera">
+        <button type="button" class="seg-btn" data-view="robot" aria-pressed="true">Robot eye</button>
+        <button type="button" class="seg-btn" data-view="orbit" aria-pressed="false">Orbit</button>
+        <button type="button" class="seg-btn" data-view="stage" aria-pressed="false">Stage</button>
+      </div>
+      <span id="holding" class="chip mono subtle">hands empty</span>
+      <span class="grow"></span>
+      <span class="muted small">Unitree G1 · MuJoCo</span>
     </div>
+    <div class="frame robot-frame" id="robotFrame">
+      <img id="robotImg" alt="Robot view of the table" draggable="false">
+      <canvas id="robotOverlay" aria-label="Tap to place a marker, drag to draw a path"></canvas>
+      <div id="robotEmpty" class="empty"><span class="spinner" aria-hidden="true"></span><span>Waiting for the robot view…</span></div>
+      <div id="taskHud" class="task-hud" hidden><span class="dot"></span><span id="taskHudTxt"></span></div>
+      <div id="pathBar" class="path-bar" hidden>
+        <span id="pathInfo" class="mono"></span>
+        <button type="button" class="btn sm primary" id="runPath"><svg aria-hidden="true"><use href="#i-play"/></svg>Run path <kbd>F</kbd></button>
+        <button type="button" class="btn sm ghost" id="clearPath">Clear <kbd>C</kbd></button>
+      </div>
+    </div>
+    <div class="hint-row">
+      <span><b>Tap</b> to mark</span><span class="sep">·</span><span><b>Draw</b> a path</span><span class="sep">·</span><span>Say <q>put the mug on A</q></span>
+      <span class="grow"></span>
+      <span id="orbitHint" class="muted" hidden>right-drag / two fingers to orbit · wheel to zoom</span>
+    </div>
+
+    <button id="talkBig" class="talk-big" type="button" aria-label="Talk to the robot" aria-pressed="false" data-state="off">
+      <span class="ring" aria-hidden="true"></span>
+      <svg aria-hidden="true"><use href="#i-mic"/></svg>
+      <span id="talkBigLabel">Hold a conversation</span>
+    </button>
+
+    <div class="actions" role="toolbar" aria-label="Quick actions">
+      <button type="button" class="btn" data-act="pick">Pick mug → right</button>
+      <button type="button" class="btn toggle" data-act="follow" aria-pressed="false">Follow me</button>
+      <button type="button" class="btn" data-act="learn">Learn skill</button>
+      <span class="split">
+        <select id="skillSel" aria-label="Learned skill" disabled><option value="">no skills yet</option></select>
+        <button type="button" class="btn" data-act="play" id="playBtn" disabled aria-label="Play selected skill"><svg aria-hidden="true"><use href="#i-play"/></svg>Play</button>
+      </span>
+      <span class="grow"></span>
+      <button type="button" class="btn danger" data-act="stop" title="Esc"><svg aria-hidden="true"><use href="#i-stop"/></svg>Stop</button>
+      <button type="button" class="btn" data-act="home"><svg aria-hidden="true"><use href="#i-home"/></svg>Home</button>
+      <button type="button" class="btn" data-act="reset">Reset scene</button>
+      <button type="button" class="btn" data-act="export">Export</button>
+      <button type="button" class="btn" data-act="compile" title="Check the last motion on a UR5e arm">Compile for UR5e</button>
+    </div>
+    <div id="skillEdit" class="skill-edit" hidden>
+      <div class="se-head">
+        <span class="label mono">EDIT SKILL</span>
+        <span id="seName" class="se-name"></span>
+        <span id="seRange" class="mono muted small"></span>
+        <span class="grow"></span>
+        <select id="sePart" aria-label="Body part">
+          <option value="body">Whole body</option><option value="arms">Both arms</option>
+          <option value="left_arm">Left arm</option><option value="right_arm">Right arm</option><option value="legs">Legs</option>
+        </select>
+      </div>
+      <div id="seTrack" class="se-track" role="slider" tabindex="0" aria-label="Time range to edit (drag to select; arrow keys move)" aria-valuemin="0">
+        <div id="seSel" class="se-sel"><span class="h l"></span><span class="h r"></span></div>
+        <div id="seTicks" class="se-ticks" aria-hidden="true"></div>
+      </div>
+      <div class="se-btns">
+        <button type="button" class="btn sm" data-edit="faster">Faster</button>
+        <button type="button" class="btn sm" data-edit="slower">Slower</button>
+        <button type="button" class="btn sm" data-edit="bigger">Bigger</button>
+        <button type="button" class="btn sm" data-edit="smaller">Smaller</button>
+        <span class="grow"></span>
+        <span class="muted small">or say “make 2 to 4 seconds faster”, “left arm bigger”</span>
+      </div>
+    </div>
+    <form id="cmdForm" class="cmd" autocomplete="off">
+      <span class="prompt mono" aria-hidden="true">›</span>
+      <input id="cmd" type="text" placeholder="Type an intent — “put the mug on the right”, “follow me”, “slower”" aria-label="Command">
+      <button class="btn primary" type="submit">Send</button>
+    </form>
   </section>
-  <section class="view sim">
-    <div class="viewhead"><span>Simulate it</span><span class="dim">Unitree G1 · MuJoCo · drag to orbit</span><span class="hint" id="simHint">ghosts: green reached · red out of reach</span></div>
-    <div class="frame" id="simFrame"><img id="sim" alt="simulation"></div>
-  </section>
+
+  <aside class="side">
+    <section class="panel cam" aria-label="Your camera">
+      <div class="panel-head">
+        <span class="label mono">YOUR CAMERA</span>
+        <span id="followBadge" class="badge follow" hidden>FOLLOWING YOU</span>
+        <span id="recBadge" class="badge rec" hidden>REC 0.0s</span>
+        <span class="grow"></span>
+        <span id="source" class="muted small mono">—</span>
+        <button type="button" id="videoBtn" class="btn sm">Show a video</button>
+        <input type="file" id="videoFile" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden>
+      </div>
+      <div class="frame cam-frame" id="camFrame">
+        <img id="camImg" alt="Your camera" draggable="false">
+        <canvas id="camOverlay" aria-hidden="true"></canvas>
+        <div id="camEmpty" class="empty small"><span>No camera frames yet</span></div>
+        <div id="noPose" class="toast" hidden>No person detected</div>
+        <div id="dropHint" class="drop-hint" hidden>Drop a video — the robot will imitate it</div>
+        <div id="videoBar" class="video-bar" hidden><span id="videoName" class="mono"></span><span class="vb-track"><span id="videoFill"></span></span><span id="videoPct" class="mono"></span></div>
+      </div>
+    </section>
+
+    <section class="panel feed" id="feedPanel" aria-label="Intent feed">
+      <div class="panel-head">
+        <button id="feedToggle" class="head-toggle" type="button" aria-expanded="true" aria-controls="feed">
+          <span class="label mono">INTENT FEED</span>
+          <svg class="chev" aria-hidden="true"><use href="#i-chev"/></svg>
+        </button>
+        <span class="grow"></span>
+        <span id="feedCount" class="muted small mono">0 intents</span>
+      </div>
+      <div id="feed" class="feed-list" role="log" aria-live="polite">
+        <div class="feed-empty">Speak, type, or tap the robot view. Every intent becomes a card here with the physics verdict.</div>
+      </div>
+    </section>
+
+    <section class="panel says" aria-label="Robot says">
+      <div class="panel-head">
+        <span class="label mono">ROBOT SAYS</span>
+        <span class="grow"></span>
+        <span id="saysFeas" class="muted small mono"></span>
+      </div>
+      <ul id="says" class="says-list"><li class="info">Waiting for the robot…</li></ul>
+      <div id="saved" class="saved mono" hidden></div>
+    </section>
+  </aside>
 </main>
 
-<footer class="panel">
-  <section class="says">
-    <h2>Robot says</h2>
-    <ul id="says"><li class="ok">Waiting for the robot…</li></ul>
-  </section>
-  <section class="context">
-    <h2>Context</h2>
-    <div class="chips" id="context"></div>
-    <div class="actions">
-      <button class="btn" data-key="F" title="F">Follow path</button>
-      <button class="btn" data-key="C" title="C">Clear path</button>
-      <button class="btn rec" data-key="R" title="R">Record</button>
-      <button class="btn" data-key="P" title="P">Preview</button>
-      <button class="btn ok" data-key="A" title="A">Approve</button>
-      <button class="btn" data-key="H" title="H">Home</button>
+<div id="toast" class="global-toast" role="status" aria-live="polite" hidden></div>
+
+<dialog id="settings" aria-labelledby="settingsTitle">
+  <form method="dialog" id="settingsForm">
+    <header class="dlg-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" value="cancel" aria-label="Close settings">✕</button></header>
+    <div class="dlg-body">
+      <label class="field"><span>Gemini API key</span>
+        <input id="setKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
+        <small>Stored only in this browser.</small>
+      </label>
+      <label class="field"><span>Live model</span><input id="setLive" type="text" spellcheck="false"></label>
+      <label class="field"><span>Robotics-ER model</span><input id="setEr" type="text" spellcheck="false"></label>
+      <label class="check"><input id="setSendCam" type="checkbox" checked><span>Send my camera to Gemini</span></label>
+      <label class="check"><input id="setSendRobot" type="checkbox"><span>Send robot view to Gemini</span></label>
+      <label class="field"><span>Speech language (no-key fallback)</span>
+        <select id="setLang"><option value="en-US">English (en-US)</option><option value="ko-KR">한국어 (ko-KR)</option></select>
+      </label>
+      <p id="geminiStatus" class="muted small mono"></p>
     </div>
-    <label class="slider"><span>reach forward</span><input id="depth" type="range" min="0" max="50" value="20"><span id="depthTxt" class="mono">20 cm</span></label>
-    <form id="cmdForm" class="cmd"><span class="mono">/</span><input id="cmd" class="mono" placeholder="slower · faster · mirror off · hold · go · reset" autocomplete="off"><button class="btn" type="submit">Send</button></form>
-    <div id="saved" class="mono dim"></div>
-  </section>
-</footer>
+    <footer class="dlg-foot">
+      <button class="btn ghost" value="cancel">Cancel</button>
+      <button class="btn primary" value="save" id="settingsSave">Save</button>
+    </footer>
+  </form>
+</dialog>
+
+<script src="/static/gemini.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

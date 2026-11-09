@@ -304,7 +304,7 @@ class Tasks:
             return
         if rt.mode == "REC":
             rt.engaged, rt.mode = False, "MIRROR"
-        frames = [{"t": f["t"], "targets": f["targets"]} for f in rt.recorder.frames if f.get("targets")]
+        frames = [{"t": f["t"], "targets": f["targets"], "body": f.get("body")} for f in rt.recorder.frames if f.get("targets")]
         if len(frames) < 5:
             self.set_task(tid, "learn_skill", "failed", "I have nothing to learn yet. Say 'follow me', show the motion, then name it.")
             return
@@ -325,7 +325,7 @@ class Tasks:
             self.set_task(tid, "play_skill", "failed", f"I don't know '{name}'. I know: {', '.join(self.skills()) or 'nothing yet'}.")
             return
         data = json.load(open(path))
-        rt.recorder.frames = [{"t": f["t"], "targets": f["targets"], "human": None, "grip": {}, "context": {},
+        rt.recorder.frames = [{"t": f["t"], "targets": f["targets"], "body": f.get("body"), "human": None, "grip": {}, "context": {},
                                "qpos": [], "flags": {}, "residuals": {}} for f in data["frames"]]
         rt.engaged, rt.path, self.kind = False, None, "skill"
         rt.mode, rt.preview_t, rt.preview_idx = "PREVIEW", 0.0, 0
@@ -355,3 +355,94 @@ class Tasks:
                     self._event("release", palm)
         self.set_task(tid, "reset_scene" if reset_scene else "home", "done",
                       "Scene reset." if reset_scene else "Back to my start pose.")
+
+
+# ---------------------------------------------------------------------- skill editing
+PART_KEYS = {
+    "left_arm": ["left_palm"], "right_arm": ["right_palm"], "arms": ["left_palm", "right_palm"],
+    "legs": ["left_foot", "right_foot", "com"], "body": ["left_palm", "right_palm", "left_foot", "right_foot", "com", "yaw"],
+}
+
+
+def edit_skill(tasks, tid, name, t0=None, t1=None, part="body", speed=None, amplitude=None):
+    """Edit a time range of one body part: retime (speed) and/or scale motion around the home pose (amplitude)."""
+    key = str(name or "").strip().lower().replace(" ", "_")
+    path = SKILL_DIR / f"{key}.json"
+    if not path.exists():
+        tasks.set_task(tid, "edit_skill", "failed", f"I don't know a skill called '{name}'.")
+        return
+    data = json.load(open(path))
+    frames = data["frames"]
+    dur = frames[-1]["t"] if frames else 0.0
+    t0 = 0.0 if t0 is None else max(0.0, float(t0))
+    t1 = dur if t1 is None else min(dur, float(t1))
+    if t1 - t0 < 0.1:
+        tasks.set_task(tid, "edit_skill", "failed", "Pick a time range longer than 0.1 s.")
+        return
+    part = part if part in PART_KEYS else "body"
+    keys = PART_KEYS[part]
+    rt = tasks.rt
+    homes = {"left_palm": tasks.home_palm["left_palm"], "right_palm": tasks.home_palm["right_palm"],
+             "left_foot": rt.body_home["feet"]["left_foot"], "right_foot": rt.body_home["feet"]["right_foot"],
+             "com": rt.body_home["com"]}
+
+    def ramp(t):  # smooth 0..1..0 weight across the range, 0.2 s edges
+        e = min(0.2, (t1 - t0) / 3)
+        if t < t0 or t > t1:
+            return 0.0
+        return float(min(1.0, (t - t0) / e if e else 1.0, (t1 - t) / e if e else 1.0))
+
+    changes = []
+    if amplitude:
+        a = float(np.clip(amplitude, 0.3, 2.5))
+        for f in frames:
+            w = ramp(f["t"])
+            if w <= 0:
+                continue
+            k = 1 + (a - 1) * w
+            for palm in ("left_palm", "right_palm"):
+                if palm in keys and palm in f["targets"]:
+                    shoulder = rt.retargeter.robot_shoulders[palm]
+                    f["targets"][palm] = (shoulder + (np.asarray(f["targets"][palm]) - shoulder) * k).tolist()
+            b = f.get("body")
+            if b:
+                for kk in ("left_foot", "right_foot", "com"):
+                    if kk in keys:
+                        b[kk] = (homes[kk] + (np.asarray(b[kk]) - homes[kk]) * k).tolist()
+                if "yaw" in keys:
+                    b["yaw"] = float(np.clip(b["yaw"] * k, -0.9, 0.9))
+        changes.append(f"{'bigger' if a > 1 else 'smaller'} x{a:.1f}")
+    if speed:
+        sp = float(np.clip(speed, 0.25, 4.0))
+        new_t, acc, prev_t = [], 0.0, None
+        for f in frames:
+            if prev_t is None:
+                new_t.append(f["t"]); prev_t = f["t"]; continue
+            dt = f["t"] - prev_t
+            mid = (f["t"] + prev_t) / 2
+            acc += dt / sp if t0 <= mid <= t1 else dt
+            new_t.append(frames[0]["t"] + acc)
+            prev_t = f["t"]
+        for f, t in zip(frames, new_t):
+            f["t"] = round(t, 4)
+        changes.append(f"{'faster' if sp > 1 else 'slower'} x{sp:.1f}")
+    if not changes:
+        tasks.set_task(tid, "edit_skill", "failed", "Say faster, slower, bigger or smaller.")
+        return
+    data["frames"] = frames
+    data.setdefault("edits", []).append({"t0": t0, "t1": t1, "part": part, "speed": speed, "amplitude": amplitude})
+    json.dump(data, open(path, "w"))
+    part_txt = part.replace("_", " ")
+    tasks.set_task(tid, "edit_skill", "done",
+                   f"Edited '{key}': {part_txt} from {t0:.1f} to {t1:.1f} s, {' and '.join(changes)}. New length {frames[-1]['t']:.1f} s.")
+
+
+def skills_meta(tasks):
+    out = []
+    for name in tasks.skills():
+        try:
+            fr = json.load(open(SKILL_DIR / f"{name}.json"))["frames"]
+            out.append({"name": name, "duration": round(fr[-1]["t"], 2) if fr else 0.0})
+        except Exception:
+            continue
+    return out

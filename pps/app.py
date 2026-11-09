@@ -24,7 +24,8 @@ from .fake import fake_landmarks
 from .perceive import H, W, Objects, Pose, grip_state, holding
 from .protocol import LANDMARKS
 from .robot_runtime import HANDS, Runtime
-from .tasks import REGIONS, Tasks
+from .compile_other import compile_ur5e
+from .tasks import REGIONS, Tasks, edit_skill, skills_meta
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
@@ -99,6 +100,33 @@ async def broadcaster(shared):
                 shared.clients.discard(ws)
 
 
+async def upload(request):
+    reader = await request.multipart()
+    field = await reader.next()
+    while field is not None and field.name != "video":
+        field = await reader.next()
+    if field is None:
+        return web.json_response({"ok": False, "message": "no 'video' field"}, status=400)
+    from urllib.parse import unquote
+    stem = "".join(ch for ch in Path(unquote(field.filename or "video")).stem.lower().replace(" ", "_") if ch.isalnum() or ch in "_-")[:28] or "video"
+    ext = (Path(field.filename or "v.mp4").suffix or ".mp4").lower()
+    d = ROOT / "recordings" / "uploads"
+    d.mkdir(parents=True, exist_ok=True)
+    path = d / f"{stem}{ext}"
+    size = 0
+    with open(path, "wb") as f:
+        while True:
+            chunk = await field.read_chunk(1 << 20)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > 300 * (1 << 20):
+                return web.json_response({"ok": False, "message": "video too large (300 MB max)"}, status=413)
+            f.write(chunk)
+    request.app["shared"].push_cmd({"type": "source", "path": str(path), "name": stem})
+    return web.json_response({"ok": True, "name": stem, "message": f"Imitating '{stem}'. It becomes a skill when the video ends."})
+
+
 async def index(request):
     return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
 
@@ -128,10 +156,11 @@ def ensure_cert():
 
 def run_server(shared, port, https_port):
     async def main():
-        app = web.Application()
+        app = web.Application(client_max_size=320 * (1 << 20))
         app["shared"] = shared
         app.router.add_get("/", index)
         app.router.add_get("/ws", ws_handler)
+        app.router.add_post("/upload", upload)
         app.router.add_static("/static", WEB)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -156,6 +185,10 @@ def worker(args, shared):
     mujoco.mjv_defaultFreeCamera(m, orbit)
     orbit.azimuth, orbit.elevation, orbit.distance = 165, -20, 2.2
     orbit.lookat[:] = (0.35, 0.0, 0.9)
+    stage = mujoco.MjvCamera()
+    mujoco.mjv_defaultFreeCamera(m, stage)
+    stage.azimuth, stage.elevation, stage.distance = 215, -8, 2.6
+    stage.lookat[:] = (0.0, 0.0, 0.62)
     view = "robot"
     cam_params = None
 
@@ -171,6 +204,7 @@ def worker(args, shared):
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
         source = "webcam"
 
+    video_job = None   # {"name", "frames", "i", "prev_cap", "prev_dt", "prev_source", "prev_view"}
     grip_hist = {"l": [], "r": []}
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
     t_phys = time.time()
@@ -188,7 +222,22 @@ def worker(args, shared):
                     time.sleep(next_frame_t - now)
                 next_frame_t = max(next_frame_t + video_dt, time.time() - video_dt)
             ok, frame = cap.read()
+            if ok and video_job is not None:
+                video_job["i"] += 1
+                if video_job["i"] > video_job["max_frames"]:
+                    ok = False
             if not ok:
+                if video_job is not None:          # uploaded video finished: save the imitation as a skill
+                    tasks.follow_me("vf", False)
+                    tasks.learn_skill("video", video_job["name"])
+                    if tasks.task and tasks.task["status"] == "done":
+                        tasks.task["message"] += f" Say 'do {video_job['name']}' to replay it."
+                    cap.release()
+                    cap, video_dt, source = video_job["prev_cap"], video_job["prev_dt"], video_job["prev_source"]
+                    view = video_job["prev_view"]
+                    args.video = video_job["prev_video"]
+                    video_job = None
+                    continue
                 if args.video:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
@@ -238,8 +287,38 @@ def worker(args, shared):
                         rt.path = None
                     rt.path_msg = None
                 elif t == "view":
-                    view = "orbit" if c.get("name") == "orbit" else "robot"
+                    view = c.get("name") if c.get("name") in ("robot", "orbit", "stage") else "robot"
+                elif t == "source":
+                    vc = cv2.VideoCapture(c["path"])
+                    if not vc.isOpened():
+                        tasks.set_task("video", "video", "failed", "I couldn't open that video.")
+                        continue
+                    vfps = vc.get(cv2.CAP_PROP_FPS) or 30.0
+                    nfr = int(vc.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+                    video_job = {"name": c.get("name", "video"), "i": 0, "frames": nfr,
+                                 "max_frames": int(min(nfr or 10 ** 9, vfps * 90)),
+                                 "prev_cap": cap if video_job is None else video_job["prev_cap"],
+                                 "prev_dt": video_dt if video_job is None else video_job["prev_dt"],
+                                 "prev_source": source if video_job is None else video_job["prev_source"],
+                                 "prev_view": view if video_job is None else video_job["prev_view"],
+                                 "prev_video": args.video if video_job is None else video_job["prev_video"]}
+                    if cap is not None and cap is not video_job["prev_cap"]:
+                        cap.release()
+                    cap, video_dt, source = vc, 1.0 / vfps, "video"
+                    args.video = c["path"]
+                    next_frame_t = time.time()
+                    view = "stage"
+                    if pose is None:
+                        pose = Pose(str(ROOT / args.model))
+                    tasks.home("vh")
+                    tasks.follow_me("video", True)
+                    tasks.set_task("video", "video", "running", f"Imitating '{video_job['name']}' from your video, whole body.")
                 elif t == "camera":
+                    if view == "stage":
+                        stage.azimuth += float(c.get("dazimuth", 0.0))
+                        stage.elevation = float(np.clip(stage.elevation + float(c.get("delevation", 0.0)), -85, 10))
+                        stage.distance = float(np.clip(stage.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
+                        continue
                     orbit.azimuth += float(c.get("dazimuth", 0.0))
                     orbit.elevation = float(np.clip(orbit.elevation + float(c.get("delevation", 0.0)), -85, 10))
                     orbit.distance = float(np.clip(orbit.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
@@ -262,7 +341,7 @@ def worker(args, shared):
             renderer.update_scene(d, camera=robot_cam)
             fovy = float(m.cam_fovy[robot_cam])
         else:
-            renderer.update_scene(d, orbit)
+            renderer.update_scene(d, stage if view == "stage" else orbit)
             fovy = float(m.vis.global_.fovy)
         gl = renderer.scene.camera[0]
         fwd, up = np.array(gl.forward, float), np.array(gl.up, float)
@@ -279,7 +358,9 @@ def worker(args, shared):
         if n % 10 == 0:
             now = time.time()
             fps, t_fps = 10 / max(now - t_fps, 1e-6), now
-        shared.put(cam_jpg, sim_jpg, json.dumps(state(rt, tasks, view, cam_params, fps, source, pts, lm, scene, grip, hold)))
+        st = state(rt, tasks, view, cam_params, fps, source, pts, lm, scene, grip, hold)
+        st["video"] = None if video_job is None else {"name": video_job["name"], "progress": round(min(1.0, video_job["i"] / max(1, video_job["max_frames"])), 3)}
+        shared.put(cam_jpg, sim_jpg, json.dumps(st))
         if args.frames and n >= args.frames:
             shared.running = False
     if cap is not None:
@@ -309,6 +390,20 @@ def dispatch(tasks, rt, c, cam):
         else:
             rt.speed_scale = float(np.clip(float(v), 0.1, 1.0))
         tasks.set_task(tid, a, "done", f"Speed set to x{rt.speed_scale:.1f}.")
+    elif a == "edit_skill":
+        edit_skill(tasks, tid, c.get("name"), c.get("t0"), c.get("t1"), c.get("part", "body"), c.get("speed"), c.get("amplitude"))
+    elif a == "compile_for":
+        if str(c.get("robot", "ur5e")).lower().replace("-", "") not in ("ur5e", "ur5", "arm"):
+            tasks.set_task(tid, a, "failed", "I can compile for: ur5e.")
+            return
+        if rt.path is not None:
+            pts = rt.path["pts"]
+        else:
+            pts = [f["targets"].get("right_palm") or f["targets"].get("left_palm") for f in rt.recorder.frames[::5] if f.get("targets")]
+            pts = [p for p in pts if p is not None]
+        tasks.set_task(tid, a, "planning", "Compiling for UR5e.")
+        r = compile_ur5e(pts)
+        tasks.set_task(tid, a, "done" if r["ok"] else "failed", r["message"])
     elif a == "stop":
         tasks.stop(tid)
     elif a == "home":
@@ -363,7 +458,7 @@ def state(rt, tasks, view, cam, fps, source, pts, lm, scene, grip, hold):
         "path": path, "task": tasks.task,
         "holding": {("left" if h.startswith("left") else "right"): o for h, o in tasks.holding.items()},
         "scene_objects": [{"name": "mug", "pos": [round(float(x), 3) for x in mug], "uv": proj(mug)}],
-        "regions": list(REGIONS.keys()), "skills": tasks.skills(),
+        "regions": list(REGIONS.keys()), "skills": tasks.skills(), "skills_meta": skills_meta(tasks),
         "recording": {"active": rt.mode == "REC" or (rt.mode == "FOLLOW" and tasks.kind is not None),
                       "seconds": round(rt.recorder.duration, 1)},
         "saved": rt.saved,
