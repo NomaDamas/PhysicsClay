@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Robot's plan card states</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0}
+a{color:#5c77df}a:hover{color:#3f59c4}
+</style>
+</helmet>
+<div style="width: 1440px; height: 760px; box-sizing: border-box; padding: 48px 40px; background: #f5f5f7; font-family: Inter, -apple-system, system-ui, sans-serif; color: #1d1d1f; display: flex; flex-direction: column; gap: 32px">
+  <div style="display: flex; flex-direction: column; gap: 8px">
+    <h1 style="margin: 0; font-size: 32px; font-weight: 700; letter-spacing: -0.5px">The robot shows what it understood before it moves</h1>
+    <p style="margin: 0; font-size: 16px; color: rgba(29,29,31,.72)">One card, five states. You never author the motion; you only confirm, pick, or fix.</p>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 20px; align-items: start">
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62)">1 · Idle</span>
+      <div style="border-radius: 22px; background: #ffffff; border: 1px solid rgba(29,29,31,.08); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(40,30,90,.07); padding: 18px; display: flex; flex-direction: column; gap: 14px">
+        <p style="margin: 0; font-size: 18px; font-weight: 600; line-height: 1.3">Tell me, point, or show me.</p>
+        <p style="margin: 0; font-size: 13px; line-height: 1.5; color: rgba(29,29,31,.72)">I'll show my plan here before I move.</p>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <button type="button" style="min-height: 44px; text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(29,29,31,.1); background: #fbfbfd; font: 500 13px Inter, sans-serif; color: #1d1d1f">“Put the mug there” + point</button>
+          <button type="button" style="min-height: 44px; text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(29,29,31,.1); background: #fbfbfd; font: 500 13px Inter, sans-serif; color: #1d1d1f">“Stay away from the vase”</button>
+          <button type="button" style="min-height: 44px; text-align: left; padding: 10px 12px; border-radius: 12px; border: 1px solid rgba(29,29,31,.1); background: #fbfbfd; font: 500 13px Inter, sans-serif; color: #1d1d1f">Show a goal photo</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62)">2 · Proposing, blocked</span>
+      <div style="border-radius: 22px; background: #ffffff; border: 1px solid rgba(29,29,31,.08); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(40,30,90,.07); padding: 18px; display: flex; flex-direction: column; gap: 14px">
+        <p style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.3">Move the mug to the left.</p>
+        <div style="border-radius: 14px; background: rgba(214,69,58,.08); padding: 12px; display: flex; flex-direction: column; gap: 4px">
+          <span style="font-size: 14px; font-weight: 600; color: #b3342b">I can't do it this way</span>
+          <span style="font-size: 13px; line-height: 1.45; color: rgba(29,29,31,.78)">The mug would hit the vase: 13 cm too low.</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 6px">
+          <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62)">Closest I can do</span>
+          <span style="font-size: 13px; line-height: 1.45">Lift over the vase (4 cm clearance), same target.</span>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <button type="button" style="height: 46px; border-radius: 14px; border: 0; background: #5c77df; color: #ffffff; font: 600 14px Inter, sans-serif">Use that instead</button>
+          <button type="button" style="height: 44px; border-radius: 14px; border: 1px solid rgba(29,29,31,.14); background: #ffffff; color: #1d1d1f; font: 600 13px Inter, sans-serif">Fix the path myself</button>
+        </div>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62)">3 · Needs you</span>
+      <div style="border-radius: 22px; background: #ffffff; border: 2px solid #f59145; box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(40,30,90,.07); padding: 18px; display: flex; flex-direction: column; gap: 14px">
+        <p style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.3">Which mug?</p>
+        <p style="margin: 0; font-size: 13px; line-height: 1.5; color: rgba(29,29,31,.72)">I see two. They're numbered on the stage.</p>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <button type="button" style="min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 14px; border: 1px solid rgba(29,29,31,.12); background: #ffffff; font: 500 14px Inter, sans-serif; color: #1d1d1f; text-align: left">
+            <span style="flex: 0 0 28px; height: 28px; border-radius: 999px; background: #f59145; color: #ffffff; font-weight: 700; display: flex; align-items: center; justify-content: center">1</span>White mug, front left</button>
+          <button type="button" style="min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-radius: 14px; border: 1px solid rgba(29,29,31,.12); background: #ffffff; font: 500 14px Inter, sans-serif; color: #1d1d1f; text-align: left">
+            <span style="flex: 0 0 28px; height: 28px; border-radius: 999px; background: #f59145; color: #ffffff; font-weight: 700; display: flex; align-items: center; justify-content: center">2</span>Grey mug, by the vase</button>
+        </div>
+        <p style="margin: 0; font-size: 12px; color: rgba(29,29,31,.62)">Say “two”, tap one, or point at it.</p>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62)">4 · Running</span>
+      <div style="border-radius: 22px; background: #ffffff; border: 1px solid rgba(29,29,31,.08); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(40,30,90,.07); padding: 18px; display: flex; flex-direction: column; gap: 14px">
+        <p style="margin: 0; font-size: 17px; font-weight: 600; line-height: 1.3">Carrying the mug to P</p>
+        <div style="height: 8px; border-radius: 999px; background: #f0f0f3; overflow: hidden"><div style="width: 58%; height: 8px; background: #1da8e5"></div></div>
+        <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 9px; font-size: 13px">
+          <li style="display: flex; gap: 8px; align-items: center; color: rgba(29,29,31,.62)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#1f8f55" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"></path></svg>Reach the mug</li>
+          <li style="display: flex; gap: 8px; align-items: center; font-weight: 600"><span style="width: 16px; height: 16px; border-radius: 999px; border: 3px solid #1da8e5; box-sizing: border-box"></span>Carry over the vase</li>
+          <li style="display: flex; gap: 8px; align-items: center; color: rgba(29,29,31,.62)"><span style="width: 16px; height: 16px; border-radius: 999px; border: 2px solid rgba(29,29,31,.2); box-sizing: border-box"></span>Set it down at P</li>
+        </ol>
+        <button type="button" style="height: 46px; border-radius: 14px; border: 0; background: #1d1d1f; color: #ffffff; font: 600 14px Inter, sans-serif; display: flex; align-items: center; justify-content: center; gap: 8px">
+          <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"></rect></svg>Stop</button>
+        <p style="margin: 0; font-size: 12px; color: rgba(29,29,31,.62)">Raise a palm to stop. Press down to slow.</p>
+      </div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 10px">
+      <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62)">5 · Done</span>
+      <div style="border-radius: 22px; background: #ffffff; border: 1px solid rgba(29,29,31,.08); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(40,30,90,.07); padding: 18px; display: flex; flex-direction: column; gap: 14px">
+        <div style="display: flex; align-items: center; gap: 10px">
+          <div style="flex: 0 0 30px; height: 30px; border-radius: 999px; background: #1f8f55; display: flex; align-items: center; justify-content: center"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"></path></svg></div>
+          <p style="margin: 0; font-size: 17px; font-weight: 600">Placed the mug at P</p>
+        </div>
+        <p style="margin: 0; font-size: 13px; line-height: 1.5; color: rgba(29,29,31,.72)">6.1 s · cleared the vase by 4 cm · stayed upright.</p>
+        <div style="display: flex; flex-direction: column; gap: 8px">
+          <button type="button" style="height: 44px; border-radius: 14px; border: 1px solid rgba(29,29,31,.14); background: #ffffff; color: #1d1d1f; font: 600 13px Inter, sans-serif">Save as a skill</button>
+          <button type="button" style="height: 44px; border-radius: 14px; border: 0; background: transparent; color: #3f59c4; font: 600 13px Inter, sans-serif">Undo</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":760}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>
