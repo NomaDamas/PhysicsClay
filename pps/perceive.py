@@ -99,6 +99,8 @@ def holding(objects, pts):
     for side, idx in (("l", 15), ("r", 16)):
         x, y = pts[idx]
         for label, _, (x1, y1, x2, y2) in objects:
+            if (x2 - x1) * (y2 - y1) > 0.12 * W * H:   # hand-held objects are small; skip furniture-sized boxes
+                continue
             mx, my = 0.15 * (x2 - x1), 0.15 * (y2 - y1)
             if x1 - mx <= x <= x2 + mx and y1 - my <= y <= y2 + my:
                 out[side] = label
