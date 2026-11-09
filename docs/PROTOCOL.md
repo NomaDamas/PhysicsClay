@@ -258,3 +258,33 @@ edit a time range of one body part with task `edit_skill {name, part, t0?, t1?, 
 - Test only: `{type:"gesture_feed", frames:[landmarks...], fps}` plays synthetic landmark frames through the detector.
 - Feature hooks (optional): `ctx.store["nudge_hook"] = fn(ctx, delta)` (delta `None` -> label of the target it owns or `None`;
   a numpy delta -> apply, return a message) and `ctx.store["confirm_hook"] = fn(ctx)` (message if it confirmed something).
+
+## v5 (UX 3)
+
+### Brain: the LLM agent (`pps/agent.py`, `pps/features/agent.py`, `web/ui/agent.js`)
+- `{type:"agent", text, confirm?: bool (default true), llm?: {base_url, key, model, effort?}}` starts a turn;
+  `{type:"agent", op:"reset"}` clears the conversation. One turn at a time: a message while busy gets an `error` event.
+- The model is any OpenAI-compatible Responses API (`POST {base_url}/responses`, function tools, `store:false`).
+  Server config: `.env` `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` (default `gpt-6.1-terra`), `LLM_EFFORT` (default
+  `medium`). With `--byok` the server key is never used: the browser sends `llm` with each message (stored only in that
+  browser, used for that turn only, never in state or logs); its `base_url` must be public `https`.
+- Each turn runs in a background thread (at most 8 model calls). The agent acts only through browser messages
+  (`task`, `plan`, `choose`, `zone`, `goal`, `point3d`, `teach`, `world`) and reads the latest state frame. Task ids it
+  launches start with `ag` (the browser hides app.js's own cards for them; the tool cards cover them).
+- Tools come from the robot's capabilities (`state.world.robot.capabilities`, G1 defaults without it): `observe`,
+  `pick_place(object, target | marker | xyz)`, `reach`, `follow_path`, `play_skill`, `go_home`, `stop`, `reset_scene`,
+  `set_speed`, `add_zone(near | rect)`, `remove_zone`, `clear_zones`, `set_goal_layout(targets)`, `run_goal`,
+  `choose_candidate(key)`, `confirm_plan`, `cancel_plan`, `follow_me`, `start_teaching`, and the world tools `set_robot`,
+  `build_scene`, `add_object`, `remove_object` (they answer "not available in this build" while `state.world` is absent).
+- Confirm before moving (default on): motion tools send `preview:true`; once a plan card is proposing, the agent replies
+  ("…say go") and won't launch another motion that turn. "go"/"yes"/"응" is heard by the plan card on `pc-hear`; when the
+  confirmed task ends, the agent reports the result (`result` event + robot line) and remembers it for the next turn.
+- System prompt: `pps/world/prompts/base.md` + `pps/world/prompts/<robot id>.md` when present (else a built-in prompt),
+  plus a compact JSON of the current world (robot, objects, markers, zones, plan card, open question, skills).
+- Replies are spoken through `state.say` (kind `robot`), so the feed and TTS work as for any robot line.
+- `state.agent = {available, busy, model, confirm, byok, events: [{id, kind: "user"|"thinking"|"tool"|"result"|"reply"|"error", text, tool?, args?, ok?, t}]}`
+  (last 40). A `tool` event appears with no `ok` while it runs and gets `ok` + a one-line result when it returns.
+- Browser: after `pc-hear` is not handled, app.js fires a cancelable `pc-intent` (`detail: {text, source}`). agent.js
+  takes it when the agent is on and available (server LLM, or a BYOK key) — except stop words, which go straight to the
+  robot — otherwise the UX 2.0 rule parser runs. Settings ("Agent brain"): use the agent, confirm before moving, and the
+  BYOK endpoint/key/model/effort (`localStorage` `pc.agentOn`, `pc.agentConfirm`, `pc.llmBase`, `pc.llmKey`, `pc.llmModel`, `pc.llmEffort`).

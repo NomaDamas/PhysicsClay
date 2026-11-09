@@ -493,7 +493,7 @@
     d.append(who, t); feedAppend(d); lastLine = { k: kind, t: text, at: Date.now(), el: d }; return d;
   }
   function makeCard(id, action, args, source) {
-    const card = document.createElement("article"); card.className = "card"; card.dataset.status = "planning";
+    const card = document.createElement("article"); card.className = "card"; card.dataset.status = "planning"; card.dataset.id = id;
     card.innerHTML = '<div class="card-top"><span class="card-title"></span><span class="card-act"></span><span class="pill">planning</span></div><div class="card-args"></div><div class="card-msg"></div><div class="card-meta"></div>';
     card.querySelector(".card-title").textContent = actionTitle(action);
     card.querySelector(".card-act").textContent = action;
@@ -785,6 +785,9 @@
     if (live.session) { live.session.sendText(text); return; } // gemini.js echoes it as a final user transcript -> teachHear there
     addLine("user", text);
     if (teachHear(text)) return;
+    // UX 3: nothing on pc-hear took it (plan "go", "which one?" answers, zone phrases) -> the LLM agent (web/ui/agent.js)
+    // may take it here; if it doesn't, the UX 2.0 rule parser below runs as before.
+    if (!window.dispatchEvent(new CustomEvent("pc-intent", { detail: { text, source }, cancelable: true }))) return;
     const it = parseIntent(text);
     if (!it) { const msg = "I didn't catch an action. Try “put the mug on the right”, “follow me”, or tap the table."; addLine("robot", msg); speak(msg); return; }
     if (it[0] === "clear") { clearAll(); speak("Cleared."); return; }
