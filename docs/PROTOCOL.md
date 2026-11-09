@@ -109,3 +109,21 @@ Saved task skills replay with `play_skill`.
 - `{type:"mock", enabled}`: offline brain (pointing -> marker P, both hands up -> stop, wave), narrates verdicts as `state.say`.
 - `{type:"path3d", points:[[x,y,z]...], hand?}`: 3D route from the browser editor; `pick_place` target "along my path" carries along it.
 - `GET /scene.json`, `GET /mesh/<id>.bin`, `state.geom_poses`: everything a browser 3D view needs.
+
+## v3 additions (demo build)
+One-liner everywhere: **"A new generation of interactive prompt for Physical AI."** Sub-line: "Text can't carry where, which path,
+or what not to touch. Show it, say it, point at it: the robot understands, checks it against physics, and does it."
+
+- **Phone / browser camera**: client sends BINARY `0x10 + JPEG` (≈640x360, ≤10 fps) from getUserMedia. While such frames
+  arrive (<1 s old) the server uses them as "your camera" (`state.source = "phone"`), else the laptop webcam.
+- **Robot choice (robot-independent)**: `{type:"robot", name:"g1"|"ur5e"}`. `state.robot`, `state.robots = [{id, label}]`.
+  The same intents/teach specs run on either body; each has its own sim world. After a switch `/scene.json` changes
+  (3D view must reload it when `state.robot` changes).
+- **Spatial model**: `{type:"spatial_model", name:"yolo-seg"|"mediapipe"|"off"}`; `{type:"spatial", target:"camera"|"robot", query?}`
+  runs Gemini Robotics-ER on that frame. `state.spatial = {model, objects:[{label, score, box:[u1,v1,u2,v2], poly:[[u,v]...]|null}],
+  er:{target, query, points:[{label,u,v}], ms}|null}` (camera objects use mirrored camera coords like `state.objects`).
+- **Server-side Gemini** (key kept on the server, never sent to browsers): `state.server_gemini = true` when available.
+  Live proxy WebSocket: `/gemini/live` (same messages as Google's BidiGenerateContent, no key). REST proxy: `POST /gemini/rest/<model>:generateContent`.
+- **Demo autopilot** (scripted mock so the demo always works): `{type:"demo", name:"full"|"text_vs_spatial"|"teach"|"stop"}`.
+  `state.demo = {name, step, total, title} | null`. It drives the real system (tasks, teach, 3D route) and narrates through
+  `state.say` with kinds "user" (what the person says/types), "robot", "vision", "caption" (on-screen caption, e.g. "Text only").
