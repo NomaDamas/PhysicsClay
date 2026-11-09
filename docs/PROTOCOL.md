@@ -175,3 +175,21 @@ or what not to touch. Show it, say it, point at it: the robot understands, check
 Every final typed or spoken utterance (text box, browser speech, Gemini Live transcript) first fires a cancelable
 `window` event `pc-hear` with `detail: {text, phase}` (teach phase), except while a demonstration is being recorded.
 A module that handles the utterance calls `preventDefault()`, and the normal intent parser is skipped.
+
+### Keep-out zones (#D) — `pps/features/zones.py`, `web/ui/zones.js`
+- `{type:"zone", op:"add", rect:[x0,y0,x1,y1] | center:[x,y] + size:[w,d] | center + shape:"circle" + r, height?, label?, source?}`:
+  a volume standing on the table top (robot frame, metres; default height 0.30). `source`: "paint" | "voice" | "text".
+- `{type:"zone", op:"add", near:"vase"|"mug"|"red block"|"blue block"|<any target resolve() knows>, source:"voice"}`: a circle
+  around that object (its radius + 6 cm, its height + 6 cm). The web client sends it when a final utterance (typed or spoken)
+  says "stay away from X", "keep clear of X", "don't go near / don't touch X", "avoid X", "without touching X" (or 꽃병 근처에 가지 마).
+  If the sentence also asks for a pick/put/move, the zone is sent first and the task still runs.
+- `{type:"zone", op:"remove", id}` · `{type:"zone", op:"clear"}`.
+- `state.zones = [{id:"A", shape:"rect"|"circle", center:[x,y,z_table], size:[w,d], height, label, name, near, source}]`
+  (`label` is the sentence form used in reasons, e.g. "keep-out zone A", "the vase keep-out zone"; `name` is the short chip text).
+- Voice/text changes are acknowledged through `state.say`.
+- Planning (hook `tasks.keepout`, no-op without zones): drawn/3D path waypoints inside a zone are `ok:false` and
+  `messages`/`follow_path` name the zone; a task whose hand or carried object would enter a zone fails naming it; `pick_place`
+  detours around (either side) or over zones, checked for reach, and says so ("…, going around keep-out zone A"); place spots
+  inside a zone shift to a free spot. A drawn route is re-checked when zones change.
+- Web: `web/app.js` fires a cancelable `pc-text` window event `{detail:{text}}` for every final user utterance before the
+  rule parser; a module that handles it calls `preventDefault()`.

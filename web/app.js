@@ -688,7 +688,7 @@
   // mock / scripted brain utterances: state.say = {id, text, kind: "robot"|"user"|"vision"}
   let lastSayId = null;
   function onSay() {
-    const sy = state.say; if (!sy || typeof sy !== "object" || sy.id == null || !sy.text) return;
+    const sy = state.say; if (!sy || typeof sy !== "object" || sy.id == null || !sy.text) { if (gotState && lastSayId === null) lastSayId = ""; return; } // nothing stale: the next line is new
     const id = String(sy.id); if (id === lastSayId) return;
     const first = lastSayId === null; lastSayId = id;
     if (first && !state.mock && !settings.mock && !state.demo) return; // stale line from before this page loaded
