@@ -127,3 +127,13 @@ or what not to touch. Show it, say it, point at it: the robot understands, check
 - **Demo autopilot** (scripted mock so the demo always works): `{type:"demo", name:"full"|"text_vs_spatial"|"teach"|"stop"}`.
   `state.demo = {name, step, total, title} | null`. It drives the real system (tasks, teach, 3D route) and narrates through
   `state.say` with kinds "user" (what the person says/types), "robot", "vision", "caption" (on-screen caption, e.g. "Text only").
+
+## v4 (UX 2.0)
+
+### C · Candidates: the robot asks which one
+- A `pick_place` task whose object words match several movable objects ("the block" with a red and a green block, or "thing") is not run. The task gets `status: "asking"` and the question as its message, and the state gets
+  `choices: {id, question, options: [{key: "1"|"2"|…, name, label, color, pos: [x,y,z], uv: [u,v]|null}]}`, numbered left to right as the robot sees them.
+- Optional on the task: `object_pos: [x,y,z]` or `object_uv: [u,v]` (where you pointed). One object within 10 cm is used directly; two or more ask.
+- Answer: `{type: "choose", id, key}`. `key` can be the number, an object name, free text ("the red one", "two", "2번", "left"), `"cancel"`, or `pos`/`uv` instead of `key`. The original request then resumes, going through the task pre-hooks again (so plan preview still applies).
+- A new marker near a candidate (a tap or pointing) also answers. A new task, or 120 s passing, clears the question.
+- Scene: `green_block` is a new movable object (a 2.6 cm cube).

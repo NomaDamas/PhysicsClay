@@ -89,7 +89,7 @@ async def main():
     keys = ("mode", "view", "feasibility", "markers", "path", "task", "holding", "scene_objects", "skills", "teach", "geom_poses", "say", "mock")
     check("state fields", all(k in st for k in keys), ",".join(k for k in keys if k not in st))
     names = sorted(o["name"] for o in st["scene_objects"])
-    check("scene objects", names == ["blue block", "mug", "red block", "vase"], str(names))
+    check("scene objects", names == ["blue block", "green block", "mug", "red block", "vase"], str(names))
 
     # --- spatial: tap, draw, 3D path
     await send(type="tap", u=0.45, v=0.55); await pump(0.5)
