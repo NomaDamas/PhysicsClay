@@ -657,3 +657,10 @@ dialog[open] { animation: rise var(--med) var(--ease); }
 body .pcg-legend { max-width: calc(100% - 160px); }
 body .pcg-toggle .pcg-strip { display: none; }
 @media (max-width: 760px) { body .pcg-legend { display: none; } body .pcg-chip { top: 4px; padding: 4px 8px; font-size: 11px; } }
+/* "which one?" sits in the plan column like the design's "Needs you" state; the idle plan card steps aside meanwhile */
+[data-slot="plan"] .cand-card.in-plan { position: static; transform: none; width: auto; max-width: none; margin: 0; border: 2px solid var(--hot); }
+[data-slot="plan"]:has(.cand-card.in-plan:not([hidden])) .plan-card { display: none; }
+/* feature panels (goal, zones) come right after the plan, above the teach panel */
+.plan-scroll > [data-slot="plan"] { order: 0; }
+.plan-scroll > [data-slot="side"] { order: 1; }
+.plan-scroll > * { order: 2; }

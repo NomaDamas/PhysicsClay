@@ -107,7 +107,13 @@
     <button type="button" class="cand-cancel">${U.icon("x", 16)}<span>Cancel</span></button></div>`;
   card.querySelector(".cand-cancel").addEventListener("click", () => choose("cancel"));
   let mounted = false;
-  function mountCard() { if (!mounted) { U.slot("stage").appendChild(card); mounted = true; } }
+  // UX 2.0: "which one?" is a state of the robot's plan card, so it goes first in the plan column when the shell has one
+  function mountCard() {
+    if (mounted) return;
+    const plan = document.querySelector('[data-slot="plan"]');
+    if (plan) { plan.prepend(card); card.classList.add("in-plan"); } else U.slot("stage").appendChild(card);
+    mounted = true;
+  }
 
   function renderCard() {
     mountCard();
