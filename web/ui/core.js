@@ -50,6 +50,7 @@
     return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   }
 
+  const ORDER = ["point", "zone", "goal", "show", "path"];
   function renderTool(t) {
     const b = document.createElement("button");
     b.type = "button"; b.className = "pcui-tool"; b.dataset.tool = t.id;
@@ -57,7 +58,10 @@
     b.title = t.title || t.label;
     b.innerHTML = `${t.icon && t.icon.startsWith("<") ? t.icon : icon(t.icon || t.id)}<span>${t.label}</span>`;
     b.addEventListener("click", () => selectTool(active === t.id ? null : t.id));
-    slot("tools").appendChild(b);
+    // dock order follows the UX 2.0 design (Point, Zone, Goal, Show, Path), whatever order the modules load in
+    const rank = (id) => { const i = ORDER.indexOf(id); return i < 0 ? ORDER.length : i; };
+    const host = slot("tools"), next = [...host.querySelectorAll(".pcui-tool")].find((o) => rank(o.dataset.tool) > rank(t.id));
+    host.insertBefore(b, next || null);
     t.button = b;
   }
   function tool(t) {

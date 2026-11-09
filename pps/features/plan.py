@@ -338,8 +338,18 @@ def on_plan(ctx, msg):
             _set(ctx, None)
 
 
+def _confirm_hook(ctx):
+    """A "go on" gesture (pps/features/gestures.py) confirms a waiting plan."""
+    p = ctx.store.get(KEY)
+    if p and p["phase"] == "proposing" and p["ok"]:
+        on_plan(ctx, {"op": "confirm"})
+        return "Running the plan"
+    return None
+
+
 @ext.tick
 def track(ctx):
+    ctx.store.setdefault("confirm_hook", _confirm_hook)
     p = ctx.store.get(KEY)
     if not p:
         return
