@@ -6,6 +6,7 @@ Browser talks to Gemini Live itself (key stays in the browser); intents arrive h
 Protocol: docs/PROTOCOL.md.   Run: .venv/bin/python -m pps.app [--video clip.mp4] [--objects] [--fake] [--https]
 """
 import argparse
+import copy
 import os
 import asyncio
 import json
@@ -31,7 +32,9 @@ from .mock import MockBrain
 from .spatial import ER_MODEL, Spatial, byok, gemini_key
 from .teach import Teacher
 from .demo import Demo
-from .tasks import REGIONS, Tasks, edit_skill, skills_meta
+from .tasks import REGIONS, Tasks, apply_surface, edit_skill, skills_meta
+from .world import profiles as world_profiles, scene as world_scene
+from .world.runtime import make_runtime
 from . import ext
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +54,8 @@ class Shared:
         self.cmds = []
         self.clients = set()
         self.running = True
+        self.scene = None          # (model, /scene.json payload, mesh key) of the current world, set by the worker
+        self.caps = ()             # current robot's capabilities (the upload endpoint checks imitate_video)
 
     def put(self, cam, sim, state):
         with self.lock:
@@ -119,6 +124,9 @@ async def upload(request):
         field = await reader.next()
     if field is None:
         return web.json_response({"ok": False, "message": "no 'video' field"}, status=400)
+    if "imitate_video" not in request.app["shared"].caps:
+        return web.json_response({"ok": False, "message": "Imitating a video needs a humanoid body (the Unitree G1). Switch robots first."},
+                                 status=409)
     from urllib.parse import unquote
     stem = "".join(ch for ch in Path(unquote(field.filename or "video")).stem.lower().replace(" ", "_") if ch.isalnum() or ch in "_-")[:28] or "video"
     ext = (Path(field.filename or "v.mp4").suffix or ".mp4").lower()
@@ -139,12 +147,61 @@ async def upload(request):
     return web.json_response({"ok": True, "name": stem, "message": f"Imitating '{stem}'. It becomes a skill when the video ends."})
 
 
-def scene_payload(m):
+def scene_payload(m, world=None, key=None):
+    """/scene.json: every visible geom of the current world (+ the work surface, so the 3D view can raycast it)."""
+    if world is not None and not world.legacy:
+        out = world_payload(m, world, key)
+    else:
+        out = legacy_payload(m)
+    s = world.surface if world is not None else world_scene.surface("table")
+    out["surface"] = {"z": s["top"], "x0": s["x"][0], "x1": s["x"][1], "y0": s["y"][0], "y1": s["y"][1]}
+    return out
+
+
+GEOM_KINDS = {int(k): v for k, v in {
+    mujoco.mjtGeom.mjGEOM_PLANE: "plane", mujoco.mjtGeom.mjGEOM_BOX: "box", mujoco.mjtGeom.mjGEOM_MESH: "mesh",
+    mujoco.mjtGeom.mjGEOM_CYLINDER: "cylinder", mujoco.mjtGeom.mjGEOM_SPHERE: "sphere",
+    mujoco.mjtGeom.mjGEOM_CAPSULE: "capsule", mujoco.mjtGeom.mjGEOM_ELLIPSOID: "ellipsoid"}.items()}
+
+
+def world_payload(m, world, key):
+    """Any robot / scene: visual geoms (groups 0-2, not the IK target ghosts); robot meshes are served per world."""
     geoms, meshes = [], {}
-    kinds = {mujoco.mjtGeom.mjGEOM_PLANE: "plane", mujoco.mjtGeom.mjGEOM_BOX: "box", mujoco.mjtGeom.mjGEOM_MESH: "mesh",
-             mujoco.mjtGeom.mjGEOM_CYLINDER: "cylinder", mujoco.mjtGeom.mjGEOM_SPHERE: "sphere",
-             mujoco.mjtGeom.mjGEOM_CAPSULE: "capsule", mujoco.mjtGeom.mjGEOM_ELLIPSOID: "ellipsoid"}
-    kinds = {int(k): v for k, v in kinds.items()}
+    d = mujoco.MjData(m)
+    if world.home_q is not None:
+        d.qpos[:] = world.home_q
+    mujoco.mj_forward(m, d)
+    helper = {b for b in range(m.nbody) if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or "").endswith("_target")}
+    for g in range(m.ngeom):
+        grp, typ, b = int(m.geom_group[g]), int(m.geom_type[g]), int(m.geom_bodyid[g])
+        if grp not in (0, 1, 2) or typ not in GEOM_KINDS or b in helper:
+            continue
+        rgba = m.geom_rgba[g].tolist()
+        mat = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MATERIAL, m.geom_matid[g]) if m.geom_matid[g] >= 0 else None
+        if mat == "wood":
+            rgba = [0.66, 0.48, 0.31, 1.0]
+        elif mat == "pc_mug":
+            rgba = [0.70, 0.18, 0.20, 1.0]
+        elif mat is not None:
+            rgba = m.mat_rgba[m.geom_matid[g]].tolist()
+        if typ == int(mujoco.mjtGeom.mjGEOM_PLANE):
+            rgba = [0.92, 0.92, 0.94, 1.0]
+        if rgba[3] <= 0.01:
+            continue
+        name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+        mid = int(m.geom_dataid[g]) if typ == int(mujoco.mjtGeom.mjGEOM_MESH) else None
+        if mid is not None:
+            meshes[str(mid)] = {"url": f"/mesh/{mid}.bin?w={key}"}
+        geoms.append({"id": int(g), "name": name, "kind": GEOM_KINDS[typ], "mesh": None if mid is None else str(mid),
+                      "size": [round(float(x), 5) for x in m.geom_size[g]], "rgba": [round(float(x), 3) for x in rgba],
+                      "pos": [round(float(x), 5) for x in d.geom_xpos[g]], "mat": [round(float(x), 6) for x in d.geom_xmat[g]],
+                      "dynamic": bool(b != 0)})
+    return {"geoms": geoms, "meshes": meshes, "world": key}
+
+
+def legacy_payload(m):
+    geoms, meshes = [], {}
+    kinds = GEOM_KINDS
     d = mujoco.MjData(m)
     mujoco.mj_forward(m, d)
     mug = m.body("mug").id
@@ -175,11 +232,18 @@ def scene_payload(m):
 
 
 async def scene_json(request):
-    return web.json_response(request.app["scene"])
+    cur = request.app["shared"].scene
+    return web.json_response(cur[1] if cur is not None else request.app["scene"])
 
 
 async def mesh_bin(request):
-    m = request.app["model"]
+    m = request.app["model"]                 # no ?w= key: the UX 2.0 world's meshes (cached by browsers for a day)
+    w = request.query.get("w")
+    if w:
+        cur = request.app["shared"].scene
+        if cur is None or cur[2] != w:
+            raise web.HTTPNotFound()         # a mesh of a world that's gone
+        m = cur[0]
     try:
         i = int(request.match_info["mid"])
         va, vn, fa, fn = m.mesh_vertadr[i], m.mesh_vertnum[i], m.mesh_faceadr[i], m.mesh_facenum[i]
@@ -355,9 +419,65 @@ def run_server(shared, port, https_port):
 
 
 # ------------------------------------------------------------------ worker (main thread: GL + camera)
+def world_target(c, world):
+    """{type:"world", op} -> (robot id, scene spec) to build, or raise ValueError."""
+    op = c.get("op", "set")
+    robot, spec = world.profile.id, copy.deepcopy(world.spec)
+    if op == "set":
+        if c.get("robot") is not None:
+            p = world_profiles.get(c.get("robot"))
+            if p is None:
+                raise ValueError(f"I don't know the robot '{c.get('robot')}'. I know: {', '.join(world_profiles.PROFILES)}.")
+            robot = p.id
+        if isinstance(c.get("scene"), dict):
+            spec = c["scene"]
+        elif isinstance(c.get("template"), str):
+            spec["template"] = c["template"]
+    elif op == "add_object":
+        o = c.get("object") if isinstance(c.get("object"), dict) else {k: c[k] for k in ("name", "kind", "color", "size", "pos", "movable") if k in c}
+        if not o:
+            raise ValueError("add_object needs an object, e.g. {kind: 'cup', color: 'red'}.")
+        spec["objects"] = list(spec["objects"]) + [o]
+    elif op == "remove_object":
+        key = world_scene._slug(c.get("name"))
+        keep = [o for o in spec["objects"] if o["name"] != key]
+        if len(keep) == len(spec["objects"]):
+            keep = [o for o in spec["objects"] if key not in o["name"]] if key else keep
+        if len(keep) == len(spec["objects"]):
+            raise ValueError(f"There is no '{c.get('name')}' in the scene. Objects: {', '.join(o['name'] for o in spec['objects']) or 'none'}.")
+        spec["objects"] = keep
+    elif op == "reset":
+        robot, spec = world_profiles.DEFAULT_ROBOT, copy.deepcopy(world_scene.DEFAULT_SCENE)
+    else:
+        raise ValueError(f"Unknown world op '{op}'. Use set, add_object, remove_object or reset.")
+    return robot, spec
+
+
+def world_state(world, rev):
+    return {"rev": rev, "robot": world.profile.public(), "scene": world.spec, "robots": world_profiles.listing(),
+            "templates": world_scene.templates(), "surface": {"top": world.surface["top"], "x": list(world.surface["x"]),
+                                                              "y": list(world.surface["y"])},
+            "regions": {k: list(v) for k, v in world.regions.items()}, "notes": world.notes}
+
+
+def world_message(world):
+    p = world.profile
+    objs = [o["name"].replace("_", " ") for o in world.spec["objects"]]
+    msg = f"Now {p.label} at the {world_scene.TEMPLATES[world.spec['template']]['label'].lower()}"
+    msg += f" with {', '.join(objs)}." if objs else ", nothing on it yet."
+    if p.experimental:
+        msg += " Experimental: " + p.note
+    if world.notes:
+        msg += " (" + "; ".join(world.notes) + ")"
+    return msg
+
+
 def worker(args, shared):
-    rt = Runtime(mirror=not args.no_mirror)
-    tasks = Tasks(rt)
+    world = world_scene.build(None, None)                # the UX 2.0 world: G1 + today's table (scene_pc.xml)
+    world_rev = [1]
+    apply_surface(world.surface, world.regions)
+    rt = make_runtime(world, mirror=not args.no_mirror)
+    tasks = Tasks(rt, {o["name"]: o["kind"] for o in world.spec["objects"]})
     spatial = Spatial()
     teacher = Teacher(tasks)
     TEACHER[0] = teacher
@@ -367,7 +487,10 @@ def worker(args, shared):
     demo = Demo(tasks, teacher, brain, rt, push=shared.push_cmd, video_active=lambda: video_flag[0], er=lambda: spatial.er)
     ext.load()
     ctx = ext.make_ctx(rt=rt, tasks=tasks, teacher=teacher, brain=brain, demo=demo, spatial=spatial, aspect=ASPECT, push=shared.push_cmd)
-    dyn_geoms = [g for g in range(rt.model.ngeom) if rt.model.geom_group[g] == 2 and rt.model.geom_bodyid[g] != 0]
+    ctx.world = world
+    payload = scene_payload(rt.model, world, f"{world.profile.id}-{world_rev[0]}")
+    shared.scene, shared.caps = (rt.model, payload, f"{world.profile.id}-{world_rev[0]}"), tuple(rt.capabilities)
+    dyn_geoms = [gm["id"] for gm in payload["geoms"] if gm["dynamic"]]
     m, d = rt.model, rt.data
     renderer = mujoco.Renderer(m, SIM_H, SIM_W)
     pip_renderer = mujoco.Renderer(m, 300, 400)
@@ -387,6 +510,57 @@ def worker(args, shared):
     view = "robot"
     cam_params = None
 
+    def switch_world(robot, spec, tid="world"):
+        """Rebuild the world in place (robot and/or scene): runtime, tasks, teacher, demo, renderers, /scene.json."""
+        nonlocal world, rt, tasks, teacher, demo, m, d, renderer, pip_renderer, robot_cam, dyn_geoms, payload
+        if video_flag[0]:
+            tasks.set_task(tid, "world", "failed", "I'm imitating your video right now. Let it finish first.")
+            return False
+        try:
+            nw = world_scene.build(robot, spec)
+        except ValueError as e:
+            tasks.set_task(tid, "world", "failed", f"I couldn't build that world: {e}.")
+            return False
+        if demo.steps:
+            demo.stop()
+        apply_surface(nw.surface, nw.regions)
+        old_keepout = tasks.keepout
+        world, world_rev[0] = nw, world_rev[0] + 1
+        rt = make_runtime(nw, mirror=not args.no_mirror)
+        tasks = Tasks(rt, {o["name"]: o["kind"] for o in nw.spec["objects"]})
+        tasks.keepout = old_keepout                       # the zones feature's hook keeps working (zones are cleared below)
+        teacher = Teacher(tasks)
+        TEACHER[0] = teacher
+        demo = Demo(tasks, teacher, brain, rt, push=shared.push_cmd, video_active=lambda: video_flag[0], er=lambda: spatial.er)
+        ctx.rt, ctx.tasks, ctx.teacher, ctx.demo, ctx.world = rt, tasks, teacher, demo, nw
+        for k in ("zones",):                              # scene-bound feature state: positions of the old world
+            if isinstance(ctx.store.get(k), list):
+                ctx.store[k].clear()
+        for k in ("plan", "choices"):
+            ctx.store.pop(k, None)
+        if isinstance(ctx.store.get("goal"), dict):
+            ctx.store.pop("goal", None)
+        m, d = rt.model, rt.data
+        renderer.close()
+        pip_renderer.close()
+        renderer = mujoco.Renderer(m, SIM_H, SIM_W)
+        pip_renderer = mujoco.Renderer(m, 300, 400)
+        robot_cam = m.camera("robot_view").id
+        key = f"{nw.profile.id}-{world_rev[0]}"
+        payload = scene_payload(m, nw, key)
+        shared.scene, shared.caps = (m, payload, key), tuple(rt.capabilities)
+        dyn_geoms = [gm["id"] for gm in payload["geoms"] if gm["dynamic"]]
+        tasks.set_task(tid, "world", "done", world_message(nw))
+        return True
+
+    def lacks(cap, tid, action, what):
+        """Humanoid-only features on other bodies: a clear refusal instead of a broken attempt."""
+        if cap in rt.capabilities:
+            return False
+        tasks.set_task(tid, action, "failed", f"{what} needs a humanoid body: the {world.profile.label} can't do that. "
+                       "Switch to the Unitree G1 for it.")
+        return True
+
     pose = None if args.fake else Pose(str(ROOT / args.model))
     objects = Objects(str(ROOT / args.objects_model)) if (args.objects and not args.fake) else None
     cap, video_dt, source = None, 0.0, "synthetic"
@@ -400,7 +574,6 @@ def worker(args, shared):
         source = "webcam"
 
     sim_jpg_last = [None]
-    robot_choice = ["g1"]
     video_job = None   # {"name", "frames", "i", "prev_cap", "prev_dt", "prev_source", "prev_view"}
     grip_hist = {"l": [], "r": []}
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
@@ -502,6 +675,15 @@ def worker(args, shared):
                         rt.path_msg = f"Marker {mid} placed. Say 'put the mug on {mid}'."
                     else:
                         rt.path_msg = "That tap missed the scene."
+                elif t == "world":
+                    try:
+                        robot, spec = world_target(c, world)
+                    except ValueError as e:
+                        tasks.set_task(str(c.get("id", "world")), "world", "failed", str(e))
+                        continue
+                    switch_world(robot, spec, str(c.get("id", "world")))
+                elif t == "teach" and c.get("cmd") == "start" and lacks("teach_by_showing", "teach", "teach", "Teaching by showing"):
+                    continue
                 elif t == "teach":
                     cmd = c.get("cmd")
                     if cmd == "start":
@@ -527,14 +709,24 @@ def worker(args, shared):
                 elif t == "demo":
                     if c.get("name") == "stop":
                         demo.stop()
+                    elif not world.legacy:
+                        tasks.set_task("demo", "demo", "failed", "The scripted demos run in the default world (the G1 at the "
+                                       "wooden table). Reset the world first.")
                     else:
                         brain.enabled = True
                         demo.start(c.get("name", "full"))
-                elif t == "robot":
-                    robot_choice[0] = "ur5e" if c.get("name") == "ur5e" else "g1"
-                    if robot_choice[0] == "ur5e":
+                elif t == "robot":   # UX 2.0 robot switch: now a real switch of the body (the scene stays)
+                    p = world_profiles.get(c.get("name")) or world_profiles.get("g1")
+                    verdict = ""
+                    if p.id == "ur5e" and world.profile.id != "ur5e":   # first compile what this body just did for the arm
                         dispatch(tasks, rt, {"type": "task", "id": f"robot-{time.time():.0f}", "action": "compile_for", "robot": "ur5e"}, cam_params)
-                        brain.utter("Same task, different body: " + (tasks.task or {}).get("message", ""), "robot")
+                        verdict, vstatus = (tasks.task or {}).get("message", ""), (tasks.task or {}).get("status", "done")
+                    if p.id != world.profile.id:
+                        tid = f"robot-{time.time():.0f}"
+                        if switch_world(p.id, world.spec, tid) and verdict:
+                            tasks.set_task(tid, "compile_for", vstatus, f"{verdict} {tasks.task['message']}")
+                    if verdict:
+                        brain.utter("Same task, different body: " + verdict, "robot")
                 elif t == "spatial_model":
                     spatial.set_model(c.get("name"))
                 elif t == "spatial":
@@ -560,6 +752,8 @@ def worker(args, shared):
                     rt.path_msg = None
                 elif t == "view":
                     view = c.get("name") if c.get("name") in ("robot", "orbit", "stage") else "robot"
+                elif t == "source" and lacks("imitate_video", "video", "video", "Imitating a video"):
+                    continue
                 elif t == "source":
                     vc = cv2.VideoCapture(c["path"])
                     if not vc.isOpened():
@@ -654,8 +848,9 @@ def worker(args, shared):
         st["teach"] = teacher.state()
         st["demo"] = demo.state()
         video_flag[0] = video_job is not None
-        st["robot"] = robot_choice[0]
-        st["robots"] = [{"id": "g1", "label": "Unitree G1 humanoid"}, {"id": "ur5e", "label": "UR5e arm (compile + reach check)"}]
+        st["robot"] = world.profile.id                     # UX 2.0 aliases of state.world
+        st["robots"] = world_profiles.listing()
+        st["world"] = world_state(world, world_rev[0])
         st["spatial"] = spatial.state()
         st["server_gemini"] = gemini_key() is not None
         st["byok"] = byok()
@@ -679,8 +874,23 @@ def SKILL_FILE(key):
     return SKILL_DIR / f"{key}.json"
 
 
+HUMANOID_ONLY = {"follow_me": ("follow_me", "Following you"), "learn_skill": ("follow_me", "Learning a motion skill"),
+                 "edit_skill": ("follow_me", "Editing a motion skill")}
+
+
 def dispatch(tasks, rt, c, cam):
     tid, a = str(c.get("id", "t?")), c.get("action")
+    caps = getattr(rt, "capabilities", ())
+    need = HUMANOID_ONLY.get(a)
+    if a == "play_skill":
+        key = str(c.get("name") or "").strip().lower().replace(" ", "_")
+        f = SKILL_FILE(key)
+        taught = f.exists() and json.load(open(f)).get("type") == "task"
+        need = ("teach_by_showing", "Replaying a task taught by showing") if taught else ("follow_me", "Replaying a motion skill")
+    if need and need[0] not in caps and not (a == "follow_me" and not c.get("enabled", True)):
+        label = getattr(getattr(rt, "profile", None), "label", "this robot")
+        tasks.set_task(tid, a, "failed", f"{need[1]} needs a humanoid body: the {label} can't do that. Switch to the Unitree G1 for it.")
+        return
     if a == "pick_place":
         tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT)
     elif a == "reach":
@@ -722,6 +932,8 @@ def dispatch(tasks, rt, c, cam):
         tasks.set_task(tid, a, "planning", "Compiling for UR5e.")
         r = compile_ur5e(pts)
         tasks.set_task(tid, a, "done" if r["ok"] else "failed", r["message"])
+    elif a == "drive":
+        tasks.drive(tid, c.get("dx", 0.0), c.get("dy", 0.0), c.get("dyaw", 0.0))
     elif a == "stop":
         tasks.stop(tid)
     elif a == "home":

@@ -40,8 +40,15 @@ HANDS = ["right_palm", "left_palm"]
 
 
 class Runtime:
-    def __init__(self, mirror=True):
-        self.model = mujoco.MjModel.from_xml_path(XML.as_posix())
+    """The Unitree G1 runtime (humanoid: mirroring, whole-body retargeting, balance). Other bodies: pps/world/runtime.py.
+    model/home_q: a world built by pps.world.scene (None = the UX 2.0 scene_pc.xml with its 'stand' keyframe)."""
+    profile_id = "g1"
+    capabilities = ("pick_place", "reach", "follow_path", "imitate_video", "follow_me", "teach_by_showing", "balance")
+
+    def __init__(self, mirror=True, model=None, home_q=None):
+        self.model = model if model is not None else mujoco.MjModel.from_xml_path(XML.as_posix())
+        self.home_q = None if home_q is None else np.asarray(home_q, float).copy()
+        self.hands = list(HANDS)
         self.configuration = mink.Configuration(self.model)
         self.data = self.configuration.data
         m, d = self.model, self.data
@@ -62,6 +69,8 @@ class Runtime:
         self.feet_mid = [m.body(f"{f}_target").mocapid[0] for f in FEET]
         self.hands_mid = {h: m.body(f"{h}_target").mocapid[0] for h in HANDS}
         self.palm_sid = {h: m.site(h).id for h in HANDS}
+        self.root_bid = m.body("pelvis").id
+        self.robot_roots = {int(m.body_rootid[self.root_bid])}
         self.home()
 
         # Robot geometry for retargeting (fixed at the home pose).
@@ -77,7 +86,7 @@ class Runtime:
                           "feet": {f: d.mocap_pos[mid].copy() for f, mid in zip(FEET, self.feet_mid)},
                           "torso": self.torso_task.transform_target_to_world.copy()}
         self.body_now = None
-        self.validator = Validator(m, d)
+        self.validator = Validator(m, d, root_body=self.root_bid)
         self.recorder = IntentRecorder("unitree_g1", [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(m.njnt)], mirror)
 
         self.mode = "MIRROR"
@@ -105,14 +114,17 @@ class Runtime:
     # ------------------------------------------------------------------ setup
     def home(self):
         m, d = self.model, self.data
-        self.configuration.update_from_keyframe("stand")
+        if self.home_q is not None:
+            self.configuration.update(self.home_q.copy())
+        else:
+            self.configuration.update_from_keyframe("stand")
         self.posture_task.set_target_from_configuration(self.configuration)
         self.pelvis_task.set_target_from_configuration(self.configuration)
         self.torso_task.set_target_from_configuration(self.configuration)
         for h, f in zip(HANDS, FEET):
             mink.move_mocap_to_frame(m, d, f"{f}_target", f, "site")
             mink.move_mocap_to_frame(m, d, f"{h}_target", h, "site")
-        d.mocap_pos[self.com_mid] = d.subtree_com[1]
+        d.mocap_pos[self.com_mid] = d.subtree_com[self.root_bid]
         if hasattr(self, "body_home"):
             self.torso_task.set_target(self.body_home["torso"])
             self.body_now = None
@@ -163,7 +175,7 @@ class Runtime:
         """Trace the path with IK on a scratch configuration; a waypoint is ok if the hand gets within reach_tol."""
         cfg = mink.Configuration(self.model)
         cfg.update(self.configuration.q.copy())
-        task = self.hand_tasks[HANDS.index(palm)]
+        task = self.hand_tasks[self.hands.index(palm)]
         saved = task.transform_target_to_world
         mid = self.hands_mid[palm]
         quat = self.data.mocap_quat[mid].copy()
@@ -318,12 +330,12 @@ class Runtime:
         self.com_task.set_target(d.mocap_pos[self.com_mid])
         for task, mid in zip(self.feet_tasks, self.feet_mid):
             task.set_target(mink.SE3.from_mocap_id(d, mid))
-        for task, h in zip(self.hand_tasks, HANDS):
+        for task, h in zip(self.hand_tasks, self.hands):
             task.set_target(mink.SE3.from_mocap_id(d, self.hands_mid[h]))
         vel = mink.solve_ik(self.configuration, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
         self.configuration.integrate_inplace(vel, dt)
         mujoco.mj_camlight(self.model, d)
-        targets = {h: d.mocap_pos[self.hands_mid[h]].copy() for h in HANDS}
+        targets = {h: d.mocap_pos[self.hands_mid[h]].copy() for h in self.hands}
         res = self.validator.evaluate(targets, vel)
         if self.mode == "FOLLOW":
             self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"], {"source": "drawn_path"})
@@ -355,7 +367,7 @@ class Runtime:
         """Colour the real model: ghost targets by reachability, links at limits red, collision risks orange."""
         m, res = self.model, self.last_result
         m.geom_rgba[:] = self.default_rgba
-        for h in HANDS:
+        for h in self.hands:
             bad = res["flags"].get(h) == "unreachable"
             m.geom_rgba[self.target_geoms[h]] = (1.0, 0.25, 0.25, 0.55) if bad else (0.3, 0.9, 0.4, 0.35)
         for name, kind in res["flags"].items():
@@ -392,7 +404,7 @@ class Runtime:
                                 np.eye(3).flatten(), np.array(rgba, dtype=np.float32))
             scn.ngeom += 1
 
-        for h in HANDS:
+        for h in self.hands:
             if res["flags"].get(h) == "unreachable":
                 add_capsule(d.site_xpos[self.palm_sid[h]], d.mocap_pos[self.hands_mid[h]], 0.006, (1.0, 0.2, 0.2, 0.9))
         if self.path is not None:

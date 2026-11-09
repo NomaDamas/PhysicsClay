@@ -47,6 +47,20 @@ Movable objects become mocap bodies named `obj_<name>`; fixed ones `obs_<name>`.
   `rev` increments on every rebuild; the browser reloads `/scene.json` and the 3D stage when it changes.
 * `state.robot` / `state.robots` (UX 2.0 keys) stay as aliases.
 
+### As built (World workstream notes for Brain / Robot UX)
+* Robot ids: `g1, panda, ur5e, xarm7, iiwa14, aloha, apollo, stretch3, tidybot, spot, h2` (`h2` is experimental: no
+  standing keyframe, reach only, no pick & place). Unknown kinds/colours in a scene spec fall back sensibly; `kind`
+  also accepts `vase`. An object without a name is called `<color>_<kind>` when a colour is given, else `<kind>`.
+* Every `world` op answers in `state.task` (`action: "world"`, `done` with a one-sentence summary, or `failed` with
+  the reason). `reset` goes back to the default world (G1 + the UX 2.0 table). `set` keeps whatever it isn't given
+  (`{op: "set", robot: "panda"}` keeps the scene, `{op: "set", scene: {...}}` keeps the robot).
+* `state.world` also carries `surface` (`top`, `x`, `y`), `regions` (named spots, relative to the surface's near edge)
+  and `notes` (e.g. an object moved onto the surface). `/scene.json` carries `surface` so the 3D view raycasts it.
+* Task action `drive {dx, dy (m, world frame), dyaw (deg)}` for `drive_base` bodies (TidyBot: holonomic; Stretch:
+  along the table only). Bases also move by themselves inside the IK when a target is out of the arm's reach.
+* Humanoid-only actions (`follow_me`, `learn_skill`, `edit_skill`, motion `play_skill`, `teach` start, video upload)
+  are refused on other bodies with a message naming the robot; the scripted demos run only in the default world.
+
 ## 2. Brain (owner: Brain workstream) — `pps/agent.py`
 * **Config:**
   * Locally it reads `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` (default `gpt-6.1-terra`), and

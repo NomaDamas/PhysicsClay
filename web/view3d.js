@@ -100,13 +100,15 @@ async function loadScene() {
   try {
     const r = await fetch("/scene.json", { cache: "no-store" }); if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const sj = await r.json(), meshes = sj.meshes || {};
+    const sf = sj.surface; // UX 3: the work surface of the current world (table, kitchen counter, shelf, floor)
+    if (sf && [sf.z, sf.x0, sf.x1, sf.y0, sf.y1].every((v) => typeof v === "number" && isFinite(v))) { Object.assign(TABLE, sf); tablePlane.constant = -TABLE.z; }
     const built = await Promise.all(arr(sj.geoms).map(async (gm) => {
       if (!gm || (Array.isArray(gm.rgba) && gm.rgba[3] === 0)) return null;
       if (gm.kind === "plane") return floor(gm);
       let geo = null, shared = false;
       if (gm.kind === "mesh" && gm.mesh != null) {
         const url = (meshes[gm.mesh] && meshes[gm.mesh].url) || `/mesh/${gm.mesh}.bin`;
-        try { geo = await loadMesh(String(gm.mesh), url); shared = true; } catch (e) { console.warn("[3d]", e); return null; }
+        try { geo = await loadMesh(url, url); shared = true; } catch (e) { console.warn("[3d]", e); return null; }
       } else geo = primitive(gm);
       if (!geo) return null;
       const alpha = Array.isArray(gm.rgba) && gm.rgba.length > 3 ? gm.rgba[3] : 1;

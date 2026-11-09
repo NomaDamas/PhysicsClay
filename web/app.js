@@ -565,13 +565,15 @@
     }
     trackVideo();
     onSay();
-    if (state.robot) {
-      if (lastRobot && state.robot !== lastRobot) {
+    // UX 3: the world (robot body and/or scene) was rebuilt -> reload /scene.json and the 3D stage
+    const wrev = state.world && state.world.rev, robotKey = state.robot ? `${state.robot}#${wrev == null ? "" : wrev}` : null;
+    if (robotKey) {
+      if (lastRobot && robotKey !== lastRobot) {
         const v = P3();
         if (v && typeof v.reload === "function") { try { v.reload(); } catch (e) { /* noop */ } }
         else if (view3d) { location.href = location.pathname + "?view=3d"; }
       }
-      lastRobot = state.robot;
+      lastRobot = robotKey;
     }
     // marker created after our tap
     if (pendingTap && arr(state.markers).length !== pendingTap.n) pendingTap = null;
