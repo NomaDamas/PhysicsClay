@@ -194,9 +194,14 @@ async def main():
     async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test."}) as r:
         b = await r.read()
         check("OpenAI TTS endpoint", r.status == 200 and len(b) > 1000, f"{r.status} {len(b)}B")
-    async with s.post(BASE + "/gemini/rest/gemini-3.8-flash:generateContent", json={"contents": [{"parts": [{"text": "Reply OK"}]}]}) as r:
-        txt = await r.text()
-        check("Gemini REST proxy reaches Google", r.status in (200, 429) or "error" in txt, f"{r.status} {txt[:60]}")
+    async def gemini_rest():
+        async with s.post(BASE + "/gemini/rest/gemini-3.8-flash:generateContent", json={"contents": [{"parts": [{"text": "Reply OK"}]}]}) as r:
+            return r.status, await r.text()
+    req = asyncio.ensure_future(gemini_rest())
+    while not req.done():          # keep reading the socket so the server heartbeat doesn't drop us (Google can take 35 s)
+        await pump(0.3)
+    status, txt = req.result()
+    check("Gemini REST proxy reaches Google", status in (200, 429) or "error" in txt, f"{status} {txt[:60]}")
     check("server reports Gemini key", st.get("server_gemini") is True)
     await send(type="demo", name="keyfeatures"); t0 = time.time(); kinds = set(); seen = None
     while time.time() - t0 < 120:
