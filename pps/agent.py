@@ -290,6 +290,13 @@ def tool_specs(st, confirm=True):
         _fn("confirm_plan", "Run the plan card that is waiting. Only when the user just clearly approved it."),
         _fn("cancel_plan", "Drop the plan card that is waiting (nothing moves), or stop the plan that is running."),
     ]
+    if "pick_place" in caps:
+        T.append(_fn("act_on_pointing", "The person is across the table and may be pointing. Use this when their words refer to what they "
+                                        "point at ('this', 'that', 'here', 'there', '이거', '저기'…): pass their words; the server resolves them "
+                                        "against the pointing at speech time and runs it (plan card first when confirm is on).",
+                     {"text": {"type": "string", "description": "The user's words, e.g. 'put this there'."}}, ["text"]))
+        T.append(_fn("handover_to_person", "Bring the held (or named) object to the person's open hand, as far as the arm reaches.",
+                     {"object": {"type": "string", "description": "Object to bring; omit to use what the robot holds."}}))
     if "drive_base" in caps:
         T.append(_fn("drive", "Drive the mobile base (do this first when the target is out of the arm's reach). World frame: +x away from "
                               "the robot toward the table, +y to the robot's left. Small moves; the base will not drive into furniture.",
@@ -537,6 +544,11 @@ class Agent:
             out["world_tools"] = "not available in this build (one robot, fixed table scene)"
         out["task"] = {k: (st.get("task") or {}).get(k) for k in ("action", "status", "message")} if st.get("task") else None
         out["zones"] = st.get("zones") or []
+        cp = st.get("copresence") or {}
+        if cp.get("on"):   # co-presence: the person across the table, what they point at, what the robot attends to
+            pt = cp.get("pointing") or {}
+            out["person"] = {"pointing_at": pt.get("target"), "pointing_spot": pt.get("hit"), "hand_open": cp.get("hand_open"),
+                             "attention": cp.get("attention")}
         g = st.get("goal") or {}
         if g.get("status") and g.get("status") != "idle":
             out["goal"] = {"status": g.get("status"), "message": g.get("message"), "targets": g.get("targets")}
@@ -664,6 +676,29 @@ class Agent:
 
     def t_set_speed(self, a, confirm):
         return self._simple("set_speed", {"value": str(a.get("value") or "slower")})
+
+    def _copresence(self, msg, timeout=20):
+        before = json.dumps((self.state_now().get("copresence") or {}).get("reply"), sort_keys=True, default=str)
+        self.push(msg)
+        r, st = self._wait(lambda s: (s.get("copresence") or {}).get("reply")
+                           if json.dumps((s.get("copresence") or {}).get("reply"), sort_keys=True, default=str) != before else None, 4)
+        if r is None:
+            return {"ok": False, "message": "Co-presence is not available (no person in view)."}
+        tid = r.get("ran")
+        if tid:
+            t, st = self._wait(lambda s: (s.get("task") or {}) if (s.get("task") or {}).get("id") == tid
+                               and (s.get("task") or {}).get("status") not in ("planning", "running") else None, timeout)
+            r = dict(r, task_status=(t or {}).get("status"), task_message=(t or {}).get("message"))
+        return {"ok": bool(r.get("ok")), "resolved": {k: r.get(k) for k in ("kind", "object", "candidates", "spot", "marker")},
+                "message": r.get("task_message") or r.get("message"), "status": r.get("task_status")}
+
+    def t_act_on_pointing(self, a, confirm):
+        return self._copresence({"type": "copresence", "op": "utter", "text": str(a.get("text") or ""), "run": True,
+                                 "preview": bool(confirm), "id": self._tid("point")})
+
+    def t_handover_to_person(self, a, confirm):
+        return self._copresence({"type": "copresence", "op": "utter", "text": "give " + (str(a.get("object") or "it")) + " to me",
+                                 "run": True, "id": self._tid("handover")}, timeout=30)
 
     def t_drive(self, a, confirm):
         num = lambda k: float(a.get(k) or 0.0)

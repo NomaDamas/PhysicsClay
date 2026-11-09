@@ -347,9 +347,18 @@ def _landmarks(ctx, st, now):
     return getattr(ctx, "lm", None), getattr(ctx, "source", None)
 
 
+def _pick_palm(rt, y):
+    """The robot's hand on the side of a point (y > 0 = robot's left); single-arm bodies only have 'right_palm'."""
+    hands = list(getattr(rt, "hands", None) or getattr(rt, "palm_sid", {}).keys() or ["right_palm"])
+    want = "right_palm" if y <= 0 else "left_palm"
+    return want if want in hands else hands[0]
+
+
 @ext.tick
 def copresence_tick(ctx):
     st, now, tasks = _st(ctx), time.time(), ctx.tasks
+    if st.get("anchor_auto", True):     # stand across whatever surface the current world has (table, counter, shelf…)
+        st["anchor"] = (min(1.6, TABLE_X[1] + 0.33), 0.5 * (TABLE_Y[0] + TABLE_Y[1]))
     lm, src = _landmarks(ctx, st, now)
     st["src"] = src
     J = to_world(lm, st["anchor"]) if (st["on"] and lm) else None
@@ -742,7 +751,7 @@ def _pick_hold(ctx, msg):
         return True
     tasks.cur = name
     c = tasks.mug_center(name)
-    palm = "right_palm" if c[1] <= 0 else "left_palm"
+    palm = _pick_palm(ctx.rt, c[1])
     cur = ctx.rt.data.site_xpos[ctx.rt.palm_sid[palm]].copy()
     kps = [cur] + _grasp_kps(tasks, name, palm)
     ev = {2: "grasp"}
@@ -805,7 +814,7 @@ def _handover(ctx, msg):
     hand = np.asarray(hand, float)
     if palm is None:
         c = tasks.mug_center(name)
-        palm = "right_palm" if c[1] <= 0 else "left_palm"
+        palm = _pick_palm(ctx.rt, c[1])
     cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()
     kps, ev = [cur], {}
     if held is None:
@@ -889,6 +898,7 @@ def on_copresence(ctx, msg):
     elif op == "place":
         try:
             st["anchor"] = (float(np.clip(float(msg.get("x", PERSON[0])), 0.95, 1.6)), float(np.clip(float(msg.get("y", 0.0)), -0.6, 0.6)))
+            st["anchor_auto"] = False
         except (TypeError, ValueError):
             pass
     elif op == "heard":
