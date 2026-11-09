@@ -18,6 +18,7 @@ from pathlib import Path
 import cv2
 import mujoco
 import numpy as np
+import aiohttp
 from aiohttp import WSMsgType, web
 
 from .fake import fake_landmarks
@@ -26,7 +27,9 @@ from .protocol import LANDMARKS
 from .robot_runtime import HANDS, Runtime
 from .compile_other import compile_ur5e
 from .mock import MockBrain
+from .spatial import ER_MODEL, Spatial, gemini_key
 from .teach import Teacher
+from .demo import Demo
 from .tasks import REGIONS, Tasks, edit_skill, skills_meta
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +43,7 @@ class Shared:
     def __init__(self):
         self.lock = threading.Lock()
         self.cam = self.sim = self.pip = None
+        self.phone = None          # (time, jpeg bytes) from a browser/phone camera
         self.state = "{}"
         self.fid = 0
         self.cmds = []
@@ -78,6 +82,8 @@ async def ws_handler(request):
                     shared.push_cmd(json.loads(msg.data))
                 except ValueError:
                     pass
+            elif msg.type == WSMsgType.BINARY and msg.data[:1] == b"\x10":
+                shared.phone = (time.time(), msg.data[1:])
             elif msg.type == WSMsgType.ERROR:
                 break
     finally:
@@ -183,6 +189,63 @@ async def mesh_bin(request):
     return web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "max-age=3600"})
 
 
+import certifi  # noqa: E402
+
+SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+GEMINI_WS = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
+
+
+async def gemini_live_proxy(request):
+    """Browser <-> our server <-> Gemini Live. The key never leaves the server."""
+    key = gemini_key()
+    ws = web.WebSocketResponse(max_msg_size=0)
+    await ws.prepare(request)
+    if not key:
+        await ws.close(code=4001, message=b"no server key")
+        return ws
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX)) as sess:
+        try:
+            up = await sess.ws_connect(GEMINI_WS + "?key=" + key, max_msg_size=0)
+        except Exception as e:
+            await ws.close(code=4002, message=str(e)[:100].encode())
+            return ws
+
+        async def down():
+            async for m in up:
+                if m.type == WSMsgType.TEXT:
+                    await ws.send_str(m.data)
+                elif m.type == WSMsgType.BINARY:
+                    await ws.send_bytes(m.data)
+                else:
+                    break
+            if not ws.closed:
+                await ws.close(code=up.close_code or 1000, message=(str(up.exception() or "") or "upstream closed")[:100].encode())
+
+        task = asyncio.create_task(down())
+        async for m in ws:
+            if up.closed:
+                break
+            if m.type == WSMsgType.TEXT:
+                await up.send_str(m.data)
+            elif m.type == WSMsgType.BINARY:
+                await up.send_bytes(m.data)
+        await up.close()
+        task.cancel()
+    return ws
+
+
+async def gemini_rest_proxy(request):
+    key = gemini_key()
+    if not key:
+        return web.json_response({"error": {"message": "no server key"}}, status=503)
+    tail = request.match_info["tail"]
+    body = await request.read()
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX)) as sess:
+        async with sess.post("https://generativelanguage.googleapis.com/v1beta/models/" + tail, data=body,
+                             headers={"Content-Type": "application/json", "x-goog-api-key": key}) as r:
+            return web.Response(body=await r.read(), status=r.status, content_type="application/json")
+
+
 async def index(request):
     return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
 
@@ -217,6 +280,8 @@ def run_server(shared, port, https_port):
         app.router.add_get("/", index)
         app.router.add_get("/ws", ws_handler)
         app.router.add_post("/upload", upload)
+        app.router.add_get("/gemini/live", gemini_live_proxy)
+        app.router.add_post("/gemini/rest/{tail:.*}", gemini_rest_proxy)
         app.router.add_get("/scene.json", scene_json)
         app.router.add_get("/mesh/{mid}.bin", mesh_bin)
         sm = mujoco.MjModel.from_xml_path(str(ROOT / "assets" / "unitree_g1" / "scene_pc.xml"))
@@ -238,10 +303,12 @@ def run_server(shared, port, https_port):
 def worker(args, shared):
     rt = Runtime(mirror=not args.no_mirror)
     tasks = Tasks(rt)
+    spatial = Spatial()
     teacher = Teacher(tasks)
     TEACHER[0] = teacher
     brain = MockBrain()
     brain.enabled = args.mock
+    demo = Demo(tasks, teacher, brain, rt)
     dyn_geoms = [g for g in range(rt.model.ngeom) if rt.model.geom_group[g] == 2 and rt.model.geom_bodyid[g] != 0]
     m, d = rt.model, rt.data
     renderer = mujoco.Renderer(m, SIM_H, SIM_W)
@@ -274,6 +341,8 @@ def worker(args, shared):
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
         source = "webcam"
 
+    sim_jpg_last = [None]
+    robot_choice = ["g1"]
     video_job = None   # {"name", "frames", "i", "prev_cap", "prev_dt", "prev_source", "prev_view"}
     grip_hist = {"l": [], "r": []}
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
@@ -284,8 +353,19 @@ def worker(args, shared):
           flush=True)
 
     while shared.running:
-        # ---------------- your camera
-        if cap is not None:
+        # ---------------- your camera (a phone/browser camera wins while it streams)
+        phone = shared.phone if (shared.phone and time.time() - shared.phone[0] < 1.0 and video_job is None) else None
+        if phone is not None:
+            frame = cv2.imdecode(np.frombuffer(phone[1], np.uint8), cv2.IMREAD_COLOR)
+            if frame is None:
+                continue
+            frame = cv2.resize(frame, (W, H))
+            if pose is None:
+                pose = Pose(str(ROOT / args.model))
+            pts, lm = pose(frame)
+            source = "phone"
+            time.sleep(0.02)
+        elif cap is not None:
             if args.video:
                 now = time.time()
                 if now < next_frame_t:
@@ -324,7 +404,11 @@ def worker(args, shared):
             for name, i in LANDMARKS.items():
                 if name in lm:
                     pts[i] = (W / 2 - lm[name][0] * 700, H * 0.55 + lm[name][1] * 700)
+        if source == "phone" and phone is None:
+            source = "webcam" if cap is not None and not args.video else ("video" if args.video else "synthetic")
         scene = objects(frame) if objects is not None else []
+        if n % 2 == 0:
+            spatial.feed(frame)
         hold = holding(scene, pts)
         grip = {}
         for s in ("l", "r"):
@@ -371,6 +455,25 @@ def worker(args, shared):
                         teacher.set_spec(c.get("spec") or {})
                     elif cmd == "cancel":
                         teacher.phase = "idle"
+                elif t == "demo":
+                    if c.get("name") == "stop":
+                        demo.stop()
+                    else:
+                        brain.enabled = True
+                        demo.start(c.get("name", "full"))
+                elif t == "robot":
+                    robot_choice[0] = "ur5e" if c.get("name") == "ur5e" else "g1"
+                    if robot_choice[0] == "ur5e":
+                        dispatch(tasks, rt, {"type": "task", "id": f"robot-{time.time():.0f}", "action": "compile_for", "robot": "ur5e"}, cam_params)
+                        brain.utter("Same task, different body: " + (tasks.task or {}).get("message", ""), "robot")
+                elif t == "spatial_model":
+                    spatial.set_model(c.get("name"))
+                elif t == "spatial":
+                    if c.get("target") == "robot":
+                        spatial.ask_er(cv2.imdecode(np.frombuffer(sim_jpg_last[0], np.uint8), cv2.IMREAD_COLOR) if sim_jpg_last[0] else frame,
+                                       "robot", c.get("query"))
+                    else:
+                        spatial.ask_er(frame, "camera", c.get("query"), mirrored=True)
                 elif t == "path3d":
                     tasks.set_path_world(c.get("points") or [], c.get("hand") if c.get("hand") in ("left", "right") else None)
                 elif t == "mock":
@@ -436,8 +539,10 @@ def worker(args, shared):
             tasks.tick()
         teacher.observe(pts if lm else None, grip, [o[0] for o in scene])
         teacher.tick()
-        brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None))
-        brain.narrate(tasks.task)
+        demo.tick()
+        brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None or bool(demo.steps)))
+        if not demo.steps:
+            brain.narrate(tasks.task)
 
         # ---------------- robot view
         rt.paint_model()
@@ -455,6 +560,7 @@ def worker(args, shared):
         rt.paint_overlays(renderer.scene, reset=False)
         sim = renderer.render()
         sim_jpg = cv2.imencode(".jpg", cv2.cvtColor(sim, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82])[1].tobytes()
+        sim_jpg_last[0] = sim_jpg
         # picture-in-picture: the whole robot when the main view is its eye, otherwise the robot's eye
         if view == "robot":
             pip_renderer.update_scene(d, full)
@@ -474,6 +580,11 @@ def worker(args, shared):
         st = state(rt, tasks, view, cam_params, fps, source, pts, lm, scene, grip, hold)
         st["say"], st["gesture"], st["mock"] = brain.say, brain.gesture, brain.enabled
         st["teach"] = teacher.state()
+        st["demo"] = demo.state()
+        st["robot"] = robot_choice[0]
+        st["robots"] = [{"id": "g1", "label": "Unitree G1 humanoid"}, {"id": "ur5e", "label": "UR5e arm (compile + reach check)"}]
+        st["spatial"] = spatial.state()
+        st["server_gemini"] = gemini_key() is not None
         st["geom_poses"] = {str(g): [round(float(x), 4) for x in d.geom_xpos[g]] + [round(float(x), 4) for x in d.geom_xmat[g]] for g in dyn_geoms}
         if st["path"] is not None:
             st["path"]["pts"] = [[round(float(x), 3) for x in p] for p in rt.path["pts"]]

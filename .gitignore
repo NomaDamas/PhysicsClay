@@ -8,3 +8,5 @@ recordings/*.mp4
 models/*.tflite
 certs/
 recordings/
+.env
+recordings/

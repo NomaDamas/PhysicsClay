@@ -1,6 +1,13 @@
 # PhysicsClay
 
-**A new way to prompt Physical AI: turning human intent into spatial instructions that robots can understand and execute.**
+**New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.**
+
+Some tasks are nearly impossible to give a robot in text alone. You can't put everything you're thinking into words:
+where exactly, which path, how high, what not to touch. And some motions you can't describe at all — a Taekwondo kick,
+a sprinter's stride, a fighter's stance: showing beats describing. Physical AI needs its own prompt, a spatial one.
+
+**Live:** https://physicsclay.jinminseong.com (phone camera + mic work over HTTPS) · pitch: `/static/present.html` ·
+browser physics lab: `/static/lab.html` · before/after samples: `web/samples/`
 
 Text alone cannot carry a physical instruction. PhysicsClay combines four channels and grounds them in physics:
 
@@ -32,3 +39,9 @@ server:  intent -> target (region / marker / raycast) -> hand path -> IK pre-che
 ```
 Protocol: `docs/PROTOCOL.md`. Assets: Unitree G1 (mujoco_menagerie), Google Scanned Objects mug (CC-BY 4.0).
 Open source: MuJoCo, mink, MediaPipe, OpenCV, aiohttp; HUD patterns from CozyClay.
+
+## Roadmap
+1. Today: teach by showing (camera + voice + pointing + 3D routes) on a simulated Unitree G1 and a UR5e, physics-checked.
+2. **VR / XR teaching**: stand inside the robot's space with a headset, grab the 3D route and the objects with your hands,
+   and demonstrate at true scale; the same task spec and physics check carry over.
+3. Real robots: send approved task specs to hardware (sim-checked first), learn from corrections across robots.

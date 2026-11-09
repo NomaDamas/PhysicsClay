@@ -88,7 +88,7 @@
     var onAudioLevel = safe(opts.onAudioLevel);
     var onToolCall = opts.onToolCall;
 
-    if (!apiKey) {
+    if (!apiKey && !opts.proxy) {
       onStatus("error: missing API key");
       return Promise.reject(new Error("missing API key"));
     }
@@ -377,7 +377,7 @@
       }, SETUP_TIMEOUT_MS);
 
       try {
-        ws = new WebSocket(WS_URL + "?key=" + encodeURIComponent(apiKey));
+        ws = (opts.proxy || !apiKey) ? new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/gemini/live") : new WebSocket(WS_URL + "?key=" + encodeURIComponent(apiKey));
       } catch (e) {
         status("error: " + errMsg(e));
         fail(errMsg(e));
@@ -456,7 +456,9 @@
     return out;
   }
   function generate(apiKey, model, body) {
-    return fetch(REST_BASE + encodeURIComponent(model) + ":generateContent?key=" + encodeURIComponent(apiKey), {
+    var url = apiKey ? REST_BASE + encodeURIComponent(model) + ":generateContent?key=" + encodeURIComponent(apiKey)
+                     : "/gemini/rest/" + encodeURIComponent(model) + ":generateContent";
+    return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
@@ -479,7 +481,7 @@
   function point(opts) {
     opts = opts || {};
     var apiKey = String(opts.apiKey || "").trim();
-    if (!apiKey) return Promise.reject(new Error("missing API key"));
+    if (!apiKey && !opts.proxy) return Promise.reject(new Error("missing API key"));
     if (!opts.imageBase64) return Promise.reject(new Error("missing image"));
     var model = stripModel(opts.model) || DEFAULT_ER_MODEL;
     var mime = opts.mime || mimeFromDataUrl(opts.imageBase64, "image/jpeg");
