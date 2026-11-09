@@ -93,7 +93,7 @@ def unit(check):
 
     # 1. one tool call (preview) -> output fed back -> reply spoken
     w, seen = FakeWorld(), []
-    ag = Agent(push=w.push, state=w.state, llm=fake_llm([[call("pick_place", {"object": "mug", "target": "center"}, "c1")],
+    ag = Agent(push=w.push, state=w.state, llm=fake_llm([[call("pick_place", {"object": "mug", "target": "center", "marker": "", "xyz": [0, 0, 0]}, "c1")],
                                                           [say("Here's my plan: mug to the center. Say go.")]], seen),
                server_cfg=lambda: cfg, poll=0.01)
     ok = ag.submit("put the mug in the center", confirm=True)
@@ -104,7 +104,7 @@ def unit(check):
     fco = [i for i in seen[1][1] if i.get("type") == "function_call_output"] if len(seen) > 1 else []
     check("agent unit: tool loop (call -> browser message -> result -> reply)",
           ok and kinds == ["user", "thinking", "tool", "reply"] and tool.get("ok") is True and sent.get("preview") is True
-          and sent.get("object") == "mug" and fco and json.loads(fco[0]["output"])["status"] == "proposed" and ag.drain() == ["Here's my plan: mug to the center. Say go."],
+          and sent.get("object") == "mug" and sent.get("target") == "center" and not any(m.get("type") == "point3d" for m in w.sent) and fco and json.loads(fco[0]["output"])["status"] == "proposed" and ag.drain() == ["Here's my plan: mug to the center. Say go."],
           f"{kinds} sent={sent.get('action')} preview={sent.get('preview')}")
     check("agent unit: the system prompt carries the world context", "Right now" in seen[0][0] and "red block" in seen[0][0], "")
 
@@ -147,6 +147,23 @@ def unit(check):
     check("agent unit: the key never reaches state", "SECRET" not in blob, "")
     ag3.reset()
     check("agent unit: reset clears", len(ag3.events) == 1 and ag3.history == [] and not ag3.busy, str(list(ag3.events))[:60])
+
+    # BYOK: the server key is never used; visitor endpoints must be public https (no SSRF into this machine)
+    import os
+    from pps.agent import public_url_problem, server_llm, visitor_llm
+    old = os.environ.get("PC_BYOK")
+    os.environ["PC_BYOK"] = "1"
+    try:
+        no_server_key = server_llm() is None
+    finally:
+        if old is None:
+            os.environ.pop("PC_BYOK", None)
+        else:
+            os.environ["PC_BYOK"] = old
+    bad = [public_url_problem(u) for u in ("http://example.com/v1", "https://127.0.0.1/v1", "https://localhost:8777/v1", "https://10.0.0.5/v1")]
+    vc, _ = visitor_llm({"base_url": "https://1.1.1.1/v1", "key": "sk-x", "model": "m", "effort": "bogus"})
+    check("agent unit: BYOK never uses the server key; visitor URL must be public https", no_server_key and all(bad)
+          and vc and vc["effort"] is None and vc["key"] == "sk-x", str(bad[:2]))
 
     # 4. no LLM -> clear error, nothing runs; outcome of a confirmed plan is reported later
     ag4 = Agent(push=w.push, state=w.state, llm=fake_llm([], []), server_cfg=lambda: None, poll=0.01)
@@ -202,11 +219,13 @@ async def run(t):
     t0 = time.time()
     a = await _turn(t, "what's on the table?")
     evs = a.get("events") or []
+    last_user = max([k for k, e in enumerate(evs) if e.get("kind") == "user"] or [0])
+    evs = evs[last_user:]                     # this turn only
     reply = next((e["text"] for e in reversed(evs) if e.get("kind") == "reply"), "")
     low = reply.lower()
     t.check("agent: \"what's on the table?\" -> reply names the objects", any(w in low for w in ("mug", "block", "vase")) and not any(
-        e.get("tool") in ("pick_place", "reach") for e in evs[-6:]), f"{time.time() - t0:.0f}s {reply[:90]!r}")
-    print("      transcript:", json.dumps([{k: e.get(k) for k in ("kind", "tool", "ok", "text") if e.get(k) is not None} for e in evs[-5:]], ensure_ascii=False)[:900], flush=True)
+        e.get("tool") in ("pick_place", "reach") for e in evs), f"{time.time() - t0:.0f}s {reply[:90]!r}")
+    print("      transcript:", json.dumps([{k: e.get(k) for k in ("kind", "tool", "ok", "text") if e.get(k) is not None} for e in evs], ensure_ascii=False)[:900], flush=True)
 
     await t.send(type="agent", op="reset")
     await t.pump(0.6)

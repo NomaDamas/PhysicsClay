@@ -259,7 +259,7 @@ def tool_specs(st, confirm=True):
     T = [_fn("observe", "Full current state: robot + capabilities, objects with positions, markers, keep-out zones, what the robot "
                         "holds, the plan card and any open question, skills, scene.")]
     if "pick_place" in caps:
-        T.append(_fn("pick_place", "Pick an object up and put it somewhere. Give exactly one of target, marker or xyz." + moving,
+        T.append(_fn("pick_place", "Pick an object up and put it somewhere. Give exactly one of target, marker or xyz and leave the others out." + moving,
                      {"object": {"type": "string", "description": "Object name, e.g. 'mug', 'red block'."}, "target": TARGET,
                       "marker": {"type": "string", "description": "Marker letter the user placed (A-F, P)."}, "xyz": XYZ}, ["object"]))
     if "reach" in caps:
@@ -276,8 +276,7 @@ def tool_specs(st, confirm=True):
         _fn("set_speed", "Change motion speed.", {"value": {"type": "string", "description": "'slower', 'faster', or a factor 0.1-1.0 as text."}}, ["value"]),
         _fn("add_zone", "Add a keep-out zone the robot and carried objects must avoid. Give near (an object name) or rect.",
             {"near": {"type": "string", "description": "Object to keep away from, e.g. 'vase'."},
-             "rect": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] table rectangle in metres."},
-             "label": {"type": "string"}}),
+             "rect": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4, "description": "[x0, y0, x1, y1] table rectangle in metres."}}),
         _fn("remove_zone", "Remove one keep-out zone by its id (letter).", {"id": {"type": "string"}}, ["id"]),
         _fn("clear_zones", "Remove all keep-out zones."),
         _fn("set_goal_layout", "Arrange several objects at once: give each movable object's goal [x, y] on the table. The robot orders "
@@ -543,11 +542,14 @@ class Agent:
         return out
 
     def _resolve_target(self, a):
-        """target | marker | xyz -> (target string, error)."""
-        if a.get("xyz") is not None:
-            p = a["xyz"]
-            if not (isinstance(p, (list, tuple)) and len(p) == 3):
-                return None, "xyz must be [x, y, z]"
+        """target | marker | xyz -> (target string, error). Models often fill every optional field ("", [0, 0, 0]):
+        the first meaningful one wins, in that order."""
+        if str(a.get("target") or "").strip():
+            return str(a["target"]).strip(), None
+        if str(a.get("marker") or "").strip():
+            return str(a["marker"]).strip().upper()[:1], None
+        p = a.get("xyz")
+        if isinstance(p, (list, tuple)) and len(p) == 3 and any(abs(float(v)) > 1e-6 for v in p):
             before = {m.get("id"): m.get("pos") for m in self.state_now().get("markers") or []}
             self.push({"type": "point3d", "pos": [float(v) for v in p]})
 
@@ -560,10 +562,6 @@ class Agent:
             if mid is None:
                 return None, "couldn't place a marker at that point"
             return mid, None
-        if a.get("marker"):
-            return str(a["marker"]).strip().upper()[:1], None
-        if a.get("target"):
-            return str(a["target"]), None
         return None, None
 
     def _motion(self, action, msg, confirm):
@@ -676,14 +674,13 @@ class Agent:
 
     def t_add_zone(self, a, confirm):
         msg = {"type": "zone", "op": "add", "source": "agent"}
-        if a.get("near"):
-            msg["near"] = str(a["near"])
-        elif isinstance(a.get("rect"), list) and len(a["rect"]) == 4:
-            msg["rect"] = [float(v) for v in a["rect"]]
+        rect = a.get("rect")
+        if str(a.get("near") or "").strip():
+            msg["near"] = str(a["near"]).strip()
+        elif isinstance(rect, list) and len(rect) == 4 and abs(float(rect[2]) - float(rect[0])) > 0.01 and abs(float(rect[3]) - float(rect[1])) > 0.01:
+            msg["rect"] = [float(v) for v in rect]
         else:
             return {"ok": False, "error": "give near (an object) or rect [x0, y0, x1, y1]"}
-        if a.get("label"):
-            msg["label"] = str(a["label"])
         return self._zones_after(msg)
 
     def t_remove_zone(self, a, confirm):

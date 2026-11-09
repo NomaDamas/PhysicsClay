@@ -493,7 +493,7 @@
     d.append(who, t); feedAppend(d); lastLine = { k: kind, t: text, at: Date.now(), el: d }; return d;
   }
   function makeCard(id, action, args, source) {
-    const card = document.createElement("article"); card.className = "card"; card.dataset.status = "planning";
+    const card = document.createElement("article"); card.className = "card"; card.dataset.status = "planning"; card.dataset.id = id;
     card.innerHTML = '<div class="card-top"><span class="card-title"></span><span class="card-act"></span><span class="pill">planning</span></div><div class="card-args"></div><div class="card-msg"></div><div class="card-meta"></div>';
     card.querySelector(".card-title").textContent = actionTitle(action);
     card.querySelector(".card-act").textContent = action;

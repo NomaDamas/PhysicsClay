@@ -32,7 +32,8 @@
   // ------------------------------------------------------------------ styles (existing tokens only)
   const css = `
 .pca-brain { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line);
-  background: var(--raised); color: var(--t2); font: 500 11px var(--sans); white-space: nowrap; cursor: pointer; max-width: 210px; overflow: hidden; text-overflow: ellipsis; }
+  background: var(--raised); color: var(--t2); font: 500 11px var(--sans); white-space: nowrap; cursor: pointer; flex: 0 1 auto; min-width: 0; max-width: 170px; }
+.pca-brain .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pca-brain:hover { color: var(--t1); border-color: var(--line2); }
 .pca-brain:focus-visible { outline: none; box-shadow: var(--ring); }
 .pca-brain .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); flex: none; }
@@ -64,7 +65,7 @@
 .pca-thinking i b { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .35; animation: pca-dot 1.2s infinite; }
 .pca-thinking i b:nth-child(2) { animation-delay: .15s; } .pca-thinking i b:nth-child(3) { animation-delay: .3s; }
 @keyframes pca-dot { 0%, 60%, 100% { opacity: .25; transform: none; } 30% { opacity: 1; transform: translateY(-2px); } }
-.feed-list > .card.pca-hidden { display: none; }
+.feed-list > .card[data-id^="ag"] { display: none; }   /* app.js task cards for agent-launched tasks: the tool card covers them */
 .pca-set .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .pca-set [data-byok][hidden] { display: none; }
 .pca-set .status { margin: 0; }
@@ -120,13 +121,13 @@
   let primed = false, thinking = null;
   function renderEvents(a) {
     const evs = Array.isArray(a.events) ? a.events : [];
-    if (!primed) { primed = true; for (const e of evs) nodes.set(e.id, { node: null, sig: "" }); return; }   // old turns stay old
+    if (!primed) { primed = true; for (const e of evs) nodes.set(e.id, { old: true }); return; }   // turns from before this page loaded stay unrendered
     const ids = new Set(evs.map((e) => e.id));
     for (const k of [...nodes.keys()]) if (!ids.has(k) && nodes.size > 80) nodes.delete(k);
     for (const e of evs) {
       const have = nodes.get(e.id);
       const sig = `${e.ok}|${e.text}`;
-      if (have && have.sig === sig) continue;
+      if (have && (have.old || have.sig === sig)) continue;
       if (e.kind === "tool") {
         const n = (have && have.node) || toolNode(e);
         paintTool(n, e);
@@ -151,18 +152,6 @@
       if (thinking.parentNode !== f || f.lastElementChild !== thinking) { const atB = f.scrollHeight - f.scrollTop - f.clientHeight < 60; f.appendChild(thinking); if (atB) f.scrollTop = f.scrollHeight; }
     } else if (thinking) { thinking.remove(); thinking = null; }
   }
-  // the task cards app.js makes for agent-launched tasks ("ag…" ids) duplicate our tool cards: hide them
-  function hideAgentCards(root) {
-    for (const c of root.querySelectorAll ? root.querySelectorAll("article.card:not(.pca-hidden)") : []) {
-      const m = c.querySelector(".card-meta"); if (m && / · ag\d+-/.test(m.textContent || "")) c.classList.add("pca-hidden");
-    }
-  }
-  function watchFeed() {
-    const f = feed(); if (!f || f.dataset.pcaWatch) return;
-    f.dataset.pcaWatch = "1";
-    new MutationObserver(() => hideAgentCards(f)).observe(f, { childList: true, subtree: true, characterData: true });
-  }
-
   // ------------------------------------------------------------------ brain chip
   let chip = null, resetBtn = null;
   function mountChip() {
@@ -184,7 +173,8 @@
     const sig = [on, llmReady(), byok(), modelName(), !!(a && a.busy), document.activeElement && document.activeElement.id].join("|");
     if (sig === chipSig) return; chipSig = sig;
     chip.dataset.brain = on ? "llm" : "parser"; chip.dataset.busy = String(!!(a && a.busy));
-    chip.querySelector(".lbl").textContent = on ? `Brain · ${modelName()}` : "Brain · offline parser";
+    chip.querySelector(".lbl").textContent = on ? modelName() : "offline parser";
+    chip.setAttribute("aria-label", on ? `Brain: LLM agent ${modelName()}` : "Brain: offline rule parser");
     chip.title = on ? `Requests go to the LLM agent (${modelName()}), which calls robot tools. Click for settings.`
       : llmReady() ? "The LLM agent is switched off in Settings: the rule parser answers." : byok() ? "Add your own LLM key in Settings to use the LLM agent." : "No LLM configured on this server: the offline rule parser answers.";
     resetBtn.hidden = !on;
@@ -258,7 +248,7 @@
 
   P.onState((s) => {
     const a = s && s.agent && typeof s.agent === "object" ? s.agent : null;
-    mountSettings(); watchFeed(); paintChip(a);
+    mountSettings(); paintChip(a);
     if (!a) return;
     renderEvents(a); renderThinking(a);
   });
