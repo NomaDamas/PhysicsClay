@@ -43,7 +43,10 @@
     get lang() { return LS.get("pc.lang", "en-US"); },
     get mock() { return LS.get("pc.mock", "0") === "1"; },
   };
-  const geminiReady = () => !!(G() && typeof G().connectLive === "function" && settings.key);
+  const useProxy = () => !settings.key && !!(typeof state === "object" && state && state.server_gemini);
+  const aiOpts = () => (settings.key ? { apiKey: settings.key } : { apiKey: "", proxy: true });
+  const haveAI = () => !!(settings.key || useProxy());
+  const geminiReady = () => !!(G() && typeof G().connectLive === "function" && haveAI());
 
   // ------------------------------------------------------------------ websocket
   let ws = null, connected = false, state = {}, gotState = false;
@@ -54,7 +57,7 @@
     const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
     try { ws = new WebSocket(url); } catch (e) { setTimeout(connect, 1500); return; }
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => { connected = true; if (LS.get("pc.mock", null) !== null) send({ type: "mock", enabled: settings.mock }); schedule(); };
+    ws.onopen = () => { connected = true; if (LS.get("pc.mock", null) !== null) send({ type: "mock", enabled: settings.mock }); schedule(); maybeAutoDemo(); };
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") {
         let s; try { s = JSON.parse(ev.data); } catch (e) { return; }
@@ -188,6 +191,16 @@
       const pr = Math.max(0, Math.min(1, num(vid.progress)));
       el.videoName.textContent = String(vid.name || "video"); el.videoFill.style.width = (pr * 100).toFixed(1) + "%"; el.videoPct.textContent = Math.round(pr * 100) + "%";
     }
+    // v3: demo pill, phone camera chip, robot label, overlays text
+    const dm = s.demo && typeof s.demo === "object" ? s.demo : null;
+    const dtxt = dm ? `DEMO · ${num(dm.step)}/${num(dm.total)} · ${dm.title || dm.name || ""}` : "";
+    if (changed("demo", dtxt)) { $("demoPill").hidden = !dm; $("demoPillTxt").textContent = dtxt; }
+    const pcOn = !!phoneCam.stream;
+    if (changed("pcam", [pcOn, s.source])) { $("phoneCamChip").hidden = !pcOn; $("phoneCamChip").classList.toggle("live", s.source === "phone"); }
+    const rlab = (arr(s.robots).find((r) => r && r.id === s.robot) || {}).label || (s.robot === "ur5e" ? "UR5e arm" : s.robot ? "Unitree G1" : "");
+    if (rlab && changed("rlab", rlab)) $("robotLabel").textContent = `${rlab} · MuJoCo`;
+    if (el.dlg.open) renderSettingsLive();
+    if (changed("sg", !!s.server_gemini) && (live.state === "off" || live.state === "error")) setTalk("off");
     renderSkillEdit();
     renderTeach();
     drawRobot(); drawCam();
@@ -268,6 +281,7 @@
       ctx.beginPath(); ctx.arc(x, y - 24, 11, 0, 7); ctx.fillStyle = C.accent; ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = 6; ctx.fill(); ctx.shadowBlur = 0;
       ctx.fillStyle = "#1a1204"; ctx.font = "600 12px 'IBM Plex Sans', system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(id, x, y - 23.5);
     }
+    drawPins(ctx, P, "robot");
     // pending tap ghost + ripples
     const now = performance.now();
     if (pendingTap && now - pendingTap.t < 1500) {
@@ -280,6 +294,25 @@
     }
   }
 
+  const SOFT = [205, 145, 28, 280, 350, 175, 50, 235];
+  function drawPins(ctx, P, target) {
+    const sp = state.spatial && typeof state.spatial === "object" ? state.spatial : null, er = sp && sp.er && typeof sp.er === "object" ? sp.er : null;
+    if (!er || (er.target || "camera") !== target) return;
+    arr(er.points).forEach((p, i) => {
+      if (!p || !isFinite(p.u) || !isFinite(p.v)) return;
+      const [x, y] = P([p.u, p.v]), n = String(i + 1);
+      ctx.strokeStyle = "rgba(92,119,223,.9)"; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y - 16); ctx.stroke();
+      ctx.fillStyle = "#5c77df"; ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill();
+      ctx.beginPath(); ctx.arc(x, y - 26, 11, 0, 7); ctx.fillStyle = "#fff"; ctx.shadowColor = "rgba(40,30,90,.3)"; ctx.shadowBlur = 8; ctx.fill(); ctx.shadowBlur = 0;
+      ctx.strokeStyle = "#5c77df"; ctx.lineWidth = 2; ctx.stroke();
+      ctx.fillStyle = "#3a4fb0"; ctx.font = "700 12px -apple-system, system-ui, sans-serif"; ctx.textAlign = "center"; ctx.textBaseline = "middle"; ctx.fillText(n, x, y - 25.5);
+      if (p.label) {
+        ctx.font = "600 11px -apple-system, system-ui, sans-serif"; const t = String(p.label), tw = ctx.measureText(t).width + 12;
+        ctx.fillStyle = "rgba(255,255,255,.92)"; roundRect(ctx, x + 14, y - 35, tw, 18, 9); ctx.fill();
+        ctx.fillStyle = "#1d1d1f"; ctx.textAlign = "left"; ctx.fillText(t, x + 20, y - 25.5);
+      }
+    });
+  }
   function drawCam() {
     const { ctx, W, H } = fitCanvas(el.camOv), c = contentRect(el.camImg, W, H, 960, 540), s = state;
     if (!el.camImg.classList.contains("live")) return;
@@ -292,6 +325,26 @@
       const t = `${lab} ${typeof sc === "number" ? sc.toFixed(2) : sc}`, tw = ctx.measureText(t).width + 8;
       ctx.fillStyle = "rgba(242,163,58,.92)"; ctx.fillRect(a[0], a[1] - 15, tw, 15); ctx.fillStyle = "#1a1204"; ctx.fillText(t, a[0] + 4, a[1] - 13);
     }
+    const sp = s.spatial && typeof s.spatial === "object" ? s.spatial : null;
+    arr(sp && sp.objects).forEach((o, i) => {
+      if (!o || typeof o !== "object") return;
+      const hue = SOFT[i % SOFT.length], poly = arr(o.poly).filter(isUV), box = arr(o.box);
+      ctx.lineJoin = "round"; let ax, ay;
+      if (poly.length >= 3) {
+        ctx.beginPath(); poly.forEach((q, j) => { const [x, y] = P(q); j ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.closePath();
+        ctx.fillStyle = `hsla(${hue}, 80%, 62%, .28)`; ctx.fill(); ctx.strokeStyle = `hsla(${hue}, 75%, 55%, .9)`; ctx.lineWidth = 1.5; ctx.stroke();
+        let mi = 0; poly.forEach((q, j) => { if (q[1] < poly[mi][1]) mi = j; }); [ax, ay] = P(poly[mi]);
+      } else if (box.length >= 4) {
+        const a = P([box[0], box[1]]), b = P([box[2], box[3]]);
+        roundRect(ctx, a[0], a[1], b[0] - a[0], b[1] - a[1], 6); ctx.fillStyle = `hsla(${hue}, 80%, 62%, .2)`; ctx.fill();
+        ctx.strokeStyle = `hsla(${hue}, 75%, 55%, .9)`; ctx.lineWidth = 1.5; ctx.stroke(); [ax, ay] = a;
+      } else return;
+      ctx.font = "600 11px -apple-system, system-ui, sans-serif"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+      const t = `${o.label || "object"}${typeof o.score === "number" ? " " + Math.round(o.score * 100) + "%" : ""}`, tw = ctx.measureText(t).width + 12;
+      const ly = Math.max(10, ay - 12); ctx.fillStyle = `hsla(${hue}, 70%, 96%, .94)`; roundRect(ctx, ax, ly - 9, tw, 18, 9); ctx.fill();
+      ctx.strokeStyle = `hsla(${hue}, 70%, 50%, .6)`; ctx.lineWidth = 1; ctx.stroke(); ctx.fillStyle = `hsl(${hue}, 55%, 28%)`; ctx.fillText(t, ax + 6, ly + .5);
+    });
+    drawPins(ctx, P, "camera");
     const tch = s.teach && typeof s.teach === "object" ? s.teach : null, ev = tch && tch.evidence && typeof tch.evidence === "object" ? tch.evidence : null;
     const hp = ev && (tch.phase === "recording" || tch.phase === "confirm") ? arr(ev.hand_uv).filter(isUV) : [];
     if (hp.length > 1) { // demonstrated hand path (teach evidence)
@@ -475,6 +528,7 @@
     return (status, message) => { rec.status = status; rec.message = message || ""; updateCard(rec); };
   }
 
+  let lastRobot = null;
   function onState() {
     const t = state.task && typeof state.task === "object" ? state.task : null;
     if (t && t.id != null) {
@@ -502,6 +556,14 @@
     }
     trackVideo();
     onSay();
+    if (state.robot) {
+      if (lastRobot && state.robot !== lastRobot) {
+        const v = P3();
+        if (v && typeof v.reload === "function") { try { v.reload(); } catch (e) { /* noop */ } }
+        else if (view3d) { location.href = location.pathname + "?view=3d"; }
+      }
+      lastRobot = state.robot;
+    }
     // marker created after our tap
     if (pendingTap && arr(state.markers).length !== pendingTap.n) pendingTap = null;
   }
@@ -621,14 +683,24 @@
     const sy = state.say; if (!sy || typeof sy !== "object" || sy.id == null || !sy.text) return;
     const id = String(sy.id); if (id === lastSayId) return;
     const first = lastSayId === null; lastSayId = id;
-    if (first && !state.mock && !settings.mock) return; // stale line from before this page loaded
-    const kind = sy.kind === "user" ? "user" : "robot";
-    const d = addLine(kind, String(sy.text));
-    if (sy.kind === "vision") {
+    if (first && !state.mock && !settings.mock && !state.demo) return; // stale line from before this page loaded
+    if (first) return; // never replay an old caption / voice line on load
+    const text = String(sy.text), k = String(sy.kind || "robot");
+    if (k === "caption") { showOverlay("caption", text, 4000); addLine("sys", text); return; }
+    if (k === "user") { addLine("user", text); showOverlay("subtitle", text, 3000); return; }
+    const d = addLine("robot", text);
+    if (k === "vision") {
       d.classList.add("vision"); const tag = document.createElement("span"); tag.className = "vtag"; tag.textContent = "VISION";
       d.querySelector(".txt").prepend(tag);
     }
-    if (kind === "robot" && !first) speak(String(sy.text), "en-US");
+    speak(text, "en-US");
+  }
+  const ovTimers = {};
+  function showOverlay(id, text, ms) {
+    const n = $(id); if (!n) return;
+    n.textContent = text; n.hidden = false; n.classList.remove("out"); void n.offsetWidth; n.classList.add("in");
+    clearTimeout(ovTimers[id]); clearTimeout(ovTimers[id + "h"]);
+    ovTimers[id] = setTimeout(() => { n.classList.remove("in"); n.classList.add("out"); ovTimers[id + "h"] = setTimeout(() => { n.hidden = true; }, 450); }, ms);
   }
 
   // ------------------------------------------------------------------ text intents (rule parser, no key needed)
@@ -893,7 +965,7 @@
   async function erPoint(query) {
     const img = b64Of(latest.robot);
     if (!img) throw new Error("no robot view frame yet");
-    const pts = await G().point({ apiKey: settings.key, model: settings.erModel, imageBase64: img, query });
+    const pts = await G().point({ ...aiOpts(), model: settings.erModel, imageBase64: img, query });
     const p = arr(pts).find((x) => x && isFinite(x.u) && isFinite(x.v));
     if (!p) throw new Error(`couldn't find “${query}” in my view`);
     return p;
@@ -932,7 +1004,7 @@
     if (/^(there|here|over there|that spot|this spot)$/.test(low) || /where (i'?m|i am|they'?re|the user is) pointing|where i point/.test(low)) return Object.assign({}, args, { target: "there" });
     const mk = tgt.match(/^(?:marker\s+|point\s+)?([a-z])$/i);
     if (mk) return Object.assign({}, args, { target: mk[1].toUpperCase() });
-    if (!G() || typeof G().point !== "function" || !settings.key) return args; // let the server try
+    if (!G() || typeof G().point !== "function" || !haveAI()) return args; // let the server try
     const p = await pointOnRobotView(tgt, source);
     if (!p.ok) throw new Error(p.message);
     return Object.assign({}, args, { target_uv: [p.u, p.v] });
@@ -985,7 +1057,7 @@
     setTalk("connecting");
     try {
       const session = await G().connectLive({
-        apiKey: settings.key, model: settings.liveModel, systemInstruction: SYSTEM, tools: TOOLS,
+        ...aiOpts(), model: settings.liveModel, systemInstruction: SYSTEM, tools: TOOLS,
         onStatus: (st) => {
           st = String(st || "");
           if (/^error/i.test(st)) { toast("Gemini: " + st.replace(/^error:?\s*/i, "")); }
@@ -1054,13 +1126,17 @@
   el.talk.addEventListener("click", toggleTalk); el.talkBig.addEventListener("click", toggleTalk);
 
   // ------------------------------------------------------------------ settings dialog
-  function openSettings() {
+  function openSettings(section) {
+    if (typeof section !== "string") section = "";
     $("setKey").value = settings.key; $("setLive").value = settings.liveModel; $("setEr").value = settings.erModel;
     $("setLive").placeholder = (G() && G().DEFAULT_LIVE_MODEL) || "live model"; $("setEr").placeholder = (G() && G().DEFAULT_ER_MODEL) || "ER model";
     $("setMock").checked = typeof state.mock === "boolean" ? state.mock : settings.mock;
     $("setSendCam").checked = settings.sendCam; $("setSendRobot").checked = settings.sendRobot; $("setLang").value = settings.lang;
-    $("geminiStatus").textContent = G() ? "gemini.js loaded · " + (settings.key ? "key set → Talk uses Gemini Live" : "no key → Talk uses browser speech") : "gemini.js not loaded → Talk uses browser speech";
+    $("geminiStatus").textContent = G() ? "gemini.js loaded · " + (settings.key ? "own key set → Talk uses Gemini Live" : state.server_gemini ? "server key → Talk uses Gemini Live (proxy)" : "no key → Talk uses browser speech") : "gemini.js not loaded → Talk uses browser speech";
+    $("serverGemini").hidden = !state.server_gemini;
+    $("setPhoneCam").checked = phoneCam.want; renderSettingsLive();
     if (typeof el.dlg.showModal === "function") el.dlg.showModal(); else el.dlg.setAttribute("open", "");
+    if (section) { const sec = $(section); if (sec) { sec.scrollIntoView({ block: "start" }); sec.classList.add("flash"); setTimeout(() => sec.classList.remove("flash"), 1200); } }
   }
   el.dlg.addEventListener("close", () => {
     if (el.dlg.returnValue !== "save") return;
@@ -1078,7 +1154,94 @@
     const on = $("setMock").checked; LS.set("pc.mock", on ? "1" : "0"); send({ type: "mock", enabled: on }); schedule();
     addLine("sys", on ? "Mock AI on: offline gestures + scripted replies." : "Mock AI off.");
   });
-  $("settingsBtn").addEventListener("click", openSettings); $("settingsBtnM").addEventListener("click", openSettings);
+  $("settingsBtn").addEventListener("click", () => openSettings()); $("settingsBtnM").addEventListener("click", () => openSettings());
+  $("camBtnM").addEventListener("click", () => openSettings("secCamera"));
+  function renderSettingsLive() {
+    const rb = String(state.robot || "g1");
+    document.querySelectorAll("[data-robot]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.robot === rb)));
+    const sp = state.spatial && typeof state.spatial === "object" ? state.spatial : null;
+    if (sp && sp.model && document.activeElement !== $("setSpatial")) $("setSpatial").value = String(sp.model);
+    const er = sp && sp.er && typeof sp.er === "object" ? sp.er : null;
+    $("erStatus").textContent = er ? `ER · ${er.target || ""} · ${arr(er.points).length} points${er.ms ? " · " + Math.round(er.ms) + " ms" : ""}` : "";
+    $("serverGemini").hidden = !state.server_gemini;
+    $("camStatus").textContent = phoneCam.status;
+  }
+  // robot body
+  document.querySelectorAll("[data-robot]").forEach((b) => b.addEventListener("click", () => {
+    if (!send({ type: "robot", name: b.dataset.robot })) { toast("Not connected to the robot."); return; }
+    document.querySelectorAll("[data-robot]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    addLine("sys", `Switching body → ${b.textContent}.`);
+  }));
+  // spatial model + Robotics-ER
+  $("setSpatial").addEventListener("change", () => { send({ type: "spatial_model", name: $("setSpatial").value }); });
+  $("erCam").addEventListener("click", () => { if (send({ type: "spatial", target: "camera" })) { $("erStatus").textContent = "asking Gemini Robotics-ER (camera)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in your camera…"); } });
+  $("erRobot").addEventListener("click", () => { if (send({ type: "spatial", target: "robot" })) { $("erStatus").textContent = "asking Gemini Robotics-ER (robot view)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in the robot view…"); } });
+  // demo autopilot
+  document.querySelectorAll("[data-demo]").forEach((b) => b.addEventListener("click", () => {
+    if (!send({ type: "demo", name: b.dataset.demo })) { toast("Not connected to the robot."); return; }
+    if (b.dataset.demo !== "stop" && el.dlg.open) el.dlg.close("cancel");
+  }));
+  const demoParam = new URLSearchParams(location.search).get("demo");
+  let demoAuto = !!demoParam;
+  function maybeAutoDemo() {
+    if (!demoAuto) return; demoAuto = false;
+    setTimeout(() => { send({ type: "demo", name: demoParam === "1" || demoParam === "true" ? "full" : demoParam }); }, 1500);
+  }
+
+  // ------------------------------------------------------------------ this device's camera -> server (0x10 + JPEG)
+  const LOCAL = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(location.hostname);
+  const IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (window.matchMedia && matchMedia("(pointer: coarse)").matches);
+  const phoneCam = {
+    get want() { return LS.get("pc.phoneCam", LOCAL ? "0" : "1") === "1"; },
+    facing: LS.get("pc.facing", IS_PHONE ? "environment" : "user"),
+    stream: null, video: null, canvas: null, timer: 0, busy: false, status: "off", sent: 0,
+  };
+  async function camStart() {
+    camStop();
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phoneCam.status = "camera not available (needs https)"; schedule(); return; }
+    phoneCam.status = "starting…"; schedule();
+    try {
+      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: phoneCam.facing, width: 640 }, audio: false });
+      if (!phoneCam.want) { st.getTracks().forEach((t) => t.stop()); return; }
+      phoneCam.stream = st;
+      const v = phoneCam.video || (phoneCam.video = Object.assign(document.createElement("video"), { muted: true, playsInline: true, autoplay: true }));
+      v.setAttribute("playsinline", ""); v.srcObject = st; try { await v.play(); } catch (e) { /* autoplay */ }
+      phoneCam.canvas = phoneCam.canvas || document.createElement("canvas");
+      phoneCam.timer = setInterval(camTick, 100);
+      phoneCam.status = `streaming · ${phoneCam.facing === "user" ? "front" : "back"}`; schedule();
+    } catch (e) { phoneCam.status = "camera blocked: " + (e && e.name || e); schedule(); }
+  }
+  function camStop() {
+    clearInterval(phoneCam.timer); phoneCam.timer = 0;
+    if (phoneCam.stream) phoneCam.stream.getTracks().forEach((t) => t.stop());
+    phoneCam.stream = null; phoneCam.status = "off"; schedule();
+  }
+  function camTick() {
+    const v = phoneCam.video; if (phoneCam.busy || !v || v.readyState < 2 || !v.videoWidth) return;
+    if (!ws || ws.readyState !== 1 || ws.bufferedAmount > 300000) return;
+    const w = Math.min(640, v.videoWidth), h = Math.round(w * v.videoHeight / v.videoWidth), cv = phoneCam.canvas;
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+    cv.getContext("2d").drawImage(v, 0, 0, w, h);
+    phoneCam.busy = true;
+    cv.toBlob(async (blob) => {
+      try {
+        if (blob && ws && ws.readyState === 1) {
+          const jpg = new Uint8Array(await blob.arrayBuffer()), out = new Uint8Array(jpg.length + 1);
+          out[0] = 0x10; out.set(jpg, 1); ws.send(out.buffer); phoneCam.sent++;
+        }
+      } catch (e) { /* noop */ } finally { phoneCam.busy = false; }
+    }, "image/jpeg", 0.6);
+  }
+  $("setPhoneCam").addEventListener("change", () => {
+    LS.set("pc.phoneCam", $("setPhoneCam").checked ? "1" : "0");
+    if (phoneCam.want) camStart(); else camStop();
+  });
+  $("camFlip").addEventListener("click", () => {
+    phoneCam.facing = phoneCam.facing === "user" ? "environment" : "user"; LS.set("pc.facing", phoneCam.facing);
+    if (phoneCam.want) camStart(); else phoneCam.status = `off · next: ${phoneCam.facing === "user" ? "front" : "back"}`;
+    schedule();
+  });
+  if (phoneCam.want) camStart();
 
   // feed collapse (mobile mostly)
   el.feedToggle.addEventListener("click", () => {

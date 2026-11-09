@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#fbfbfd">
-<title>PhysicsClay</title>
+<title>PhysicsClay · New Generation of interactive prompt for Physical AI</title>
 <link rel="stylesheet" href="/static/style.css">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
@@ -15,6 +15,7 @@
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
   <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.2" r="3.4"/></g></symbol>
   <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 9l6 6 6-6"/></symbol>
 </svg>
 
@@ -23,11 +24,13 @@
     <span class="logo" aria-hidden="true"></span>
     <div class="brand-text">
       <span class="name">PhysicsClay</span>
-      <span class="tag">A new way to prompt Physical AI</span>
+      <span class="tag" title="New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.">New Generation of interactive prompt for Physical AI</span>
     </div>
   </div>
 
   <div class="bar-mid">
+    <span id="demoPill" class="demo-pill mono" role="status" hidden><i></i><span id="demoPillTxt">DEMO</span></span>
+    <span id="phoneCamChip" class="chip mono phone-cam-chip" title="This device's camera is the robot's view of you" hidden>● phone camera</span>
     <span id="mode" class="mode-chip" data-mode="IDLE" role="status" aria-label="Robot mode"><i></i><b>IDLE</b></span>
     <button id="talk" class="talk" type="button" aria-label="Talk to the robot (Space)" aria-pressed="false" data-state="off">
       <span class="ring" aria-hidden="true"></span>
@@ -37,6 +40,7 @@
       <span id="talkLabel" class="talk-label">Talk</span>
       <span id="talkSub" class="talk-sub mono">press space</span>
     </div>
+    <button id="camBtnM" class="icon-btn mobile-gear" type="button" aria-label="Camera settings"><svg aria-hidden="true"><use href="#i-cam"/></svg></button>
     <button id="settingsBtnM" class="icon-btn mobile-gear" type="button" aria-label="Settings"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
   </div>
 
@@ -65,7 +69,7 @@
       </div>
       <span id="holding" class="chip mono subtle">hands empty</span>
       <span class="grow"></span>
-      <span class="muted small">Unitree G1 · MuJoCo</span>
+      <span id="robotLabel" class="muted small">Unitree G1 · MuJoCo</span>
     </div>
     <div class="frame robot-frame" id="robotFrame">
       <img id="robotImg" alt="Robot view of the table" draggable="false">
@@ -73,7 +77,9 @@
         <img id="pipImg" alt="" draggable="false"><span id="pipLabel">Full body</span>
       </button>
       <canvas id="robotOverlay" aria-label="Tap to place a marker, drag to draw a path"></canvas>
-      <div id="robotEmpty" class="empty"><span class="spinner" aria-hidden="true"></span><span>Waiting for the robot view…</span></div>
+      <div id="robotEmpty" class="empty"><span class="spinner" aria-hidden="true"></span><span>Waiting for the robot view…<br><small class="empty-tag">New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.</small></span></div>
+      <div id="caption" class="caption-bar" aria-live="polite" hidden></div>
+      <div id="subtitle" class="subtitle-bar" aria-live="polite" hidden></div>
       <div id="view3d" class="view3d" hidden><div class="v3d-msg">Loading 3D engine…</div></div>
       <div id="taskHud" class="task-hud" hidden><span class="dot"></span><span id="taskHudTxt"></span></div>
       <div id="pathBar" class="path-bar" hidden>
@@ -82,6 +88,7 @@
         <button type="button" class="btn sm ghost" id="clearPath">Clear <kbd>C</kbd></button>
       </div>
     </div>
+    <p class="think-hint">You can't put everything you think into words — show it, point at it, draw it.</p>
     <div class="hint-row">
       <span>Say <q>let me show you</q></span><span class="sep">·</span><span><b>Point</b> and say <q>there</q></span><span class="sep">·</span><span><b>Tap</b> to mark · <b>Draw</b> a path</span>
       <span class="grow"></span>
@@ -222,7 +229,7 @@
         <span id="feedCount" class="muted small mono">0 intents</span>
       </div>
       <div id="feed" class="feed-list" role="log" aria-live="polite">
-        <div class="feed-empty">Speak, type, or tap the robot view. Every intent becomes a card here with the physics verdict.</div>
+        <div class="feed-empty"><b>New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.</b> Speak, type, or tap the robot view. Every intent becomes a card here with the physics verdict.</div>
       </div>
     </section>
 
@@ -244,19 +251,49 @@
   <form method="dialog" id="settingsForm">
     <header class="dlg-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" value="cancel" aria-label="Close settings">✕</button></header>
     <div class="dlg-body">
-      <label class="field"><span>Gemini API key</span>
-        <input id="setKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
-        <small>Stored only in this browser.</small>
-      </label>
-      <label class="field"><span>Live model</span><input id="setLive" type="text" spellcheck="false"></label>
-      <label class="field"><span>Robotics-ER model</span><input id="setEr" type="text" spellcheck="false"></label>
-      <label class="check"><input id="setSendCam" type="checkbox" checked><span>Send my camera to Gemini</span></label>
-      <label class="check"><input id="setSendRobot" type="checkbox"><span>Send robot view to Gemini</span></label>
-      <label class="check"><input id="setMock" type="checkbox"><span>Mock AI (offline demo: gestures + scripted replies)</span></label>
-      <label class="field"><span>Speech language (no-key fallback)</span>
-        <select id="setLang"><option value="en-US">English (en-US)</option><option value="ko-KR">한국어 (ko-KR)</option></select>
-      </label>
-      <p id="geminiStatus" class="muted small mono"></p>
+      <section class="set-sec" id="secRobot"><h3>Robot</h3>
+        <div class="seg seg-lg" role="group" aria-label="Robot body" id="robotSeg">
+          <button type="button" class="seg-btn" data-robot="g1" aria-pressed="true">G1 humanoid</button>
+          <button type="button" class="seg-btn" data-robot="ur5e" aria-pressed="false">UR5e arm</button>
+        </div>
+        <small class="muted">Same intents and taught tasks run on either body.</small>
+      </section>
+      <section class="set-sec" id="secCamera"><h3>Camera</h3>
+        <label class="check"><input id="setPhoneCam" type="checkbox"><span>Use this device's camera</span></label>
+        <div class="set-row"><button type="button" class="btn sm" id="camFlip">Switch front / back</button><span id="camStatus" class="muted small mono"></span></div>
+      </section>
+      <section class="set-sec" id="secSpatial"><h3>Spatial model</h3>
+        <label class="field"><span>Object understanding on your camera</span>
+          <select id="setSpatial"><option value="yolo-seg">YOLO segmentation</option><option value="mediapipe">MediaPipe</option><option value="off">Off</option></select>
+        </label>
+        <div class="set-row"><button type="button" class="btn sm" id="erCam">Ask Gemini Robotics-ER what it sees</button><button type="button" class="btn sm ghost" id="erRobot">…in the robot view</button></div>
+        <small id="erStatus" class="muted mono"></small>
+      </section>
+      <section class="set-sec" id="secAI"><h3>AI</h3>
+        <p id="serverGemini" class="server-gemini small" hidden>Gemini: server key active</p>
+        <label class="field"><span>Gemini API key (optional)</span>
+          <input id="setKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
+          <small>Stored only in this browser.</small>
+        </label>
+        <label class="field"><span>Live model</span><input id="setLive" type="text" spellcheck="false"></label>
+        <label class="field"><span>Robotics-ER model</span><input id="setEr" type="text" spellcheck="false"></label>
+        <label class="check"><input id="setSendCam" type="checkbox" checked><span>Send my camera to Gemini</span></label>
+        <label class="check"><input id="setSendRobot" type="checkbox"><span>Send robot view to Gemini</span></label>
+        <label class="check"><input id="setMock" type="checkbox"><span>Mock AI (offline demo: gestures + scripted replies)</span></label>
+        <label class="field"><span>Speech language (no-key fallback)</span>
+          <select id="setLang"><option value="en-US">English (en-US)</option><option value="ko-KR">한국어 (ko-KR)</option></select>
+        </label>
+        <p id="geminiStatus" class="muted small mono"></p>
+      </section>
+      <section class="set-sec" id="secAbout"><h3>About</h3><p class="small muted">PhysicsClay · New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.</p></section>
+      <section class="set-sec" id="secDemo"><h3>Demo</h3>
+        <div class="set-row">
+          <button type="button" class="btn sm primary" data-demo="full">Run full demo</button>
+          <button type="button" class="btn sm" data-demo="text_vs_spatial">Text vs spatial</button>
+          <button type="button" class="btn sm" data-demo="teach">Teach demo</button>
+          <button type="button" class="btn sm danger" data-demo="stop">Stop demo</button>
+        </div>
+      </section>
     </div>
     <footer class="dlg-foot">
       <button class="btn ghost" value="cancel">Cancel</button>
