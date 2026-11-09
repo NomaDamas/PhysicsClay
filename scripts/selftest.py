@@ -13,7 +13,7 @@ from pathlib import Path
 import aiohttp
 
 ROOT = Path(__file__).resolve().parents[1]
-PORT, HTTPS = 8791, 8792
+PORT = int(os.environ.get("PC_SELFTEST_PORT", "8791")); HTTPS = PORT + 1   # parallel runs: give each its own port
 BASE = f"http://127.0.0.1:{PORT}"
 results = []
 
