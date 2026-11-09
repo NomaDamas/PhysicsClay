@@ -33,6 +33,12 @@
     if (T.phase === "recording") return ["busy", "Watching you"];
     if (T.phase === "confirm") return ["wait", "Needs you"];
     if (T.phase === "practice") return ["busy", "Practicing"];
+    const P = s.plan && typeof s.plan === "object" ? s.plan : null;   // UX2 plan preview (web/ui/plan.js)
+    if (P) {
+      const m = { proposing: ["wait", "Waiting for you"], needs_you: ["wait", "Needs you"], blocked: ["bad", "Can't do this"],
+                  running: ["busy", "Working"], done: ["ok", "Done"], failed: ["bad", "Didn't finish"] }[P.phase];
+      if (m) return m;
+    }
     const t = s.task && typeof s.task === "object" ? s.task : null;
     if (t) {
       const key = `${t.id}|${t.status}`;

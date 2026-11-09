@@ -482,11 +482,14 @@
     while (f.children.length > 120) f.firstElementChild.remove();
     if (atBottom) f.scrollTop = f.scrollHeight;
   }
+  let lastLine = { k: "", t: "", at: 0 };
   function addLine(kind, text) {
+    // the same robot sentence can arrive twice (task result + a feature's own echo): show it once
+    if (kind === lastLine.k && text === lastLine.t && Date.now() - lastLine.at < 4000) return lastLine.el;
     const d = document.createElement("div"); d.className = "line " + kind;
     const who = document.createElement("span"); who.className = "who"; who.textContent = kind === "user" ? "YOU" : kind === "robot" ? "ROBOT" : "·";
     const t = document.createElement("span"); t.className = "txt"; t.textContent = text;
-    d.append(who, t); feedAppend(d); return d;
+    d.append(who, t); feedAppend(d); lastLine = { k: kind, t: text, at: Date.now(), el: d }; return d;
   }
   function makeCard(id, action, args, source) {
     const card = document.createElement("article"); card.className = "card"; card.dataset.status = "planning";
