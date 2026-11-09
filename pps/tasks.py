@@ -41,6 +41,11 @@ class Tasks:
         self.mug_half_h = float(m.geom_size[g][1])
         self.mug_r = float(m.geom_size[g][0])
         self.home_palm = {h: d.site_xpos[rt.palm_sid[h]].copy() for h in HANDS}
+        try:
+            vg = m.geom("vase_collision").id
+            self.vase = {"pos": d.geom_xpos[vg].copy(), "r": float(m.geom_size[vg][0]), "h": float(m.geom_size[vg][1])}
+        except KeyError:
+            self.vase = None
         self.robot_root = m.body(ROBOT_BODIES_ROOT).id
         self.markers = []        # [{"id": "A", "pos": np.array}]
         self.next_marker = 0
@@ -168,6 +173,16 @@ class Tasks:
             self.set_task(tid, action, "failed", msg)
             return False
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        hit = self.carry_hits_vase(pts, {idx_map[k]: n for k, n in events.items()}, palm)
+        if hit is not None:
+            ok = [o and not (lo <= j <= hi) for j, o in enumerate(ok) for lo, hi in [hit[1]]]
+            rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
+            self.kind = None
+            self.fail_reason = "vase"
+            self.set_task(tid, action, "failed",
+                          f"I can't carry it that way: the mug would hit the vase ({hit[0]:.0f} cm too low). "
+                          "Draw a route over the vase in 3D, then say 'carry it along my path'.")
+            return False
         rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
         rt.path_msg = None
         self.events = {idx_map[k]: name for k, name in events.items()}
@@ -178,6 +193,28 @@ class Tasks:
         rt.recorder.start()
         self.set_task(tid, action, "running", ok_msg)
         return True
+
+    def carry_hits_vase(self, pts, events, palm):
+        """While the mug is in hand (grasp..release), does the carried mug sweep through the vase? -> (cm short, (i0,i1)) | None"""
+        if self.vase is None:
+            return None
+        held_now = self.holding.get(palm) == "mug"
+        g = next((i for i, n in sorted(events.items()) if n == "grasp"), None)
+        r = next((i for i, n in sorted(events.items()) if n == "release"), len(pts) - 1)
+        start = 0 if held_now else g
+        if start is None:
+            return None
+        off = self.mug_center() - self.rt.data.site_xpos[self.rt.palm_sid[palm]] if held_now else np.array([self.mug_r + 0.015, 0, -0.01])
+        vp, vr, vh = self.vase["pos"], self.vase["r"], self.vase["h"]
+        worst, span = 0.0, None
+        for j in range(start + 1, r):
+            c = pts[j] + off
+            if np.linalg.norm(c[:2] - vp[:2]) < vr + self.mug_r + 0.01:
+                short = (vp[2] + vh) - (c[2] - self.mug_half_h) + 0.01
+                if short > 0:
+                    worst = max(worst, short)
+                    span = (j, j) if span is None else (span[0], j)
+        return None if span is None else (worst * 100, span)
 
     def tick(self):
         """Call after every rt.step: fire waypoint events, carry the mug, finish tasks."""
@@ -219,7 +256,16 @@ class Tasks:
         if obj and "mug" not in str(obj).lower() and "cup" not in str(obj).lower():
             self.set_task(tid, "pick_place", "failed", f"I only see a mug on the table, not '{obj}'.")
             return
-        dest, label = self.resolve(target, target_uv, cam, aspect)
+        via = None
+        if target and str(target).strip().lower() in ("path", "my path", "along my path", "the path", "route", "경로", "경로대로", "내 경로"):
+            if self.rt.path is None or len(self.rt.path["pts"]) < 2:
+                self.set_task(tid, "pick_place", "failed", "There is no route yet. Draw one on my view or in 3D first.")
+                return
+            via = [np.array(p) for p in self.rt.path["pts"][::2]] + [np.array(self.rt.path["pts"][-1])]
+            end = via[-1]
+            dest, label = np.array([end[0], end[1], TABLE_TOP]), "the end of your route"
+        else:
+            dest, label = self.resolve(target, target_uv, cam, aspect)
         if dest is None:
             self.set_task(tid, "pick_place", "failed", label[0].upper() + label[1:] + ".")
             return
@@ -240,6 +286,9 @@ class Tasks:
             kps += [grasp + np.array([-0.08, 0, 0.07]), grasp]
             ev[len(kps) - 1] = "grasp"
             kps += [grasp + np.array([0, 0, 0.12])]
+        if via is not None:
+            kps += [np.array(v) for v in via]
+            label = "the end of your route"
         kps += [place_hand + np.array([0, 0, 0.12]), place_hand]
         ev[len(kps) - 1] = "release"
         kps += [place_hand + np.array([-0.10, 0, 0.07]), self.home_palm[palm]]
@@ -247,8 +296,9 @@ class Tasks:
         self.done_msg = f"Placed the mug on {label}."
         ok = self._launch(tid, "pick_place", kps, palm, ev, "task",
                           f"Every waypoint is reachable. Picking up the mug with my {side} hand and placing it on {label}.")
-        if not ok:
+        if not ok and getattr(self, "fail_reason", "reach") == "reach" and via is None:
             self.suggest(tid, dest, palm, off)
+        self.fail_reason = "reach"
 
     def suggest(self, tid, dest, palm, off):
         """Infeasible target: walk it toward the robot until the hand can place there, and offer that spot as a marker."""

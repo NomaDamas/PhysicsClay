@@ -35,6 +35,10 @@
       <geom type="mesh" mesh="mug" material="mug_mat" contype="0" conaffinity="0" group="2"/>
       <geom name="mug_collision" type="cylinder" size="0.065 0.071" pos="-0.000 -0.008 0.003" rgba="0 0 0 0" contype="1" conaffinity="1" group="3"/>
     </body>
+    <body name="vase" pos="0.33 0.04 0.86">
+      <geom name="vase_visual" type="cylinder" size="0.045 0.12" rgba="0.36 0.47 0.87 1" contype="0" conaffinity="0" group="2"/>
+      <geom name="vase_collision" type="cylinder" size="0.045 0.12" rgba="0 0 0 0" contype="1" conaffinity="1" group="3"/>
+    </body>
     <body name="com_target" pos="0.5 0 .5" mocap="true">
       <geom type="sphere" size=".06" contype="0" conaffinity="0" group="1" rgba=".6 .3 .3 0"/>
       <site type="sphere" size="0.01" rgba="0 0 1 1" group="1"/>
