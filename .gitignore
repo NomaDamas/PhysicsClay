@@ -1,0 +1,7 @@
+.venv/
+vendor/
+models/*.task
+__pycache__/
+*.pyc
+recordings/*.mp4
+.DS_Store
