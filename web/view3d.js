@@ -140,8 +140,8 @@ function frameScene(g) {
   g.traverse((o) => { if (!o.isMesh) return; b.setFromObject(o); b.getSize(size); if (size.x < 4 && size.y < 4 && size.z < 4) box.union(b); });
   if (box.isEmpty()) return;
   const c = box.getCenter(new THREE.Vector3()), r = Math.max(0.6, box.getSize(size).length() * 0.5);
-  const dir = new THREE.Vector3(1.0, -0.75, 0.55).normalize();
-  CAMS.reset = [[c.x + dir.x * r * 2.4, c.y + dir.y * r * 2.4, c.z + dir.z * r * 2.4], [c.x, c.y, c.z]];
+  const dir = new THREE.Vector3(0.25, -1.0, 0.8).normalize();   // from the side and above: back walls (kitchen backsplash, shelf) never block the view
+  CAMS.reset = [[c.x + dir.x * r * 2.2, c.y + dir.y * r * 2.2, c.z + dir.z * r * 2.2], [c.x, c.y, c.z]];
   CAMS.stage = CAMS.reset;
   camPreset("reset");
 }
