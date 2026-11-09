@@ -2,38 +2,33 @@
 
 **A new way to prompt Physical AI: turning human intent into spatial instructions that robots can understand and execute.**
 
-Show it. Shape it. Simulate it. Programming a robot shouldn't require programming every joint.
-Demonstrate a motion in front of a webcam, shape the ghost targets in 3D, and the robot tells you
-what it cannot do (reach, joint limits, self-collision, speed) before anything moves.
+Text alone cannot carry a physical instruction. PhysicsClay combines four channels and grounds them in physics:
 
-Built at c0mpiled-17 Seoul (YC RFS: New Operating System for the Physical World), 2026-11-09.
+| Channel | What it carries | How |
+|---|---|---|
+| Voice (realtime) | what to do, constraints ("put the mug on the left, slowly") | Gemini Live, native audio, tool calls |
+| Your camera | gestures and actions, understood semantically | frames streamed to Gemini Live; MediaPipe pose for follow mode |
+| Robot's view | where: tap a spot, draw a path on what the robot sees | MuJoCo raycast to 3D table points; Gemini Robotics-ER pointing for "next to the mug" |
+| Physics | whether the robot can actually do it, and why not | IK pre-check of every waypoint on the real Unitree G1 model, joint limits, self-collision, speed |
+
+Imitation is a mode, not the default: say "follow me", show a motion, then "learn this as wave" and later "do wave".
 
 ## Run
 ```bash
-./scripts/setup.sh      # venv + mujoco + mink + mediapipe + pose/object models
-./scripts/web.sh --objects            # browser HUD at http://127.0.0.1:8777 (webcam + real G1 sim)
-./scripts/web.sh --video dance.mp4    # Show: drive the robot from any video, e.g. a dance clip
-./scripts/run.sh        # alternative: native MuJoCo viewer (mjpython) + OpenCV HUD, ghosts draggable in 3D
-# other intent sources (run the HUD process by hand, runtime via scripts/run.sh in another tab):
-.venv/bin/python -m pps.perceive --video dance.mp4          # Show: any video, e.g. a dance clip
-.venv/bin/python -m pps.perceive --objects                  # Scene: object context, what each hand holds
+./scripts/setup.sh                 # venv + mujoco + mink + mediapipe + models
+./scripts/web.sh                   # http://127.0.0.1:8777  (webcam)
+./scripts/web.sh --https           # + https://<lan-ip>:8443 so a phone can use its mic (accept the cert warning)
+./scripts/web.sh --fake            # no camera
 ```
-In the browser: stand back about 2 m so your shoulders and hands are in frame. `space` engages the clutch and the
-G1 mirrors you. Draw a path on the camera view with the mouse: it is lifted into your body plane, compiled to the
-robot, and every waypoint is pre-checked (green reachable, red not). Drag a waypoint to edit, set "reach forward"
-for depth, press `F` and the robot follows it at a safe speed. `R` record, `P` preview, `A` approve and export.
-
-Keys in the native HUD window: `space` clutch · `R` record · `P` preview · `A` approve/export · `M` mirror · `H` home · `/` command (slower, faster, mirror off, hold, go, reset) · `Q` quit.
-With the clutch paused, double-click a ghost target in the viewer and Ctrl + right-drag to shape the pose.
+Open Settings in the page and paste a Gemini API key (stored only in the browser). Without a key the page falls back to
+browser speech recognition and a rule parser.
 
 ## Architecture
-Multimodal intent (demonstrate, show a video, scene objects, typed modifiers, drag 3D ghosts) ->
-robot-agnostic Physical Intent IR -> per-robot grounding (retarget + IK) -> physics validation
-(reach, joint limits, self-collision, speed) -> preview, approve, export.
 ```
-perceive.py (python)                        robot_runtime.py (mjpython)
-webcam -> MediaPipe Pose -> landmarks  --UDP-->  retarget -> mink IK -> validate -> read-back
-HUD: mode, feasibility, ROBOT SAYS     <--UDP--  MuJoCo viewer: ghost targets, red joints
+browser: Gemini Live (voice + your camera) --tool calls--> intents --WebSocket--> server
+         Robotics-ER pointing on the robot view                                    |
+server:  intent -> target (region / marker / raycast) -> hand path -> IK pre-check per waypoint
+         -> refuse with a reason, or execute (kinematic grasp) -> verdict back to Gemini, which says it out loud
 ```
-Physical Intent IR (`intent.json`) is robot-agnostic; `trajectory.json` is the compiled motion for the
-chosen robot; `report.json` is the validator verdict. Open source used: MuJoCo, mink, MediaPipe, OpenCV.
+Protocol: `docs/PROTOCOL.md`. Assets: Unitree G1 (mujoco_menagerie), Google Scanned Objects mug (CC-BY 4.0).
+Open source: MuJoCo, mink, MediaPipe, OpenCV, aiohttp; HUD patterns from CozyClay.

@@ -344,6 +344,10 @@ def state(rt, tasks, view, cam, fps, source, pts, lm, scene, grip, hold):
                 "i": int(rt.path["i"]), "hand": rt.path.get("hand") if rt.path.get("hand") in ("left", "right")
                 else ("right" if rt.path["palm"].startswith("right") else "left")}
     msgs = list(r["messages"])
+    if rt.engaged and rt.mode in ("MIRROR", "REC"):
+        need = [k for k in ("l_wrist", "r_wrist", "l_shoulder", "r_shoulder") if not (lm and k in lm)]
+        if need:
+            msgs = ["I can't see your arms. Step back so your shoulders and hands are in your camera."] + msgs
     if rt.path_msg:
         msgs = [rt.path_msg] + msgs
     mug = tasks.mug_center()
