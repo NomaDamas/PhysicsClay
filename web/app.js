@@ -506,6 +506,7 @@
   }
 
   function runTask(action, args = {}, source = "you") {
+    if (window.PCUI && window.PCUI.taskFilter) args = window.PCUI.taskFilter(action, args, source) || args; // UX2 plan preview adds preview:true
     const id = `t${++seq}${TAG}`;
     const rec = { id, action, args, source, status: "planning", message: "", step: "", settled: false, resolve: null, timer: 0 };
     rec.card = makeCard(id, action, args, source); tasks.set(id, rec);
@@ -548,10 +549,10 @@
         }
         if (rec) {
           const prevStatus = rec.status;
-          rec.status = ["planning", "running", "done", "failed"].includes(t.status) ? t.status : rec.status;
+          rec.status = ["planning", "proposed", "running", "done", "failed"].includes(t.status) ? t.status : rec.status;
           rec.message = t.message || rec.message || ""; rec.step = t.step || "";
           updateCard(rec);
-          if (!rec.settled && ["running", "done", "failed"].includes(rec.status)) rec.finish({ ok: rec.status !== "failed", status: rec.status, message: rec.message });
+          if (!rec.settled && ["proposed", "running", "done", "failed"].includes(rec.status)) rec.finish({ ok: rec.status !== "failed", status: rec.status, message: rec.message });
           else if (rec.viaModel && prevStatus !== rec.status && (rec.status === "done" || rec.status === "failed")) {
             contextToModel(`[robot update] ${rec.action} ${rec.status}: ${rec.message || ""}`);
           }
@@ -588,6 +589,7 @@
   function teachHear(text) {
     const t = String(text).trim(), low = t.toLowerCase().replace(/[.!?。]+$/g, "").trim(), ph = teachPhase();
     if (!low) return false;
+    if (ph !== "recording" && window.PCUI && window.PCUI.hear && window.PCUI.hear(t)) return true; // UX2: "yes / go" confirms a proposed plan
     if (ph === "recording") {
       if (TEACH_STOP.test(low)) { teachStop(); return true; }
       teachCmd("utterance", { text: t }); return true;

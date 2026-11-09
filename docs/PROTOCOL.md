@@ -127,3 +127,38 @@ or what not to touch. Show it, say it, point at it: the robot understands, check
 - **Demo autopilot** (scripted mock so the demo always works): `{type:"demo", name:"full"|"text_vs_spatial"|"teach"|"stop"}`.
   `state.demo = {name, step, total, title} | null`. It drives the real system (tasks, teach, 3D route) and narrates through
   `state.say` with kinds "user" (what the person says/types), "robot", "vision", "caption" (on-screen caption, e.g. "Text only").
+
+## v4 (UX 2.0)
+
+### Plan preview (#B): the robot proposes, you confirm
+- A motion task (`pick_place`, `reach`, `follow_path`, `play_skill`) sent with **`preview: true`** is planned but not run:
+  the server resolves the target and runs the same IK reach precheck, free-spot search, carry-through-obstacle check and
+  nearest-reachable-spot search as a real run, then puts everything back. Nothing moves. Without `preview` (demo, self test,
+  buttons, keys) tasks run exactly as before. Other actions (`stop`, `home`, ...) and taught multi-step task skills ignore
+  `preview`.
+- The task gets `state.task.status = "proposed"` (message: the intent sentence + "Say go, or tap Run.") when the plan is
+  feasible, or `"failed"` with the reason when it is blocked.
+- `{type:"plan", op:"confirm", id?}` runs the proposed task with the **same task id** (the card then goes
+  planning → running → done/failed as usual). Ignored when the plan is blocked.
+  `{type:"plan", op:"cancel", id?}` drops a waiting plan (task → failed "Cancelled. Nothing moved."), stops a running one,
+  or clears a finished one. `id` is optional; a stale id is ignored.
+- `state.plan = null` when idle, else:
+  ```
+  {id, action, phase: "proposing"|"needs_you"|"blocked"|"running"|"done"|"failed", ok, intent, verdict, reasons: [str],
+   message, say, hand: "left"|"right"|null,
+   target: {label, pos:[x,y,z]} | null,               // world/robot frame, z = table top for placements
+   steps: [{text, at}],                                // at = fraction of the path where the step starts (0..1)
+   constraints: [str],                                 // chips: "Keep it upright", "Clear of the vase", ...
+   waypoints: [[x,y,z]...], wp_ok: [bool...],          // densified hand path (<= 90 pts), per-point reach/collision ok
+   carry: {object, label, shape: "cyl"|"box", r, half_h, from:[x,y,z], to:[x,y,z]} | null,   // carried-object ghost
+   alternative: {text, label?, task: {action, ...args} | null} | null,                     // nearest thing it can do
+   question?,                                          // needs_you: yes = send alternative.task (with preview)
+   progress?, step_i?,                                 // running / done
+   task: {id, action, ...args}}                        // what confirm will run
+  ```
+  `needs_you` = blocked, with a runnable alternative ("Put it on marker B instead?"); `blocked` = no runnable alternative.
+  A waiting or finished plan is dropped as soon as another task replaces `state.task`.
+- Browser (`web/ui/plan.js`): typed, voice, Gemini and example-chip motion commands carry `preview: true`
+  (`PCUI.taskFilter`, called by app.js `runTask`; `?preview=0` turns it off); "yes / go / do it" confirms and
+  "no / cancel" cancels (`PCUI.hear`, called by app.js before the teach flow). The card lives in slot `plan`; the ghost
+  (path, numbered steps, target ring, carried object) in `PC3D.layer("plan")`.
