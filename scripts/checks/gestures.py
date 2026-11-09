@@ -129,7 +129,8 @@ async def run(t):
     base = max([base] + seen)
     await t.until_done(15)
 
-    # come here: reaches toward the person
+    # come here: reaches toward the person (wait out the 2 s cross-gesture cooldown first: the path may finish fast)
+    await t.pump(2.2)
     seen, last = await feed(t, "come_here", 2.2)
     st = t.state()
     t.check("gestures: come here fires once -> reaches toward you", len([i for i in seen if i > base]) == 1 and last["name"] == "come_here"

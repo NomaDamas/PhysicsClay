@@ -38,13 +38,14 @@
       const key = `${t.id}|${t.status}`;
       if (key !== lastTask) { lastTask = key; taskAt = Date.now(); }
       if (t.status === "planning") return ["busy", "Thinking"];
+      if (t.status === "proposed" || t.status === "asking") return ["wait", "Waiting for you"];
       if (t.status === "running") return ["busy", "Working"];
       if (Date.now() - taskAt < 5000 && t.status === "done") return ["ok", "Done"];
       if (Date.now() - taskAt < 5000 && t.status === "failed") return ["bad", "Couldn't do it"];
     }
     if (s.mode === "FOLLOW") return ["busy", "Following you"];
     if (s.mode === "PATH") return ["busy", "Following a path"];
-    return ["wait", "Waiting for you"];
+    return ["off", "Ready"];
   }
   function renderChip(s) {
     if (!chip || chip.dataset.owner) return; // a feature module may take the chip over by setting data-owner

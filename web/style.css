@@ -647,3 +647,13 @@ dialog[open] { animation: rise var(--med) var(--ease); }
 .pcui-fallback-plan, .pcui-fallback-side { right: 16px; top: 80px; width: min(360px, calc(100vw - 32px)); flex-direction: column; }
 .pcui-fallback-timeline { left: 16px; right: 16px; bottom: 160px; }
 .pcui-fallback-stage { left: 16px; top: 80px; flex-direction: column; }
+
+/* ---- integration: feature modules inside the shell ---- */
+/* the column already has the "Robot's plan" header + status chip, so the plan card drops its own */
+[data-slot="plan"] .plan-card .plan-head { display: none; }
+/* timeline / skills strip never widens the page (phone) */
+[data-slot="timeline"], [data-slot="timeline"] > * { min-width: 0; max-width: 100%; }
+/* gesture legend: bottom-left of the camera, compact, so it never covers "Show a video"; phone camera is a tiny PiP */
+body .pcg-legend { max-width: calc(100% - 160px); }
+body .pcg-toggle .pcg-strip { display: none; }
+@media (max-width: 760px) { body .pcg-legend { display: none; } body .pcg-chip { top: 4px; padding: 4px 8px; font-size: 11px; } }
