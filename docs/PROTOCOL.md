@@ -127,3 +127,22 @@ or what not to touch. Show it, say it, point at it: the robot understands, check
 - **Demo autopilot** (scripted mock so the demo always works): `{type:"demo", name:"full"|"text_vs_spatial"|"teach"|"stop"}`.
   `state.demo = {name, step, total, title} | null`. It drives the real system (tasks, teach, 3D route) and narrates through
   `state.say` with kinds "user" (what the person says/types), "robot", "vision", "caption" (on-screen caption, e.g. "Text only").
+
+## v4 (UX 2.0)
+Features plug in through `pps/features/<name>.py`, `web/ui/<name>.js` and `scripts/checks/<name>.py` (see docs/UX2.md).
+
+### Teach timeline (#F) — `pps/features/timeline.py`, `web/ui/timeline.js` (slot "timeline")
+Each understood step is a card (object -> target, constraint chips). Reorder (drag, move buttons, arrow keys on the
+step number), delete and chip toggles need no new message: the browser sends the edited spec through the existing
+`{type:"teach", cmd:"set_spec", spec:{goal, steps:[{object, target}], constraints}}` (phase goes back to "confirm").
+A switched-off chip is only kept in the browser so it can be switched back on. "Show again" re-records one step:
+```
+{type:"timeline", op:"reshow", index}     keep the spec, start recording a new demonstration for step <index>
+                                          (only in phase confirm/done; ends with the usual {type:"teach", cmd:"stop"})
+{type:"timeline", op:"reshow_cancel"}     stop that recording and restore the old spec
+```
+On stop, the first understood step replaces step `index`; the other steps keep their place and new constraints are
+merged in (a new grasp_top/grasp_side replaces the old one). `state.timeline = {reshow: {index, steps:[{object, target}],
+constraints} | null}` (the steps being kept while recording). The dock gets a "Show" tool that starts or finishes a
+demonstration. Saved skills are a strip of cards: play sends task `play_skill`; motion skills (in `state.skills_meta`)
+edit a time range of one body part with task `edit_skill {name, part, t0?, t1?, speed | amplitude}`.
