@@ -17,12 +17,13 @@
     cmdForm: $("cmdForm"), cmd: $("cmd"), toast: $("toast"), dlg: $("settings"),
   };
   const camPanel = el.camFrame.closest(".panel");
-  let view3d = new URLSearchParams(location.search).get("view") === "3d";
+  let view3d = new URLSearchParams(location.search).get("view") !== "robot"; // UX 2.0: the 3D shared space is the default stage
   const P3 = () => window.PC3D;
   function mount3d() { const v = P3(); if (!v) return; v.mount($("view3d")); v.active(view3d); v.setState(state); }
   window.addEventListener("pc3d-ready", mount3d);
   const SKELETON = [[11, 13], [13, 15], [12, 14], [14, 16], [11, 12], [11, 23], [12, 24], [23, 24], [0, 11], [0, 12]];
   const REGIONS = ["left", "right", "center", "front", "back"];
+  const MODE_LABEL = { IDLE: "ready", FOLLOW: "following you", TASK: "working", PATH: "following a path", PREVIEW: "previewing" };
   const C = { ok: "#1f8f55", bad: "#d6453a", cyan: "#1da8e5", accent: "#5c77df", hot: "#f59145" };
   const arr = (x) => (Array.isArray(x) ? x : []);
   const num = (x, d = 0) => (typeof x === "number" && isFinite(x) ? x : d);
@@ -101,7 +102,8 @@
   function render() {
     rafPending = false;
     const s = state, mode = String(s.mode || "IDLE");
-    if (changed("mode", mode)) { el.mode.dataset.mode = mode; el.mode.querySelector("b").textContent = mode; }
+    const modeTxt = !connected ? "offline" : !gotState ? "connecting" : (MODE_LABEL[mode] || mode.toLowerCase());
+    if (changed("mode", mode + modeTxt)) { el.mode.dataset.mode = mode; el.mode.querySelector("b").textContent = modeTxt; }
     const feas = Math.round(Math.max(0, Math.min(1, num(s.feasibility, 0))) * 100);
     if (changed("feas", gotState ? feas : -1)) {
       el.feasFill.style.width = (gotState ? feas : 0) + "%";
@@ -110,7 +112,7 @@
       el.saysFeas.textContent = gotState ? `feasible ${feas}%` : "";
     }
     const sp = num(s.speed_scale, 1);
-    if (changed("speed", sp)) el.speed.textContent = `×${sp.toFixed(sp < 1 && sp * 10 % 1 ? 2 : 1)}`;
+    if (changed("speed", sp)) { el.speed.textContent = `×${sp.toFixed(sp < 1 && sp * 10 % 1 ? 2 : 1)}`; el.speed.hidden = Math.abs(sp - 1) < 1e-3; }
     const stats = connected ? `${num(s.fps).toFixed(0)} fps · IK ${Math.round(num(s.ik_hz))} Hz` : "offline · reconnecting";
     if (changed("stats", stats + connected)) { el.statsTxt.textContent = stats; el.stats.dataset.conn = connected ? "on" : "off"; }
     if (changed("src", s.source || "")) el.source.textContent = s.source || "—";
@@ -125,12 +127,13 @@
     document.querySelectorAll('[data-act="follow"]').forEach((b) => b.setAttribute("aria-pressed", String(following)));
 
     const view = ["orbit", "stage"].includes(s.view) ? s.view : "robot";
-    const pipLabel = document.getElementById("pipLabel"); if (pipLabel) pipLabel.textContent = view === "robot" ? "Full body" : "Robot eye";
+    const pipLabel = document.getElementById("pipLabel"); if (pipLabel) pipLabel.textContent = view3d ? "Robot eye" : "3D stage";
     if (changed("view", view + view3d)) {
       const shown = view3d ? "3d" : "robot"; // only Robot eye | 3D buttons; server view may be stage/orbit
       document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === shown)));
       el.robotFrame.classList.toggle("orbit", view !== "robot" && !view3d); el.orbitHint.hidden = view === "robot" || view3d;
       el.robotFrame.classList.toggle("v3d", view3d); $("view3d").hidden = !view3d;
+      $("pip").setAttribute("aria-label", view3d ? "Switch to Robot eye" : "Switch to the 3D stage");
       if (P3()) P3().active(view3d);
     }
     const mockOn = typeof s.mock === "boolean" ? s.mock : settings.mock;
@@ -198,7 +201,7 @@
     const pcOn = !!phoneCam.stream;
     if (changed("pcam", [pcOn, s.source])) { $("phoneCamChip").hidden = !pcOn; $("phoneCamChip").classList.toggle("live", s.source === "phone"); }
     const rlab = (arr(s.robots).find((r) => r && r.id === s.robot) || {}).label || (s.robot === "ur5e" ? "UR5e arm" : s.robot ? "Unitree G1" : "");
-    if (rlab && changed("rlab", rlab)) $("robotLabel").textContent = `${rlab} · MuJoCo`;
+    if (rlab && changed("rlab", rlab)) $("robotLabel").textContent = rlab;
     if (el.dlg.open) renderSettingsLive();
     if (changed("sg", !!s.server_gemini) && (live.state === "off" || live.state === "error")) setTalk("off");
     renderSkillEdit();
@@ -433,11 +436,12 @@
   function decimate(pts, max) { if (pts.length <= max) return pts; const out = []; for (let i = 0; i < max; i++) out.push(pts[Math.round(i * (pts.length - 1) / (max - 1))]); return out; }
   new ResizeObserver(schedule).observe(el.robotFrame); new ResizeObserver(schedule).observe(el.camFrame);
 
-  document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.addEventListener("click", () => {
-    if (b.dataset.view === "3d") { view3d = true; schedule(); return; } // client-side view: the server keeps rendering as is
+  function setStageView(v) {
+    if (v === "3d") { view3d = true; schedule(); return; } // client-side view: the server keeps rendering as is
     view3d = false;
-    send({ type: "view", name: b.dataset.view }); state = Object.assign({}, state, { view: b.dataset.view }); schedule();
-  }));
+    send({ type: "view", name: v }); state = Object.assign({}, state, { view: v }); schedule();
+  }
+  document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.addEventListener("click", () => setStageView(b.dataset.view)));
   $("runPath").addEventListener("click", () => runTask("follow_path", {}, "button"));
   $("clearPath").addEventListener("click", clearAll);
   function clearAll() { send({ type: "clear" }); addLine("sys", "Cleared markers and path."); }
@@ -833,6 +837,8 @@
     reset: () => runTask("reset_scene", {}, "button").then(sayBack),
     export: () => runTask("export", {}, "button").then(sayBack),
     compile: () => runTask("compile_for", { robot: "ur5e" }, "button").then(sayBack),
+    video: () => el.videoFile.click(),
+    skills: () => openSettings("secSkills"),
   };
   function sayBack(r) { if (r && r.message && !live.session) speak(r.message); }
   document.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => { const f = acts[b.dataset.act]; if (f) f(); }));
@@ -927,25 +933,26 @@
     if (v && typeof v === "object") videoJob.seen = true;
     else if (videoJob.seen) {
       const skill = String(videoJob.name).replace(/\.[^.]+$/, "");
-      videoJob.done("done", `Video finished. Saved as a skill${arr(state.skills).map(String).includes(skill) ? ` “${skill}”` : ""} — select it below to edit or play.`);
+      videoJob.done("done", `Video finished. Saved as a skill${arr(state.skills).map(String).includes(skill) ? ` “${skill}”` : ""} — play or edit it under More → Skills.`);
       if (arr(state.skills).map(String).includes(skill)) { el.skillSel.value = skill; }
       videoJob = null;
     }
   }
 
   // ------------------------------------------------------------------ talk: Gemini Live or Web Speech fallback
+  const talkBtns = [el.talk, el.talkBig].filter(Boolean); // UX 2.0 shell: one big Talk button in the dock
   const live = { session: null, state: "off", level: 0, frameTimer: 0, tick: 0, gen: 0, lines: { user: null, model: null } };
   const rec = { on: false, r: null, paused: false, line: null };
 
   function setTalk(st, sub) {
     live.state = st;
-    for (const b of [el.talk, el.talkBig]) { b.dataset.state = st; b.setAttribute("aria-pressed", String(st !== "off" && st !== "error")); }
-    const labels = { off: "Talk", connecting: "Connecting…", live: "Live", listening: "Listening", speaking: "Speaking", error: "Talk" };
+    for (const b of talkBtns) { b.dataset.state = st; b.setAttribute("aria-pressed", String(st !== "off" && st !== "error")); }
+    const labels = { off: "Say it, point, or show", connecting: "Connecting…", live: "Live · say it, point, or show", listening: "Listening · say it, point, or show", speaking: "Robot is speaking", error: "Voice unavailable · type instead" };
     el.talkLabel.textContent = labels[st] || st;
-    el.talkBigLabel.textContent = st === "off" || st === "error" ? "Tap to talk" : (labels[st] || st) + " · tap to end";
-    el.talkSub.textContent = sub || (st === "off" ? (geminiReady() ? "gemini live · space" : "browser speech · space") : st === "error" ? "error" : live.session ? "gemini live" : "browser speech");
+    if (el.talkBigLabel) el.talkBigLabel.textContent = st === "off" || st === "error" ? "Tap to talk" : (labels[st] || st) + " · tap to end";
+    el.talkSub.textContent = sub || (st === "off" ? (geminiReady() ? "Gemini Live · Space to talk" : "Space to talk") : st === "error" ? "error" : live.session ? "Gemini Live" : "browser speech");
   }
-  function setLevel(v) { live.level = v; el.talk.style.setProperty("--lvl", v.toFixed(3)); el.talkBig.style.setProperty("--lvl", v.toFixed(3)); }
+  function setLevel(v) { live.level = v; for (const b of talkBtns) b.style.setProperty("--lvl", v.toFixed(3)); }
 
   const SYSTEM = [
     "You are the voice and brain of a Unitree G1 humanoid robot standing at a table with a mug on it, in a physics simulation that mirrors the real robot.",
@@ -1136,7 +1143,7 @@
     }
     rec.r.lang = settings.lang;
     try { rec.r.start(); } catch (e) { /* already started */ }
-    el.talk.classList.add("nolevel"); el.talkBig.classList.add("nolevel");
+    for (const b of talkBtns) b.classList.add("nolevel");
     setTalk("listening", fromFailover ? "browser speech" : undefined);
   }
   function stopRecognizer() { rec.on = false; rec.paused = false; if (rec.line) { rec.line.remove(); rec.line = null; } try { rec.r && rec.r.stop(); } catch (e) { /* noop */ } }
@@ -1146,14 +1153,14 @@
     const s = live.session; live.session = null;
     if (s) { try { s.stopMic(); } catch (e) { /* noop */ } try { s.close(); } catch (e) { /* noop */ } addLine("sys", "Conversation ended."); }
     for (const k of ["user", "model"]) { if (live.lines[k]) live.lines[k].classList.remove("interim"); live.lines[k] = null; }
-    stopRecognizer(); setLevel(0); el.talk.classList.remove("nolevel"); el.talkBig.classList.remove("nolevel");
+    stopRecognizer(); setLevel(0); for (const b of talkBtns) b.classList.remove("nolevel");
     setTalk(final);
   }
   function toggleTalk() {
     if (live.state !== "off" && live.state !== "error") { stopTalk(); return; }
     if (geminiReady()) startGemini(); else startRecognizer();
   }
-  el.talk.addEventListener("click", toggleTalk); el.talkBig.addEventListener("click", toggleTalk);
+  for (const b of talkBtns) b.addEventListener("click", toggleTalk);
 
   // ------------------------------------------------------------------ settings dialog
   function openSettings(section) {
@@ -1184,8 +1191,9 @@
     const on = $("setMock").checked; LS.set("pc.mock", on ? "1" : "0"); send({ type: "mock", enabled: on }); schedule();
     addLine("sys", on ? "Mock AI on: offline gestures + scripted replies." : "Mock AI off.");
   });
-  $("settingsBtn").addEventListener("click", () => openSettings()); $("settingsBtnM").addEventListener("click", () => openSettings());
-  $("camBtnM").addEventListener("click", () => openSettings("secCamera"));
+  [$("settingsBtn"), $("settingsBtnM")].forEach((b) => b && b.addEventListener("click", () => openSettings()));
+  if ($("camBtnM")) $("camBtnM").addEventListener("click", () => openSettings("secCamera"));
+  if ($("demoBtn")) $("demoBtn").addEventListener("click", () => openSettings("secDemo"));
   function renderSettingsLive() {
     const rb = String(state.robot || "g1");
     document.querySelectorAll("[data-robot]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.robot === rb)));
@@ -1295,11 +1303,11 @@
   });
 
   // debug/demo hook: window.PC.ingest(stateObject) renders a state without a server
-  document.getElementById("pip").addEventListener("click", (ev) => {
-    ev.stopPropagation(); send({ type: "view", name: state.view === "robot" ? "stage" : "robot" });
+  document.getElementById("pip").addEventListener("click", (ev) => { // the PiP swaps the stage: 3D <-> Robot eye
+    ev.stopPropagation(); setStageView(view3d ? "robot" : "3d");
   });
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => document.getElementById("pip").addEventListener(t, (ev) => ev.stopPropagation()));
-  window.PC = { toast: (m) => toast(m), ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, get state() { return state; } };
+  window.PC = { toast: (m) => toast(m), ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, setStageView, get view3d() { return view3d; }, get state() { return state; } };
   if (P3()) mount3d();
 
   setTalk("off");
