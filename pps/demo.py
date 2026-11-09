@@ -15,7 +15,8 @@ ROUTE = [[0.28, -0.12, 1.04], [0.29, -0.02, 1.14], [0.29, 0.10, 1.14], [0.29, 0.
 
 
 class Demo:
-    def __init__(self, tasks, teacher, brain, rt, push=None, video_active=None):
+    def __init__(self, tasks, teacher, brain, rt, push=None, video_active=None, er=None):
+        self.er = er or (lambda: None)
         self.tasks, self.teacher, self.brain, self.rt = tasks, teacher, brain, rt
         self.push = push or (lambda c: None)
         self.video_active = video_active or (lambda: False)
@@ -130,7 +131,38 @@ class Demo:
             self.act(lambda: te.correct("yes"), "practice"), self.until_teach(("done", "confirm"), 60),
             self.act(lambda: self.brain.utter("Practice passed. Both steps done in simulation, the vase untouched.", "robot")), self.wait(3.5),
         ]
-        return {"pitch": pitch + outro, "text_vs_spatial": text_vs_spatial + outro, "teach": teach + outro, "video": video + outro,
+        def er_line():
+            e = self.er() or {}
+            labels = [p["label"] for p in (e.get("points") or [])][:4]
+            return ("Gemini Robotics-ER sees: " + ", ".join(labels) + ".") if labels else "I can see you and the scene in real time."
+        keyfeatures = [
+            self.act(lambda: tk.home("demo", reset_scene=True), "reset"),
+            self.act(lambda: self.brain.utter("Key feature one: video to robot. Show a video, and the robot performs it.", "narrator"), "kf1"),
+            self.cap("① Video → Robot"), self.wait(3.0),
+            self.act(lambda: self.push({"type": "source", "path": str(ROOT_VIDEOS / "dance_clip.mp4"), "name": "dance_clip", "seconds": 11}), "video"),
+            self.wait(1.0), self.act(lambda: self.push({"type": "spatial", "target": "camera", "query": "Point to the people and their hands."}), "er"),
+            self.until(lambda: not self.video_active(), 25),
+            self.act(lambda: self.brain.utter("Learned that dance from the video, whole body, checked for balance.", "robot")), self.wait(3.5),
+            self.act(lambda: self.brain.utter("Key feature two: real-time trajectory lining and pointing, with voice.", "narrator"), "kf2"),
+            self.cap("② Trajectory lining + pointing, with voice"), self.wait(3.5),
+            self.user("Move the mug to the left."), self.wait(1.8),
+            self.act(lambda: tk.pick_place("demo-t1", "mug", "left", None, None, 4 / 3), "text command"),
+            self.act(lambda: self.brain.utter("I can't: the mug would hit the vase, thirteen centimeters too low.", "robot")), self.wait(4.0),
+            self.act(lambda: tk.set_path_world([np.array(p) for p in ROUTE], "right"), "3D route"),
+            self.user("Here's the path, over the vase. Carry it along my line."), self.wait(2.5),
+            self.act(lambda: tk.pick_place("demo-t2", "mug", "along my path", None, None, 4 / 3), "carry"),
+            self.act(lambda: self.brain.utter("Every waypoint checks out. Carrying it along your line.", "robot")),
+            self.until_task_done(), self.wait(0.5),
+            self.act(lambda: (tk.set_marker("P", np.array([0.33, -0.20, 0.74])), self.brain.utter("Put the red block there.", "user")), "point"),
+            self.cap("Pointing: “there”"), self.wait(2.2),
+            self.act(lambda: tk.pick_place("demo-t3", "red block", "there", None, None, 4 / 3), "deictic"),
+            self.act(lambda: self.brain.utter("You pointed at the right side. Placing the red block there.", "robot")),
+            self.until_task_done(), self.wait(1.0),
+            self.act(lambda: self.brain.utter("Key feature three: real-time video understanding. Your camera is part of the prompt.", "narrator"), "kf3"),
+            self.cap("③ Real-time video understanding"), self.wait(4.5),
+            self.act(lambda: self.brain.utter(er_line(), "robot")), self.wait(4.0),
+        ]
+        return {"keyfeatures": keyfeatures + outro, "pitch": pitch + outro, "text_vs_spatial": text_vs_spatial + outro, "teach": teach + outro, "video": video + outro,
                 "full": text_vs_spatial + video + teach + outro}.get(name)
 
     # ------------------------------------------------------------------ runtime

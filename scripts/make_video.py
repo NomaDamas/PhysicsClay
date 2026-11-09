@@ -91,7 +91,11 @@ class Timeline:
             self.frame(img)
 
     def say(self, path, at=None):
-        self.audio.append((self.t if at is None else at, path))
+        start = self.t if at is None else at
+        if self.audio:                                   # never overlap: wait for the previous line to finish
+            ps, pp = self.audio[-1]
+            start = max(start, ps + duration(pp) + 0.15)
+        self.audio.append((start, path))
 
     def close(self):
         self.writer.close()
@@ -172,10 +176,10 @@ async def capture_app(tl, demo_name="pitch", limit_s=95):
                     sy = st.get("say")
                     if sy and sy["id"] != seen:
                         seen = sy["id"]
-                        if sy["kind"] in ("robot", "vision", "user") and sy["text"].strip():
-                            voice = {"robot": "coral", "vision": "coral", "user": "ash"}[sy["kind"]]
-                            ins = ("A friendly, natural humanoid robot assistant; calm and precise." if sy["kind"] != "user"
-                                   else "A person casually instructing a robot, natural and relaxed.")
+                        if sy["kind"] in ("robot", "vision", "user", "narrator") and sy["text"].strip():
+                            voice = {"robot": "coral", "vision": "coral", "user": "ash", "narrator": "alloy"}[sy["kind"]]
+                            ins = {"user": "A person casually instructing a robot, natural and relaxed.",
+                                   "narrator": NARRATOR}.get(sy["kind"], "A friendly, natural humanoid robot assistant; calm and precise.")
                             p = tts(sy["text"], voice, f"live_{sy['id']}_{sy['kind']}", ins)
                             tl.say(p, at=start_t + (time.time() - t0))
                     if st.get("demo") is None and time.time() - t0 > 5 and done_at is None:
@@ -240,7 +244,7 @@ def main():
     cv2.putText(card, "Live: the real system, simulated Unitree G1", (420, 520), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (31, 29, 29), 3, cv2.LINE_AA)
     a = tts("Here's the live system.", "alloy", "n4", NARRATOR)
     tl.say(a); tl.hold(card, duration(a) + 0.2)
-    asyncio.run(capture_app(tl, "pitch"))
+    asyncio.run(capture_app(tl, "keyfeatures", limit_s=100))
     # 5) business + close
     img = shot(pres + "6", TMP / "s6.png")
     a = tts("It's free to try in the browser, and robot teams pay per robot they teach.", "alloy", "n6", NARRATOR)

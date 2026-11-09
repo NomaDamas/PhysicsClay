@@ -344,7 +344,7 @@ def worker(args, shared):
     brain = MockBrain()
     brain.enabled = args.mock
     video_flag = [False]
-    demo = Demo(tasks, teacher, brain, rt, push=shared.push_cmd, video_active=lambda: video_flag[0])
+    demo = Demo(tasks, teacher, brain, rt, push=shared.push_cmd, video_active=lambda: video_flag[0], er=lambda: spatial.er)
     dyn_geoms = [g for g in range(rt.model.ngeom) if rt.model.geom_group[g] == 2 and rt.model.geom_bodyid[g] != 0]
     m, d = rt.model, rt.data
     renderer = mujoco.Renderer(m, SIM_H, SIM_W)
@@ -448,7 +448,7 @@ def worker(args, shared):
         if source == "phone" and phone is None:
             source = "webcam" if cap is not None and not args.video else ("video" if args.video else "synthetic")
         scene = objects(frame) if objects is not None else []
-        spatial.paused = bool(demo.steps)
+        spatial.paused = bool(demo.steps) and video_job is None
         if n % 4 == 0 and not spatial.paused:
             spatial.feed(frame)
         hold = holding(scene, pts)
