@@ -43,6 +43,7 @@ class Spatial:
         self._lock = threading.Lock()
         self._yolo = None
         self._busy_er = False
+        self.paused = False
         threading.Thread(target=self._loop, daemon=True).start()
 
     def set_model(self, name):
@@ -56,8 +57,8 @@ class Spatial:
 
     def _loop(self):
         while True:
-            time.sleep(0.15)
-            if self.model_name != "yolo-seg":
+            time.sleep(0.6)
+            if self.model_name != "yolo-seg" or self.paused:
                 continue
             with self._lock:
                 f, self._frame = self._frame, None
@@ -65,10 +66,12 @@ class Spatial:
                 continue
             try:
                 if self._yolo is None:
+                    import torch
+                    torch.set_num_threads(2)
                     from ultralytics import YOLO
                     self._yolo = YOLO(str(ROOT / "models" / "yolo11n-seg.pt"))
                 h, w = f.shape[:2]
-                r = self._yolo.predict(f, imgsz=480, conf=0.35, verbose=False)[0]
+                r = self._yolo.predict(f, imgsz=416, conf=0.35, verbose=False)[0]
                 out = []
                 names = r.names
                 masks = r.masks.xyn if r.masks is not None else [None] * len(r.boxes)

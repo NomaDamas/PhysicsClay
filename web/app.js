@@ -780,8 +780,26 @@
   }
   el.cmdForm.addEventListener("submit", (ev) => { ev.preventDefault(); const v = el.cmd.value; el.cmd.value = ""; handleText(v, "typed"); });
 
+  const ttsQ = []; let ttsBusy = false, ttsOK = true;
+  function ttsNext() {
+    if (ttsBusy || !ttsQ.length) return;
+    const text = ttsQ.shift(); ttsBusy = true;
+    const a = new Audio("/tts?voice=coral&text=" + encodeURIComponent(text));
+    const done = () => { ttsBusy = false; ttsNext(); };
+    a.onended = done; a.onerror = () => { ttsOK = false; ttsBusy = false; speakBrowser(text); ttsNext(); };
+    a.play().catch(() => { ttsBusy = false; speakBrowser(text); ttsNext(); });
+  }
   function speak(msg, lang) {
-    if (live.session || !("speechSynthesis" in window) || !msg) return;
+    if (live.session || !msg) return;
+    if (ttsOK && (!lang || String(lang).startsWith("en"))) {
+      const short = String(msg).split(/(?<=[.!?])\s/).slice(0, 2).join(" ");
+      if (ttsQ.length > 2) ttsQ.splice(0, ttsQ.length - 2);
+      ttsQ.push(short); ttsNext(); return;
+    }
+    speakBrowser(msg, lang);
+  }
+  function speakBrowser(msg, lang) {
+    if (!("speechSynthesis" in window) || !msg) return;
     try {
       speechSynthesis.cancel();
       const short = String(msg).split(/(?<=[.!?])\s/).slice(0, 2).join(" ");

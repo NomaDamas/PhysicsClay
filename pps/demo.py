@@ -8,12 +8,17 @@ import time
 
 import numpy as np
 
+from pathlib import Path
+
+ROOT_VIDEOS = Path(__file__).resolve().parents[1] / "recordings" / "demo_videos"
 ROUTE = [[0.28, -0.12, 1.04], [0.29, -0.02, 1.14], [0.29, 0.10, 1.14], [0.29, 0.20, 1.02]]
 
 
 class Demo:
-    def __init__(self, tasks, teacher, brain, rt):
+    def __init__(self, tasks, teacher, brain, rt, push=None, video_active=None):
         self.tasks, self.teacher, self.brain, self.rt = tasks, teacher, brain, rt
+        self.push = push or (lambda c: None)
+        self.video_active = video_active or (lambda: False)
         self.steps, self.i, self.name, self.t_wait, self.cond = [], 0, None, 0.0, None
 
     # ------------------------------------------------------------------ script building blocks
@@ -28,6 +33,9 @@ class Demo:
 
     def wait(self, s):
         return ("wait", s, "")
+
+    def until(self, fn, timeout=30):
+        return ("until", fn, timeout)
 
     def until_task_done(self, timeout=30):
         return ("until", lambda: self.tasks.task and self.tasks.task.get("status") in ("done", "failed"), timeout)
@@ -80,9 +88,50 @@ class Demo:
             self.user("Save it as tidy table."), self.act(lambda: te.save("tidy table")), self.wait(0.6),
             self.robot_says_task(), self.wait(3.0),
         ]
+        vids = ROOT_VIDEOS
+        video = [
+            self.cap("Some motions you can't describe. Show a video instead."), self.wait(2.5),
+            self.user("Copy this."),
+            self.act(lambda: self.push({"type": "source", "path": str(vids / "gamst_reaction.mp4"), "name": "gamst_reaction", "seconds": 11}), "video 1"),
+            self.wait(1.5), self.until(lambda: not self.video_active(), 30),
+            self.act(lambda: self.brain.utter("Got it. I learned that motion from your video and saved it as a skill.", "robot")), self.wait(3.0),
+            self.cap("A dance — the whole body, not just the arms"), self.wait(1.5),
+            self.act(lambda: self.push({"type": "source", "path": str(vids / "dance_clip.mp4"), "name": "dance_clip", "seconds": 16}), "video 2"),
+            self.wait(1.5), self.until(lambda: not self.video_active(), 40),
+            self.act(lambda: self.brain.utter("Learned the dance too: arms, torso twist and steps, checked for balance.", "robot")), self.wait(3.0),
+        ]
         outro = [self.cap("New Generation of interactive prompt for Physical AI"), self.wait(4.0)]
-        return {"text_vs_spatial": text_vs_spatial + outro, "teach": teach + outro,
-                "full": text_vs_spatial + teach + outro}.get(name)
+        pitch = [
+            self.act(lambda: tk.home("demo", reset_scene=True), "reset"),
+            self.cap("Text only"), self.wait(0.8),
+            self.user("Move the mug to the left, carefully."), self.wait(0.6),
+            self.act(lambda: tk.pick_place("demo-t1", "mug", "left", None, None, 4 / 3), "text command"),
+            self.wait(0.8), self.robot_says_task(), self.wait(5.0),
+            self.cap("Show the path instead: over the vase, in 3D"), self.wait(1.0),
+            self.act(lambda: tk.set_path_world([np.array(p) for p in ROUTE], "right"), "3D route"), self.wait(1.5),
+            self.user("Carry it along my path."), self.wait(0.4),
+            self.act(lambda: tk.pick_place("demo-t2", "mug", "along my path", None, None, 4 / 3), "carry"),
+            self.wait(0.6), self.robot_says_task(), self.until_task_done(), self.robot_says_task(), self.wait(2.0),
+            self.cap("Point, and say “there”"), self.wait(0.8),
+            self.act(lambda: (tk.set_marker("P", np.array([0.33, -0.20, 0.74])),
+                              self.brain.utter("You're pointing at the right side. I marked it P.", "vision")), "point"),
+            self.wait(2.6), self.user("Put the red block there."), self.wait(0.4),
+            self.act(lambda: tk.pick_place("demo-t3", "red block", "there", None, None, 4 / 3), "deictic"),
+            self.until_task_done(), self.robot_says_task(), self.wait(2.0),
+            self.act(lambda: tk.home("demo", reset_scene=True), "reset"),
+            self.cap("Teach it like a friend"), self.wait(0.8),
+            self.act(lambda: (te.start(), self.brain.utter("I'm watching. Show me and tell me what matters.", "robot")), "start teaching"),
+            self.wait(2.6),
+            self.user("Mug to the middle. Don't touch the vase. Then the red block on the right."),
+            self.act(lambda: [te.utter(x) for x in ("Mug to the middle.", "Don't touch the vase.", "Then the red block on the right.")]),
+            self.wait(4.5), self.act(lambda: te.stop(), "understand"), self.wait(0.4),
+            self.act(lambda: self.brain.utter(te.question, "robot")), self.wait(8.5),
+            self.user("Yes, practice it."), self.wait(0.3),
+            self.act(lambda: te.correct("yes"), "practice"), self.until_teach(("done", "confirm"), 60),
+            self.act(lambda: self.brain.utter("Practice passed. Both steps done in simulation, the vase untouched.", "robot")), self.wait(3.5),
+        ]
+        return {"pitch": pitch + outro, "text_vs_spatial": text_vs_spatial + outro, "teach": teach + outro, "video": video + outro,
+                "full": text_vs_spatial + video + teach + outro}.get(name)
 
     # ------------------------------------------------------------------ runtime
     def start(self, name):

@@ -103,6 +103,14 @@
     const text = lines[idx];
     estimate = estimateMs(text);
     if (silent) return;
+    if (LANG !== 'ko' && !window.__noServerTTS) {
+      try { if (window.__pa) window.__pa.pause(); } catch (e) {}
+      const a = new Audio('/tts?voice=alloy&text=' + encodeURIComponent(text)); window.__pa = a;
+      a.onended = () => { if (my === token && !spokenDone) { spokenDone = true; doneAt = elapsed; } };
+      a.onerror = () => { window.__noServerTTS = true; if (my === token) narrate(); };
+      a.play().catch((e) => { if (my !== token) return; if (String(e).includes('NotAllowed')) silent = true; else { window.__noServerTTS = true; narrate(); } });
+      return;
+    }
     try { speechSynthesis.cancel(); } catch (e) {}
     const u = new SpeechSynthesisUtterance(text);
     u.lang = LANG === 'ko' ? 'ko-KR' : 'en-US';

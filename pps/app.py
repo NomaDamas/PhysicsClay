@@ -246,6 +246,40 @@ async def gemini_rest_proxy(request):
             return web.Response(body=await r.read(), status=r.status, content_type="application/json")
 
 
+TTS_DIR = ROOT / "recordings" / "tts"
+
+
+def openai_key():
+    env = ROOT / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            if line.startswith("OPENAI_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+async def tts_handler(request):
+    """OpenAI TTS with a disk cache; the browser plays the mp3 instead of the choppy built-in voice."""
+    import hashlib
+    text = (request.query.get("text") or "")[:600]
+    voice = request.query.get("voice") or "coral"
+    if not text or not openai_key():
+        raise web.HTTPNotFound()
+    TTS_DIR.mkdir(parents=True, exist_ok=True)
+    f = TTS_DIR / (hashlib.sha1((voice + "|" + text).encode()).hexdigest() + ".mp3")
+    if not f.exists():
+        body = {"model": "gpt-4o-mini-tts", "voice": voice, "input": text, "response_format": "mp3",
+                "instructions": "A friendly, natural humanoid robot assistant; calm, clear and precise." if voice == "coral"
+                else "A confident startup founder giving a crisp product demo; warm and energetic."}
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX)) as sess:
+            async with sess.post("https://api.openai.com/v1/audio/speech", json=body,
+                                 headers={"Authorization": "Bearer " + openai_key()}) as r:
+                if r.status != 200:
+                    raise web.HTTPBadGateway(text=(await r.text())[:200])
+                f.write_bytes(await r.read())
+    return web.FileResponse(f, headers={"Cache-Control": "max-age=86400", "Content-Type": "audio/mpeg"})
+
+
 async def index(request):
     return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
 
@@ -281,6 +315,7 @@ def run_server(shared, port, https_port):
         app.router.add_get("/ws", ws_handler)
         app.router.add_post("/upload", upload)
         app.router.add_get("/gemini/live", gemini_live_proxy)
+        app.router.add_get("/tts", tts_handler)
         app.router.add_post("/gemini/rest/{tail:.*}", gemini_rest_proxy)
         app.router.add_get("/scene.json", scene_json)
         app.router.add_get("/mesh/{mid}.bin", mesh_bin)
@@ -308,7 +343,8 @@ def worker(args, shared):
     TEACHER[0] = teacher
     brain = MockBrain()
     brain.enabled = args.mock
-    demo = Demo(tasks, teacher, brain, rt)
+    video_flag = [False]
+    demo = Demo(tasks, teacher, brain, rt, push=shared.push_cmd, video_active=lambda: video_flag[0])
     dyn_geoms = [g for g in range(rt.model.ngeom) if rt.model.geom_group[g] == 2 and rt.model.geom_bodyid[g] != 0]
     m, d = rt.model, rt.data
     renderer = mujoco.Renderer(m, SIM_H, SIM_W)
@@ -371,6 +407,11 @@ def worker(args, shared):
                 if now < next_frame_t:
                     time.sleep(next_frame_t - now)
                 next_frame_t = max(next_frame_t + video_dt, time.time() - video_dt)
+            if video_job is not None:          # keep real time: skip frames when processing is slower than the video
+                behind = int((time.time() - video_job["t0"]) / video_dt) - video_job["i"]
+                for _ in range(max(0, min(behind - 1, 8))):
+                    if cap.grab():
+                        video_job["i"] += 1
             ok, frame = cap.read()
             if ok and video_job is not None:
                 video_job["i"] += 1
@@ -407,7 +448,8 @@ def worker(args, shared):
         if source == "phone" and phone is None:
             source = "webcam" if cap is not None and not args.video else ("video" if args.video else "synthetic")
         scene = objects(frame) if objects is not None else []
-        if n % 2 == 0:
+        spatial.paused = bool(demo.steps)
+        if n % 4 == 0 and not spatial.paused:
             spatial.feed(frame)
         hold = holding(scene, pts)
         grip = {}
@@ -498,8 +540,8 @@ def worker(args, shared):
                         continue
                     vfps = vc.get(cv2.CAP_PROP_FPS) or 30.0
                     nfr = int(vc.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-                    video_job = {"name": c.get("name", "video"), "i": 0, "frames": nfr,
-                                 "max_frames": int(min(nfr or 10 ** 9, vfps * 90)),
+                    video_job = {"name": c.get("name", "video"), "i": 0, "frames": nfr, "t0": time.time(),
+                                 "max_frames": int(min(nfr or 10 ** 9, vfps * min(90.0, float(c.get("seconds") or 90.0)))),
                                  "prev_cap": cap if video_job is None else video_job["prev_cap"],
                                  "prev_dt": video_dt if video_job is None else video_job["prev_dt"],
                                  "prev_source": source if video_job is None else video_job["prev_source"],
@@ -581,6 +623,7 @@ def worker(args, shared):
         st["say"], st["gesture"], st["mock"] = brain.say, brain.gesture, brain.enabled
         st["teach"] = teacher.state()
         st["demo"] = demo.state()
+        video_flag[0] = video_job is not None
         st["robot"] = robot_choice[0]
         st["robots"] = [{"id": "g1", "label": "Unitree G1 humanoid"}, {"id": "ur5e", "label": "UR5e arm (compile + reach check)"}]
         st["spatial"] = spatial.state()
