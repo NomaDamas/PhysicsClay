@@ -906,3 +906,16 @@ dialog { width: min(520px, calc(100vw - 32px)); }
 .v3d-toggle { position: absolute; left: 16px; top: 16px; z-index: 6; }
 .v3d-panel { top: 60px !important; }
 .v3d-hint summary { cursor: pointer; color: var(--t2); }
+
+/* ---- UI core (web/ui/core.js): feature tool buttons + fallback slots when the shell lacks one ---- */
+.pcui-tool { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--raised); color: var(--t1); font: 500 14px var(--sans); cursor: pointer; }
+.pcui-tool:hover { background: var(--active); }
+.pcui-tool[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.pcui-tool:focus-visible { outline: none; box-shadow: var(--ring); }
+.pcui-fallback { position: fixed; z-index: 40; display: flex; gap: 8px; flex-wrap: wrap; }
+.pcui-fallback:empty { display: none; }
+.pcui-fallback-tools { left: 50%; bottom: 96px; transform: translateX(-50%); padding: 6px; border-radius: 999px; background: var(--panel); box-shadow: var(--shadow); }
+.pcui-fallback-plan, .pcui-fallback-side { right: 16px; top: 80px; width: min(360px, calc(100vw - 32px)); flex-direction: column; }
+.pcui-fallback-timeline { left: 16px; right: 16px; bottom: 160px; }
+.pcui-fallback-stage { left: 16px; top: 80px; flex-direction: column; }

@@ -233,6 +233,22 @@ async def main():
     else:
         check("video upload", False, "no /tmp/pc_clip.mp4 test clip")
 
+    # --- feature checks: scripts/checks/*.py each define `async def run(t)` (UX 2.0 features add their own file)
+    import importlib.util
+    from types import SimpleNamespace
+    t = SimpleNamespace(send=send, pump=pump, task=task, until_done=until_done, check=check, http=s, base=BASE,
+                        state=lambda: st, frames=lambda: bins)
+    for f in sorted((ROOT / "scripts" / "checks").glob("*.py")):
+        if f.name.startswith("_"):
+            continue
+        spec = importlib.util.spec_from_file_location(f"checks_{f.stem}", f)
+        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+        try:
+            await mod.run(t)
+        except Exception as e:
+            check(f"checks/{f.name} ran", False, repr(e)[:120])
+        await task("reset_scene", 1)
+
     await ws.close(); await s.close()
 
 

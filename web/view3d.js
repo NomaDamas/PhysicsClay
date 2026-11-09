@@ -285,8 +285,19 @@ function tableHit(ev) {
   const p = new THREE.Vector3(); if (!raycaster.ray.intersectPlane(tablePlane, p)) return null;
   return p.x >= TABLE.x0 && p.x <= TABLE.x1 && p.y >= TABLE.y0 && p.y <= TABLE.y1 ? p : null;
 }
-function onDown(ev) { gizmoPress = !!(tc.dragging || tc.axis); down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }
+// Feature tools (web/ui/*.js) can take over the pointer: PC3D.capture(fn) where fn({type, ev, hit}) returns true to consume.
+const captures = [];
+function captured(type, ev) {
+  if (!captures.length) return false;
+  const hit = tableHit(ev);
+  return captures.some((fn) => { try { return fn({ type, ev, hit }) === true; } catch (e) { console.error(e); return false; } });
+}
+function onDown(ev) {
+  if (captured("down", ev)) { orbit.enabled = false; down = null; return; }
+  gizmoPress = !!(tc.dragging || tc.axis); down = { x: ev.clientX, y: ev.clientY, b: ev.button };
+}
 function onUp(ev) {
+  if (captured("up", ev)) { orbit.enabled = true; down = null; return; }
   const d = down; down = null;
   if (!d || d.b !== 0 || gizmoPress || Math.hypot(ev.clientX - d.x, ev.clientY - d.y) > 5) { gizmoPress = false; return; }
   raycaster.setFromCamera(ndc(ev), camera);
@@ -297,6 +308,7 @@ function onUp(ev) {
   else select(null);
 }
 function onMove(ev) {
+  if (captured("move", ev)) { if (hoverGhost) hoverGhost.visible = false; return; }
   if (!hoverGhost || down) { if (hoverGhost) hoverGhost.visible = false; return; }
   const p = tableHit(ev); hoverGhost.visible = !!p && !tc.axis;
   if (p) hoverGhost.position.set(p.x, p.y, HOVER_Z);
@@ -384,7 +396,7 @@ function mount(container) {
   // editable zone outline on the table top
   const zone = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([[TABLE.x0, TABLE.y0], [TABLE.x1, TABLE.y0], [TABLE.x1, TABLE.y1], [TABLE.x0, TABLE.y1]]
     .map(([x, y]) => new THREE.Vector3(x, y, TABLE.z + 0.003))), new THREE.LineBasicMaterial({ color: 0x5c77df, transparent: true, opacity: 0.45 }));
-  scene.add(zone, wpGroup, linkGroup, srvGroup, mkGroup, objGroup, rayGroup);
+  scene.add(zone, wpGroup, linkGroup, srvGroup, mkGroup, objGroup, rayGroup, ...layers.values());
   hoverGhost = new THREE.Mesh(wpGeo, new THREE.MeshBasicMaterial({ color: COL.wp, transparent: true, opacity: 0.35, depthWrite: false })); hoverGhost.visible = false; scene.add(hoverGhost);
   raycaster = new THREE.Raycaster();
   tc = new TransformControls(camera, renderer.domElement); tc.setMode("translate"); tc.setSpace("world"); tc.setSize(0.6);
@@ -438,5 +450,17 @@ function project(x, y, z) { // world -> client px (debug / tests)
   const v = new THREE.Vector3(x, y, z).project(camera), r = renderer.domElement.getBoundingClientRect();
   return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
 }
-window.PC3D = { mount, setState, active, reload, project, get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); } };
+// Named layers feature modules draw into (cleared and rebuilt by their owner).
+const layers = new Map();
+function layer(name) {
+  if (!layers.has(name)) { const g = new THREE.Group(); g.name = "layer:" + name; layers.set(name, g); if (scene) scene.add(g); }
+  return layers.get(name);
+}
+function capture(fn) { captures.push(fn); return () => { const i = captures.indexOf(fn); if (i >= 0) captures.splice(i, 1); }; }
+window.PC3D = {
+  mount, setState, active, reload, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE,
+  get scene() { return scene; }, get camera() { return camera; }, get mounted() { return !!root; }, get isActive() { return isActive; },
+  tableHit: (ev) => (renderer ? tableHit(ev) : null),
+  get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); },
+};
 window.dispatchEvent(new Event("pc3d-ready"));

@@ -61,7 +61,7 @@
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") {
         let s; try { s = JSON.parse(ev.data); } catch (e) { return; }
-        if (s && typeof s === "object" && !s.type) { state = s; gotState = true; onState(); schedule(); if (P3()) P3().setState(s); }
+        if (s && typeof s === "object" && !s.type) { state = s; gotState = true; onState(); schedule(); if (P3()) P3().setState(s); window.dispatchEvent(new CustomEvent("pc-state", { detail: s })); }
         return;
       }
       const buf = ev.data; if (!(buf instanceof ArrayBuffer) || buf.byteLength < 2) return;
@@ -1299,7 +1299,7 @@
     ev.stopPropagation(); send({ type: "view", name: state.view === "robot" ? "stage" : "robot" });
   });
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => document.getElementById("pip").addEventListener(t, (ev) => ev.stopPropagation()));
-  window.PC = { ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, get state() { return state; } };
+  window.PC = { toast: (m) => toast(m), ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, get state() { return state; } };
   if (P3()) mount3d();
 
   setTalk("off");

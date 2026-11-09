@@ -31,6 +31,7 @@ from .spatial import ER_MODEL, Spatial, gemini_key
 from .teach import Teacher
 from .demo import Demo
 from .tasks import REGIONS, Tasks, edit_skill, skills_meta
+from . import ext
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
@@ -298,6 +299,12 @@ def lan_ip():
         return "127.0.0.1"
 
 
+async def ui_modules(request):
+    """Front-end feature modules (web/ui/*.js, core.js first) so features never edit index.html."""
+    names = sorted(p.name for p in (WEB / "ui").glob("*.js") if p.name != "core.js")
+    return web.json_response(["/static/ui/" + n for n in names])
+
+
 def ensure_cert():
     d = ROOT / "certs"
     d.mkdir(exist_ok=True)
@@ -322,6 +329,7 @@ def run_server(shared, port, https_port):
         app.router.add_post("/gemini/rest/{tail:.*}", gemini_rest_proxy)
         app.router.add_get("/scene.json", scene_json)
         app.router.add_get("/mesh/{mid}.bin", mesh_bin)
+        app.router.add_get("/ui/modules.json", ui_modules)
         sm = mujoco.MjModel.from_xml_path(str(ROOT / "assets" / "unitree_g1" / "scene_pc.xml"))
         app["model"], app["scene"] = sm, scene_payload(sm)
         app.router.add_static("/static", WEB)
@@ -348,6 +356,8 @@ def worker(args, shared):
     brain.enabled = args.mock
     video_flag = [False]
     demo = Demo(tasks, teacher, brain, rt, push=shared.push_cmd, video_active=lambda: video_flag[0], er=lambda: spatial.er)
+    ext.load()
+    ctx = ext.make_ctx(rt=rt, tasks=tasks, teacher=teacher, brain=brain, demo=demo, spatial=spatial, aspect=ASPECT, push=shared.push_cmd)
     dyn_geoms = [g for g in range(rt.model.ngeom) if rt.model.geom_group[g] == 2 and rt.model.geom_bodyid[g] != 0]
     m, d = rt.model, rt.data
     renderer = mujoco.Renderer(m, SIM_H, SIM_W)
@@ -468,10 +478,14 @@ def worker(args, shared):
         rt.last_context = {"holding": hold, "scene": sorted({o[0] for o in scene}), "source": source}
 
         # ---------------- intents from the browser
+        ctx.cam_params, ctx.frame, ctx.view = cam_params, frame, view
+        ctx.dispatch = lambda msg, _cp=cam_params: dispatch(tasks, rt, msg, _cp)
         for c in shared.pop_cmds():
             t = c.get("type")
             try:
-                if t == "tap" and cam_params is not None:
+                if t in ext.HANDLERS:
+                    ext.handle(ctx, c)
+                elif t == "tap" and cam_params is not None:
                     hit = tasks.raycast(cam_params, float(c["u"]), float(c["v"]), ASPECT)
                     if hit is not None:
                         mid = tasks.add_marker(hit)
@@ -571,7 +585,8 @@ def worker(args, shared):
                     orbit.elevation = float(np.clip(orbit.elevation + float(c.get("delevation", 0.0)), -85, 10))
                     orbit.distance = float(np.clip(orbit.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
                 elif t == "task":
-                    dispatch(tasks, rt, c, cam_params)
+                    if not ext.intercept_task(ctx, c):
+                        dispatch(tasks, rt, c, cam_params)
             except Exception as e:  # never let one bad intent kill the loop
                 tasks.set_task(c.get("id", "?"), c.get("action", t), "failed", f"Internal error: {e}")
 
@@ -585,6 +600,7 @@ def worker(args, shared):
         teacher.observe(pts if lm else None, grip, [o[0] for o in scene])
         teacher.tick()
         demo.tick()
+        ext.run_ticks(ctx)
         brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None or bool(demo.steps)))
         if not demo.steps:
             brain.narrate(tasks.task)
@@ -634,6 +650,7 @@ def worker(args, shared):
         st["geom_poses"] = {str(g): [round(float(x), 4) for x in d.geom_xpos[g]] + [round(float(x), 4) for x in d.geom_xmat[g]] for g in dyn_geoms}
         if st["path"] is not None:
             st["path"]["pts"] = [[round(float(x), 3) for x in p] for p in rt.path["pts"]]
+        st.update(ext.extra_state(ctx))
         st["video"] = None if video_job is None else {"name": video_job["name"], "progress": round(min(1.0, video_job["i"] / max(1, video_job["max_frames"])), 3)}
         shared.put(cam_jpg, sim_jpg, json.dumps(st))
         if args.frames and n >= args.frames:
