@@ -96,6 +96,10 @@ class Tasks:
             return None
         return [round(float(u), 4), round(float(v), 4)]
 
+    def set_marker(self, mid, p):
+        self.markers = [mk for mk in self.markers if mk["id"] != mid] + [{"id": mid, "pos": np.asarray(p, float)}]
+        return mid
+
     def add_marker(self, p):
         mid = "ABCDEF"[self.next_marker % 6]
         self.next_marker += 1
@@ -113,6 +117,12 @@ class Tasks:
             return hit, f"marker {mid}"
         if target:
             t = str(target).strip().lower()
+            if t in ("there", "here", "that", "over there", "that spot", "where i'm pointing", "where i am pointing",
+                     "저기", "여기", "거기", "저기에", "여기에", "거기에", "p", "marker p"):
+                pick = next((mk for mk in self.markers if mk["id"] == "P"), None) or (self.markers[-1] if self.markers else None)
+                if pick is None:
+                    return None, "point at the spot first (or tap it on my view), then say 'there'"
+                return pick["pos"].copy(), f"the spot you {'pointed at' if pick['id'] == 'P' else 'marked'} ({pick['id']})"
             for mk in self.markers:
                 if t in (mk["id"].lower(), f"marker {mk['id'].lower()}", f"point {mk['id'].lower()}"):
                     return mk["pos"].copy(), f"marker {mk['id']}"
@@ -276,7 +286,14 @@ class Tasks:
         if len(hits) < 2:
             self.rt.path_msg = "The stroke missed the table. Draw over the table or objects."
             return
-        pts = [h + np.array([0, 0, HOVER]) for h in hits]
+        self.set_path_world([h + np.array([0, 0, HOVER]) for h in hits], hand)
+
+    def set_path_world(self, pts, hand=None):
+        """World-space waypoints (from a stroke or the 3D editor) -> densified path, pre-checked per waypoint."""
+        pts = [np.asarray(p, float) for p in pts]
+        if len(pts) < 2:
+            self.rt.path_msg = "A path needs at least two waypoints."
+            return
         palm = {"left": "left_palm", "right": "right_palm"}.get(hand) or ("right_palm" if np.mean([p[1] for p in pts]) <= 0 else "left_palm")
         pts = densify(pts, 0.04)
         ok = self.rt.precheck(pts, palm)

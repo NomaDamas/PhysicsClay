@@ -25,6 +25,7 @@ from .perceive import H, W, Objects, Pose, grip_state, holding
 from .protocol import LANDMARKS
 from .robot_runtime import HANDS, Runtime
 from .compile_other import compile_ur5e
+from .mock import MockBrain
 from .tasks import REGIONS, Tasks, edit_skill, skills_meta
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -129,6 +130,58 @@ async def upload(request):
     return web.json_response({"ok": True, "name": stem, "message": f"Imitating '{stem}'. It becomes a skill when the video ends."})
 
 
+def scene_payload(m):
+    geoms, meshes = [], {}
+    kinds = {mujoco.mjtGeom.mjGEOM_PLANE: "plane", mujoco.mjtGeom.mjGEOM_BOX: "box", mujoco.mjtGeom.mjGEOM_MESH: "mesh",
+             mujoco.mjtGeom.mjGEOM_CYLINDER: "cylinder", mujoco.mjtGeom.mjGEOM_SPHERE: "sphere",
+             mujoco.mjtGeom.mjGEOM_CAPSULE: "capsule", mujoco.mjtGeom.mjGEOM_ELLIPSOID: "ellipsoid"}
+    kinds = {int(k): v for k, v in kinds.items()}
+    d = mujoco.MjData(m)
+    mujoco.mj_forward(m, d)
+    mug = m.body("mug").id
+    for g in range(m.ngeom):
+        grp, typ = int(m.geom_group[g]), int(m.geom_type[g])
+        if grp not in (0, 2) or typ not in kinds:
+            continue
+        if grp == 0 and m.geom_bodyid[g] != 0:
+            continue                                  # group-0 bits on bodies are ghosts / helpers
+        rgba = m.geom_rgba[g].tolist()
+        if m.geom_matid[g] >= 0:
+            rgba = m.mat_rgba[m.geom_matid[g]].tolist()
+        name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+        if m.geom_bodyid[g] == mug:
+            rgba = [0.70, 0.18, 0.20, 1.0]
+        elif typ == int(mujoco.mjtGeom.mjGEOM_BOX) and m.geom_bodyid[g] == 0:
+            rgba = [0.66, 0.48, 0.31, 1.0]
+        elif typ == int(mujoco.mjtGeom.mjGEOM_PLANE):
+            rgba = [0.92, 0.92, 0.94, 1.0]
+        mid = int(m.geom_dataid[g]) if typ == int(mujoco.mjtGeom.mjGEOM_MESH) else None
+        if mid is not None:
+            meshes[str(mid)] = {"url": f"/mesh/{mid}.bin"}
+        geoms.append({"id": int(g), "name": name, "kind": kinds[typ], "mesh": None if mid is None else str(mid),
+                      "size": [round(float(x), 5) for x in m.geom_size[g]], "rgba": [round(float(x), 3) for x in rgba],
+                      "pos": [round(float(x), 5) for x in d.geom_xpos[g]], "mat": [round(float(x), 6) for x in d.geom_xmat[g]],
+                      "dynamic": bool(m.geom_bodyid[g] != 0)})
+    return {"geoms": geoms, "meshes": meshes}
+
+
+async def scene_json(request):
+    return web.json_response(request.app["scene"])
+
+
+async def mesh_bin(request):
+    m = request.app["model"]
+    try:
+        i = int(request.match_info["mid"])
+        va, vn, fa, fn = m.mesh_vertadr[i], m.mesh_vertnum[i], m.mesh_faceadr[i], m.mesh_facenum[i]
+    except (ValueError, IndexError):
+        raise web.HTTPNotFound()
+    verts = np.ascontiguousarray(m.mesh_vert[va:va + vn], dtype="<f4")
+    faces = np.ascontiguousarray(m.mesh_face[fa:fa + fn], dtype="<u4")
+    body = np.array([vn, fn], dtype="<u4").tobytes() + verts.tobytes() + faces.tobytes()
+    return web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "max-age=3600"})
+
+
 async def index(request):
     return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
 
@@ -163,6 +216,10 @@ def run_server(shared, port, https_port):
         app.router.add_get("/", index)
         app.router.add_get("/ws", ws_handler)
         app.router.add_post("/upload", upload)
+        app.router.add_get("/scene.json", scene_json)
+        app.router.add_get("/mesh/{mid}.bin", mesh_bin)
+        sm = mujoco.MjModel.from_xml_path(str(ROOT / "assets" / "unitree_g1" / "scene_pc.xml"))
+        app["model"], app["scene"] = sm, scene_payload(sm)
         app.router.add_static("/static", WEB)
         runner = web.AppRunner(app, access_log=None)
         await runner.setup()
@@ -180,6 +237,9 @@ def run_server(shared, port, https_port):
 def worker(args, shared):
     rt = Runtime(mirror=not args.no_mirror)
     tasks = Tasks(rt)
+    brain = MockBrain()
+    brain.enabled = args.mock
+    dyn_geoms = [g for g in range(rt.model.ngeom) if rt.model.geom_group[g] == 2 and rt.model.geom_bodyid[g] != 0]
     m, d = rt.model, rt.data
     renderer = mujoco.Renderer(m, SIM_H, SIM_W)
     pip_renderer = mujoco.Renderer(m, 300, 400)
@@ -286,6 +346,12 @@ def worker(args, shared):
                         rt.path_msg = f"Marker {mid} placed. Say 'put the mug on {mid}'."
                     else:
                         rt.path_msg = "That tap missed the scene."
+                elif t == "path3d":
+                    tasks.set_path_world(c.get("points") or [], c.get("hand") if c.get("hand") in ("left", "right") else None)
+                elif t == "mock":
+                    brain.enabled = bool(c.get("enabled"))
+                    if brain.enabled:
+                        brain.utter("Mock AI on: point at the table, raise both hands to stop, or wave.", "vision")
                 elif t == "draw" and cam_params is not None:
                     tasks.draw(c.get("points") or [], cam_params, ASPECT, c.get("hand"))
                 elif t == "clear":
@@ -341,6 +407,8 @@ def worker(args, shared):
         for _ in range(IK_ITERS):
             rt.step(dt)
             tasks.tick()
+        brain.update(lm, rt, tasks)
+        brain.narrate(tasks.task)
 
         # ---------------- robot view
         rt.paint_model()
@@ -375,6 +443,10 @@ def worker(args, shared):
             now = time.time()
             fps, t_fps = 10 / max(now - t_fps, 1e-6), now
         st = state(rt, tasks, view, cam_params, fps, source, pts, lm, scene, grip, hold)
+        st["say"], st["gesture"], st["mock"] = brain.say, brain.gesture, brain.enabled
+        st["geom_poses"] = {str(g): [round(float(x), 4) for x in d.geom_xpos[g]] + [round(float(x), 4) for x in d.geom_xmat[g]] for g in dyn_geoms}
+        if st["path"] is not None:
+            st["path"]["pts"] = [[round(float(x), 3) for x in p] for p in rt.path["pts"]]
         st["video"] = None if video_job is None else {"name": video_job["name"], "progress": round(min(1.0, video_job["i"] / max(1, video_job["max_frames"])), 3)}
         shared.put(cam_jpg, sim_jpg, json.dumps(st))
         if args.frames and n >= args.frames:
@@ -489,6 +561,7 @@ def main():
     ap.add_argument("--fake", action="store_true", help="synthetic landmarks, no camera")
     ap.add_argument("--no-mirror", action="store_true")
     ap.add_argument("--https", action="store_true", help="also serve HTTPS (phone mic/camera need it)")
+    ap.add_argument("--mock", action="store_true", help="start with the offline mock brain on (gestures + narration)")
     ap.add_argument("--model", default="models/pose_landmarker_full.task")
     ap.add_argument("--objects-model", default="models/efficientdet_lite0.tflite")
     ap.add_argument("--port", type=int, default=8777)
