@@ -16,6 +16,9 @@ A feature module registers itself at import time:
     @ext.tick                            # once per worker frame, after physics
     def step(ctx): ...
 
+    @ext.overlay                         # draw into the robot-eye render: fn(ctx, mjvScene) adds geoms (scn.ngeom)
+    def paint(ctx, scn): ...
+
 ctx (one per server) carries: rt, tasks, teacher, brain, demo, spatial, cam_params, aspect, frame, view, store (a dict
 features may use for their own state), and dispatch(msg) to run a task message through the normal path.
 Every pps/features/*.py module is imported automatically by load()."""
@@ -24,7 +27,7 @@ import pkgutil
 import traceback
 from types import SimpleNamespace
 
-HANDLERS, PRE_TASK, STATE, TICK = {}, [], [], []
+HANDLERS, PRE_TASK, STATE, TICK, OVERLAY = {}, [], [], [], []
 
 
 def handler(kind):
@@ -46,6 +49,11 @@ def state(fn):
 
 def tick(fn):
     TICK.append(fn)
+    return fn
+
+
+def overlay(fn):
+    OVERLAY.append(fn)
     return fn
 
 
@@ -83,6 +91,12 @@ def intercept_task(ctx, msg):
 def run_ticks(ctx):
     for fn in TICK:
         _safe(fn, ctx)
+
+
+def paint_overlays(ctx, scn):
+    """Called by the worker right after the runtime paints its own overlays, for each renderer's scene."""
+    for fn in OVERLAY:
+        _safe(fn, ctx, scn)
 
 
 def extra_state(ctx):

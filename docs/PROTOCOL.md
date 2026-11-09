@@ -288,3 +288,34 @@ edit a time range of one body part with task `edit_skill {name, part, t0?, t1?, 
   takes it when the agent is on and available (server LLM, or a BYOK key) — except stop words, which go straight to the
   robot — otherwise the UX 2.0 rule parser runs. Settings ("Agent brain"): use the agent, confirm before moving, and the
   BYOK endpoint/key/model/effort (`localStorage` `pc.agentOn`, `pc.agentConfirm`, `pc.llmBase`, `pc.llmKey`, `pc.llmModel`, `pc.llmEffort`).
+
+### Co-presence: the person is in the robot's world (`pps/features/copresence.py`, `web/ui/copresence.js`)
+The pose (MediaPipe world landmarks, or the synthetic dancer with `--fake`) drives a mannequin standing across the
+table (hip centre x 1.15, facing the robot, not mirrored: your right hand is on the robot's left). It is drawn into the
+robot-eye render (through `@ext.overlay`) and into the 3D stage (`PC3D.layer("copresence")`).
+- `state.copresence = {on, view, source, anchor, joints: {name: [x,y,z]}|null, pointing: {side, from, dir, hit, armed,
+  target, candidates}|null, recent_point, hand_open: {l, r}, offer: "l"|"r"|null, attention: {kind: "person"|"object"|"spot",
+  name, pos}|null, handover: {phase: "carrying"|"offering"|"given", object, target, hand}|null, given, hand_paths: {l, r},
+  reply}`. World frame (metres, x forward from the robot, y to its left, z up).
+- **Pointing**: shoulder -> index fingertip ray onto the table top. Armed after the arm is extended toward the table and
+  held still for 0.5 s; an open hand held out is an offer, not a point. Movable objects within 6 cm of the ray are
+  `candidates`; while armed, marker `P` follows the hit (so "there" and the "which one?" question use it).
+- `{type:"copresence", op:"utter", text, id, run?: bool, preview?: bool}` resolves this/that/here/there
+  (이거/저거/여기/저기, "give it to me"/줘) against the pointing at speech time (1.5 s history; "put this there" pairs
+  the earlier pointing with the later one) -> `state.copresence.reply = {id, ok, kind, object, candidates, spot, marker,
+  message, task}`. `task` is the task message to send (the browser runs it with `PC.runTask`, so plan preview and
+  "which one?" apply). With `run: true` the server runs it itself (the path for the Brain agent, which only sends
+  messages). In-process: `resolve_deixis(ctx, text) -> same dict` (adds a marker for "put it there").
+- `{type:"task", action:"pick_place", hold:true, object, object_pos?|candidates?}` picks up and keeps holding.
+- `{type:"task", action:"handover", object?, hand?: [x,y,z]}` or `{type:"copresence", op:"handover"}`: carry the held
+  (or named) object to the offered hand, clamped to reach; release once the person's hand is within 12 cm.
+- `op:"view", on` (Shared space): wider robot eye (90 deg) pitched up to see the person, turning slightly toward the
+  attention target; restored when off. `op:"on"|"off"` shows/hides the person. `op:"heard"` (any utterance) makes the
+  robot attend to the person. `op:"place", x, y` moves where the person stands.
+- `op:"demo"` (no camera needed): a synthetic person points at the mug, at a spot, then holds out a hand (24 s);
+  `phase: point_mug|point_spot|offer|take|rest` holds one pose for 30 s.
+- `hand_path(ctx, side, seconds)`: the person's wrist path in robot-world coordinates (for Teach-by-Showing).
+- Test only: `{type:"copresence_feed", frames:[landmarks...], fps, hold}`; `synth_pose(point_at|offer)` builds frames.
+- Browser: typed or spoken text with deixis is claimed from `pc-hear` (preventDefault) only when there is a recent armed
+  pointing (or it is a handover request); otherwise the normal parser gets it.
+- `ext.overlay(fn)`: `fn(ctx, mjvScene)` adds geoms to each robot-eye render after the runtime's own overlays.
