@@ -69,6 +69,9 @@
     </div>
     <div class="frame robot-frame" id="robotFrame">
       <img id="robotImg" alt="Robot view of the table" draggable="false">
+      <button type="button" class="pip" id="pip" aria-label="Switch to this view">
+        <img id="pipImg" alt="" draggable="false"><span id="pipLabel">Full body</span>
+      </button>
       <canvas id="robotOverlay" aria-label="Tap to place a marker, drag to draw a path"></canvas>
       <div id="robotEmpty" class="empty"><span class="spinner" aria-hidden="true"></span><span>Waiting for the robot view…</span></div>
       <div id="taskHud" class="task-hud" hidden><span class="dot"></span><span id="taskHudTxt"></span></div>

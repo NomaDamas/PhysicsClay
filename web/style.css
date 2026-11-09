@@ -371,3 +371,116 @@ dialog[open] { animation: rise var(--med) var(--ease); }
 @media (max-width: 760px) { .se-btns .muted { display: none; } .se-btns .btn { flex: 1; height: 36px; } }
 .label, #seRange { white-space: nowrap; }
 @media (max-width: 760px) { #seRange { display: none; } .se-name { min-width: 0; flex: 1; } }
+
+/* =====================================================================================
+   Theme: Optimum Zone (light, Apple-like ink on soft white, pastel rainbow aura,
+   ink pill buttons with a spinning rainbow border, frosted ghost pills).
+   Overrides the dark tokens above.
+   ===================================================================================== */
+@property --rainbow-angle { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
+@keyframes rainbow-spin { to { --rainbow-angle: 360deg; } }
+:root {
+  --rb-red: #ed7473; --rb-orange: #f59145; --rb-yellow: #e8c44e; --rb-green: #5ac576;
+  --rb-blue: #1da8e5; --rb-indigo: #5c77df; --rb-violet: #b679e1;
+  --rainbow: conic-gradient(from var(--rainbow-angle) in oklch, var(--rb-red), var(--rb-orange), var(--rb-yellow), var(--rb-green), var(--rb-blue), var(--rb-indigo), var(--rb-violet), var(--rb-red));
+  --ink: #1d1d1f; --ink-2: rgba(29, 29, 31, .72); --ink-3: rgba(29, 29, 31, .5);
+  --s0: #fbfbfd; --bar: rgba(251, 251, 253, .78); --panel: rgba(255, 255, 255, .78); --raised: #ffffff;
+  --active: #f0f0f3; --field: #f5f5f7; --deep: #eef0f4; --divider: rgba(29, 29, 31, .08);
+  --line: rgba(29, 29, 31, .1); --line2: rgba(29, 29, 31, .16);
+  --t1: #1d1d1f; --t2: rgba(29, 29, 31, .62); --t3: rgba(29, 29, 31, .45);
+  --accent: #5c77df; --hot: #f59145; --on-accent: #ffffff; --accent-tint: rgba(92, 119, 223, .12);
+  --ok: #1f8f55; --bad: #d6453a; --cyan: #1da8e5; --blue: #5c77df; --violet: #b679e1; --idle: #9a9aa0;
+  --sans: -apple-system, "SF Pro Display", "SF Pro Text", "Apple SD Gothic Neo", Pretendard, "Noto Sans KR", system-ui, sans-serif;
+  --r1: 8px; --r2: 12px; --r3: 22px;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 12px 32px rgba(40, 30, 90, .07);
+  --shadow-md: 0 2px 4px rgba(0, 0, 0, .05), 0 22px 48px rgba(40, 30, 90, .12);
+  --shadow-lg: 0 2px 4px rgba(0, 0, 0, .05), 0 22px 48px rgba(40, 30, 90, .16);
+  --ease: cubic-bezier(.22, .8, .22, 1);
+  color-scheme: light;
+}
+body {
+  background:
+    radial-gradient(ellipse 520px 420px at 0 0, color-mix(in oklch, var(--rb-violet) 18%, transparent), transparent 80%),
+    radial-gradient(ellipse 520px 420px at 100% 0, color-mix(in oklch, var(--rb-orange) 18%, transparent), transparent 80%),
+    radial-gradient(ellipse 560px 420px at 0 100%, color-mix(in oklch, var(--rb-blue) 16%, transparent), transparent 80%),
+    radial-gradient(ellipse 560px 420px at 100% 100%, color-mix(in oklch, var(--rb-green) 16%, transparent), transparent 80%),
+    var(--s0);
+  color: var(--t1);
+}
+::-webkit-scrollbar-thumb { background: rgba(29, 29, 31, .18); border-color: transparent; }
+:focus-visible { outline-color: var(--rb-indigo); }
+.topbar { background: var(--bar); -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px); border-bottom: 1px solid var(--line); }
+.logo { background: var(--rainbow); animation: rainbow-spin 8s linear infinite; box-shadow: 0 4px 14px rgba(80, 60, 200, .18); border-radius: 50%; }
+.brand .name { font-weight: 700; letter-spacing: -.01em; }
+.panel { background: var(--panel); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border: 1px solid var(--line); border-radius: var(--r3); box-shadow: var(--shadow); }
+.panel-head { border-bottom-color: var(--divider); }
+.chip { background: rgba(255, 255, 255, .7); border-color: var(--line); color: var(--t1); }
+.chip.hot { color: var(--rb-indigo); border-color: rgba(92, 119, 223, .35); background: var(--accent-tint); }
+.mode-chip { background: rgba(255, 255, 255, .8) !important; border: 1px solid var(--line) !important; color: var(--t1) !important; box-shadow: var(--shadow); }
+.mode-chip i { box-shadow: none; }
+
+/* pills: ink by default, frosted ghost for secondary, rainbow ring for primary */
+.btn {
+  height: 34px; padding: 0 16px; border-radius: 999px; background: rgba(255, 255, 255, .72); color: var(--ink);
+  border: 1px solid var(--line); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  font-weight: 500; transition: transform .25s var(--ease), background .25s, box-shadow .25s, opacity .25s;
+}
+.btn:hover:not(:disabled) { background: #ffffff; transform: translateY(-1px) scale(1.02); box-shadow: var(--shadow); }
+.btn:active:not(:disabled) { transform: scale(.98); }
+.btn.sm { height: 28px; padding: 0 12px; }
+.btn.primary {
+  color: #fff; font-weight: 600; border: 2px solid transparent;
+  background: linear-gradient(var(--ink), var(--ink)) padding-box, var(--rainbow) border-box;
+  animation: rainbow-spin 8s linear infinite; box-shadow: 0 6px 22px rgba(80, 60, 200, .18);
+}
+.btn.primary:hover:not(:disabled) { background: linear-gradient(#000, #000) padding-box, var(--rainbow) border-box; }
+.btn.primary kbd { color: rgba(255, 255, 255, .8); border-color: rgba(255, 255, 255, .35); }
+.btn.ghost { background: transparent; }
+.btn.danger { color: var(--bad); border-color: rgba(214, 69, 58, .35); background: rgba(255, 255, 255, .72); }
+.btn.danger:hover:not(:disabled) { background: rgba(214, 69, 58, .08); }
+.btn.toggle[aria-pressed="true"] { background: var(--ink); color: #fff; border-color: var(--ink); }
+.seg { background: rgba(255, 255, 255, .7); border-color: var(--line); border-radius: 999px; }
+.seg-btn { border-radius: 999px; color: var(--t2); }
+.seg-btn[aria-pressed="true"] { background: var(--ink); color: #fff; box-shadow: none; }
+kbd { border-color: var(--line2); color: var(--t2); }
+
+/* talk button: ink circle with a rainbow ring when live */
+.talk { background: var(--ink) !important; color: #fff !important; border: 2px solid transparent !important; }
+.talk[data-state="live"], .talk[data-state="listening"], .talk[data-state="speaking"] {
+  background: linear-gradient(var(--ink), var(--ink)) padding-box, var(--rainbow) border-box !important;
+  animation: rainbow-spin 3s linear infinite; box-shadow: 0 6px 22px rgba(80, 60, 200, .25);
+}
+.talk[data-state="error"] { background: #fff !important; color: var(--bad) !important; border-color: var(--bad) !important; }
+.talk-big { background: var(--ink); color: #fff; }
+
+/* command box and inputs */
+.cmd { background: rgba(255, 255, 255, .85); border: 1px solid var(--line); border-radius: 999px; padding-left: 16px; }
+.cmd:focus-within { border-color: rgba(92, 119, 223, .5); box-shadow: 0 0 0 4px rgba(92, 119, 223, .12); }
+.cmd .prompt { color: var(--rb-indigo); }
+input, select, textarea { color: var(--t1); }
+select { background: rgba(255, 255, 255, .8); border-color: var(--line); }
+dialog { background: #fff; color: var(--t1); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow-lg); }
+dialog::backdrop { background: rgba(251, 251, 253, .6); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+
+/* views: the sim renders on a light sky; camera stays as is */
+.frame { background: #eef0f4; }
+.cam-frame, #camFrame { background: #111; }
+
+/* full-body picture-in-picture */
+.pip {
+  position: absolute; right: 12px; bottom: 12px; z-index: 5; width: 30%; max-width: 260px; aspect-ratio: 4 / 3;
+  padding: 0; border-radius: 16px; overflow: hidden; cursor: pointer; background: #eef0f4;
+  border: 2px solid transparent; background-clip: padding-box;
+  box-shadow: 0 8px 26px rgba(40, 30, 90, .22); transition: transform .25s var(--ease), box-shadow .25s;
+}
+.pip::before { content: ""; position: absolute; inset: -2px; border-radius: 18px; padding: 2px; background: var(--rainbow); animation: rainbow-spin 8s linear infinite;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; pointer-events: none; }
+.pip:hover { transform: translateY(-2px) scale(1.02); box-shadow: 0 14px 34px rgba(40, 30, 90, .28); }
+.pip img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .25s; }
+.pip img.live { opacity: 1; }
+.pip span { position: absolute; left: 8px; top: 8px; padding: 2px 8px; border-radius: 999px; background: rgba(255, 255, 255, .85); color: var(--ink); font-size: 11px; font-weight: 600; }
+@media (max-width: 760px) { .pip { width: 38%; right: 8px; bottom: 8px; } }
+.robot-frame { background: linear-gradient(180deg, #fbfbfd, #e9ebf0); }
+.talk-big { background: var(--ink) !important; color: #fff !important; }
+.badge.follow { color: #fff; background: var(--rb-blue); box-shadow: 0 0 12px rgba(29, 168, 229, .35); }
+.se-ticks i { background: rgba(29, 29, 31, .08); }

@@ -19,7 +19,7 @@
   const camPanel = el.camFrame.closest(".panel");
   const SKELETON = [[11, 13], [13, 15], [12, 14], [14, 16], [11, 12], [11, 23], [12, 24], [23, 24], [0, 11], [0, 12]];
   const REGIONS = ["left", "right", "center", "front", "back"];
-  const C = { ok: "#5fd08a", bad: "#ff6b5b", cyan: "#4fd1e8", accent: "#f2a33a", hot: "#ff5a1f" };
+  const C = { ok: "#1f8f55", bad: "#d6453a", cyan: "#1da8e5", accent: "#5c77df", hot: "#f59145" };
   const arr = (x) => (Array.isArray(x) ? x : []);
   const num = (x, d = 0) => (typeof x === "number" && isFinite(x) ? x : d);
   const isUV = (p) => Array.isArray(p) && p.length >= 2 && isFinite(p[0]) && isFinite(p[1]);
@@ -43,7 +43,7 @@
   // ------------------------------------------------------------------ websocket
   let ws = null, connected = false, state = {}, gotState = false;
   const latest = { cam: null, robot: null }; // ArrayBuffer of the last frame (byte 0 = tag)
-  const blobUrls = { cam: [], robot: [] };
+  const blobUrls = { cam: [], robot: [] , pip: [] };
 
   function connect() {
     const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
@@ -60,6 +60,7 @@
       const tag = new Uint8Array(buf, 0, 1)[0];
       if (tag === 1) { latest.cam = buf; showFrame(el.camImg, "cam", buf); }
       else if (tag === 2) { latest.robot = buf; showFrame(el.robotImg, "robot", buf); }
+      else if (tag === 3) { showFrame(document.getElementById("pipImg"), "pip", buf); }
     };
     ws.onclose = () => { connected = false; schedule(); setTimeout(connect, 1000); };
     ws.onerror = () => { try { ws.close(); } catch (e) { /* noop */ } };
@@ -116,6 +117,7 @@
     document.querySelectorAll('[data-act="follow"]').forEach((b) => b.setAttribute("aria-pressed", String(following)));
 
     const view = ["orbit", "stage"].includes(s.view) ? s.view : "robot";
+    const pipLabel = document.getElementById("pipLabel"); if (pipLabel) pipLabel.textContent = view === "robot" ? "Full body" : "Robot eye";
     if (changed("view", view)) {
       document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
       el.robotFrame.classList.toggle("orbit", view !== "robot"); el.orbitHint.hidden = view === "robot";
@@ -919,6 +921,10 @@
   });
 
   // debug/demo hook: window.PC.ingest(stateObject) renders a state without a server
+  document.getElementById("pip").addEventListener("click", (ev) => {
+    ev.stopPropagation(); send({ type: "view", name: state.view === "robot" ? "stage" : "robot" });
+  });
+  ["pointerdown", "pointerup", "pointermove"].forEach((t) => document.getElementById("pip").addEventListener(t, (ev) => ev.stopPropagation()));
   window.PC = { ingest(s) { state = s || {}; gotState = true; onState(); schedule(); }, runTask, parseIntent, get state() { return state; } };
 
   setTalk("off");

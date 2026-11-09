@@ -37,7 +37,7 @@ ASPECT = SIM_W / SIM_H
 class Shared:
     def __init__(self):
         self.lock = threading.Lock()
-        self.cam = self.sim = None
+        self.cam = self.sim = self.pip = None
         self.state = "{}"
         self.fid = 0
         self.cmds = []
@@ -96,6 +96,8 @@ async def broadcaster(shared):
                 await ws.send_str(state)
                 await ws.send_bytes(b"\x01" + cam)
                 await ws.send_bytes(b"\x02" + sim)
+                if shared.pip is not None:
+                    await ws.send_bytes(b"\x03" + shared.pip)
             except Exception:
                 shared.clients.discard(ws)
 
@@ -180,6 +182,7 @@ def worker(args, shared):
     tasks = Tasks(rt)
     m, d = rt.model, rt.data
     renderer = mujoco.Renderer(m, SIM_H, SIM_W)
+    pip_renderer = mujoco.Renderer(m, 300, 400)
     robot_cam = m.camera("robot_view").id
     orbit = mujoco.MjvCamera()
     mujoco.mjv_defaultFreeCamera(m, orbit)
@@ -187,8 +190,12 @@ def worker(args, shared):
     orbit.lookat[:] = (0.35, 0.0, 0.9)
     stage = mujoco.MjvCamera()
     mujoco.mjv_defaultFreeCamera(m, stage)
-    stage.azimuth, stage.elevation, stage.distance = 215, -8, 2.6
-    stage.lookat[:] = (0.0, 0.0, 0.62)
+    stage.azimuth, stage.elevation, stage.distance = 240, -12, 2.4
+    stage.lookat[:] = (0.22, 0.0, 0.62)
+    full = mujoco.MjvCamera()
+    mujoco.mjv_defaultFreeCamera(m, full)
+    full.azimuth, full.elevation, full.distance = 240, -12, 2.4
+    full.lookat[:] = (0.22, 0.0, 0.62)
     view = "robot"
     cam_params = None
 
@@ -351,6 +358,15 @@ def worker(args, shared):
         rt.paint_overlays(renderer.scene, reset=False)
         sim = renderer.render()
         sim_jpg = cv2.imencode(".jpg", cv2.cvtColor(sim, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82])[1].tobytes()
+        # picture-in-picture: the whole robot when the main view is its eye, otherwise the robot's eye
+        if view == "robot":
+            pip_renderer.update_scene(d, full)
+        else:
+            pip_renderer.update_scene(d, camera=robot_cam)
+        pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+        pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+        rt.paint_overlays(pip_renderer.scene, reset=False)
+        shared.pip = cv2.imencode(".jpg", cv2.cvtColor(pip_renderer.render(), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 78])[1].tobytes()
         shown = cv2.resize(cv2.flip(frame, 1), (960, 540))
         cam_jpg = cv2.imencode(".jpg", shown, [cv2.IMWRITE_JPEG_QUALITY, 72])[1].tobytes()
 
