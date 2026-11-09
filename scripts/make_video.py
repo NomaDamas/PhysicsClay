@@ -177,14 +177,11 @@ async def capture_app(tl, demo_name="pitch", limit_s=95):
                     if sy and sy["id"] != seen:
                         seen = sy["id"]
                         if sy["kind"] in ("robot", "vision", "user", "narrator") and sy["text"].strip():
-                            voice = {"robot": "coral", "vision": "coral", "user": "ash", "narrator": "alloy"}[sy["kind"]]
-                            ins = {"user": "A person casually instructing a robot, natural and relaxed.",
-                                   "narrator": NARRATOR}.get(sy["kind"], "A friendly, natural humanoid robot assistant; calm and precise.")
-                            p = tts(sy["text"], voice, f"live_{sy['id']}_{sy['kind']}", ins)
-                            tl.say(p, at=start_t + (time.time() - t0))
+                            lines.append((start_t + (time.time() - t0), sy))     # TTS later: never block the capture
                     if st.get("demo") is None and time.time() - t0 > 5 and done_at is None:
                         done_at = time.time()
 
+            lines = []
             task = asyncio.create_task(pump_app())
             while True:
                 m = await cdp.receive()
@@ -211,6 +208,11 @@ async def capture_app(tl, demo_name="pitch", limit_s=95):
             task.cancel()
             await app.close()
             await cdp.close()
+            for at, sy in lines:
+                voice = {"robot": "coral", "vision": "coral", "user": "ash", "narrator": "alloy"}[sy["kind"]]
+                ins = {"user": "A person casually instructing a robot, natural and relaxed.",
+                       "narrator": NARRATOR}.get(sy["kind"], "A friendly, natural humanoid robot assistant; calm and precise.")
+                tl.say(tts(sy["text"], voice, f"live_{sy['id']}_{sy['kind']}", ins), at=at)
     finally:
         proc.terminate()
 
@@ -233,7 +235,7 @@ def main():
             "So you show a video, and the robot learns it: seated, like the person on screen, or as a dance duet.", "alloy", "n3", NARRATOR)
     tl.say(a)
     clips = []
-    for name, secs in (("gamst_seated", 9.0), ("dance_duet", 12.0)):
+    for name, secs in (("gamst_seated", 7.0), ("dance_duet", 8.0)):
         f = ROOT / "recordings" / "samples" / f"{name}_before_after.mp4"
         if f.exists():
             clips += clip_frames(f, secs)
@@ -242,19 +244,17 @@ def main():
     # 4) the live app, driven by the demo autopilot (the real system)
     card = np.full((H, W, 3), (253, 251, 251), np.uint8)
     cv2.putText(card, "Live: the real system, simulated Unitree G1", (420, 520), cv2.FONT_HERSHEY_SIMPLEX, 1.6, (31, 29, 29), 3, cv2.LINE_AA)
-    a = tts("Here's the live system.", "alloy", "n4", NARRATOR)
-    tl.say(a); tl.hold(card, duration(a) + 0.2)
-    asyncio.run(capture_app(tl, "keyfeatures", limit_s=100))
+    asyncio.run(capture_app(tl, "keyfeatures", limit_s=95))
     vis = ROOT / "recordings" / "samples" / "vision_overlay.mp4"
     if vis.exists():
         a = tts("Under the hood, your camera is part of the prompt: YOLO and SAM segment the scene, "
                 "MediaPipe tracks thirty-three joints, and Gemini reads the meaning.", "alloy", "n5", NARRATOR)
         tl.say(a)
-        for c in clip_frames(vis, 9.0):
+        for c in clip_frames(vis, 6.5):
             tl.frame(c)
     # 5) business + close
     img = shot(pres + "6", TMP / "s6.png")
-    a = tts("It's free to try in the browser, and robot teams pay per robot they teach.", "alloy", "n6", NARRATOR)
+    a = tts("Free in the browser; robot teams pay per robot.", "alloy", "n6b", NARRATOR)
     tl.say(a); tl.hold(img, duration(a) + 0.3)
     img = shot(pres + "7", TMP / "s7.png")
     a = tts("What if teaching a robot were as natural as teaching a friend? PhysicsClay.", "alloy", "n7", NARRATOR)
