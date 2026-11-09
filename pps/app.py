@@ -240,10 +240,13 @@ async def gemini_rest_proxy(request):
         return web.json_response({"error": {"message": "no server key"}}, status=503)
     tail = request.match_info["tail"]
     body = await request.read()
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX)) as sess:
-        async with sess.post("https://generativelanguage.googleapis.com/v1beta/models/" + tail, data=body,
-                             headers={"Content-Type": "application/json", "x-goog-api-key": key}) as r:
-            return web.Response(body=await r.read(), status=r.status, content_type="application/json")
+    try:
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX), timeout=aiohttp.ClientTimeout(total=35)) as sess:
+            async with sess.post("https://generativelanguage.googleapis.com/v1beta/models/" + tail, data=body,
+                                 headers={"Content-Type": "application/json", "x-goog-api-key": key}) as r:
+                return web.Response(body=await r.read(), status=r.status, content_type="application/json")
+    except asyncio.TimeoutError:
+        return web.json_response({"error": {"code": 504, "message": "Gemini did not answer within 35 s (upstream busy)"}}, status=504)
 
 
 TTS_DIR = ROOT / "recordings" / "tts"

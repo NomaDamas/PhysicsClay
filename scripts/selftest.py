@@ -177,6 +177,42 @@ async def main():
     check("teach: replay saved task", st["teach"]["phase"] == "practice", t.get("message", "")[:50])
     await T(cmd="cancel"); await task("reset_scene", 1)
 
+    # --- v3: phone frames, robot switch, spatial model, proxies, tts, demo autopilot
+    import cv2, numpy as np
+    jpg = cv2.imencode(".jpg", np.full((360, 640, 3), 120, np.uint8))[1].tobytes()
+    for _ in range(8):
+        await ws.send_bytes(b"\x10" + jpg); await pump(0.15)
+    check("phone camera frames become the source", st["source"] == "phone", st["source"])
+    await pump(1.6)
+    check("falls back when phone stops", st["source"] != "phone", st["source"])
+    await send(type="robot", name="ur5e"); await pump(1.5)
+    check("robot switch -> UR5e verdict", st["robot"] == "ur5e" and "UR5e" in (st.get("task") or {}).get("message", ""), (st.get("task") or {}).get("message", "")[:60])
+    await send(type="robot", name="g1"); await pump(0.3)
+    await send(type="spatial_model", name="mediapipe"); await pump(0.4)
+    check("spatial model switch", st["spatial"]["model"] == "mediapipe")
+    await send(type="spatial_model", name="yolo-seg"); await pump(0.3)
+    async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test."}) as r:
+        b = await r.read()
+        check("OpenAI TTS endpoint", r.status == 200 and len(b) > 1000, f"{r.status} {len(b)}B")
+    async with s.post(BASE + "/gemini/rest/gemini-3.8-flash:generateContent", json={"contents": [{"parts": [{"text": "Reply OK"}]}]}) as r:
+        txt = await r.text()
+        check("Gemini REST proxy reaches Google", r.status in (200, 429) or "error" in txt, f"{r.status} {txt[:60]}")
+    check("server reports Gemini key", st.get("server_gemini") is True)
+    await send(type="demo", name="keyfeatures"); t0 = time.time(); kinds = set(); seen = None
+    while time.time() - t0 < 120:
+        await pump(0.3)
+        sy = st.get("say")
+        if sy and sy["id"] != seen:
+            seen = sy["id"]; kinds.add(sy["kind"])
+        if st.get("demo") is None and time.time() - t0 > 5:
+            break
+    check("demo keyfeatures runs to the end", st.get("demo") is None and {"narrator", "robot", "user", "caption"} <= kinds, f"{round(time.time() - t0)}s {sorted(kinds)}")
+    await send(type="demo", name="loop"); await pump(1.0)
+    check("demo loop starts", (st.get("demo") or {}).get("name") == "full")
+    await send(type="demo", name="stop"); await pump(0.5)
+    check("demo stop", st.get("demo") is None)
+    await task("reset_scene", 1)
+
     # --- video upload -> imitation -> skill
     clip = Path("/tmp/pc_clip.mp4")
     if clip.exists():

@@ -106,10 +106,18 @@ class Spatial:
                 body = {"contents": [{"parts": [{"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(jpg.tobytes()).decode()}},
                                                 {"text": prompt}]}],
                         "generationConfig": {"temperature": 0.4}}
-                req = urllib.request.Request(API + ER_MODEL + ":generateContent", data=json.dumps(body).encode(),
-                                             headers={"Content-Type": "application/json", "x-goog-api-key": key})
-                with urllib.request.urlopen(req, timeout=30, context=ssl.create_default_context(cafile=certifi.where())) as resp:
-                    data = json.loads(resp.read())
+                data, last_err, used = None, None, ER_MODEL
+                for model in (ER_MODEL, "gemini-3.6-flash", "gemini-3.5-flash"):   # the ER preview is often busy: fall back
+                    req = urllib.request.Request(API + model + ":generateContent", data=json.dumps(body).encode(),
+                                                 headers={"Content-Type": "application/json", "x-goog-api-key": key, "User-Agent": "curl/8.7.1"})
+                    try:
+                        with urllib.request.urlopen(req, timeout=20, context=ssl.create_default_context(cafile=certifi.where())) as resp:
+                            data, used = json.loads(resp.read()), model
+                            break
+                    except Exception as e:
+                        last_err = e
+                if data is None:
+                    raise last_err
                 text = "".join(p.get("text", "") for p in data["candidates"][0]["content"]["parts"])
                 m = re.search(r"\[.*\]", text, re.S)
                 pts = []
@@ -117,7 +125,7 @@ class Spatial:
                     y, x = it["point"]
                     u = x / 1000.0
                     pts.append({"label": str(it.get("label", "?"))[:40], "u": round(1 - u if mirrored else u, 4), "v": round(y / 1000.0, 4)})
-                self.er = {"target": target, "query": q, "points": pts[:12], "ms": int((time.time() - t0) * 1000), "model": ER_MODEL}
+                self.er = {"target": target, "query": q, "points": pts[:12], "ms": int((time.time() - t0) * 1000), "model": used}
             except Exception as e:
                 self.er = {"target": target, "query": query, "points": [], "ms": int((time.time() - t0) * 1000), "error": str(e)[:120], "model": ER_MODEL}
             finally:

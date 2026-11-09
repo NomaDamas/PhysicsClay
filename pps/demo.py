@@ -195,7 +195,11 @@ class Demo:
             kind, a, b = self.steps[self.i]
             self.i += 1
             if kind == "do":
+                before = self.brain._sid
                 a()
+                if self.brain._sid != before:      # a line was spoken: give it its own frame so the next one can't overwrite it
+                    self.t_wait = now + 0.35
+                    return
             elif kind == "wait":
                 self.t_wait = now + a
                 return
