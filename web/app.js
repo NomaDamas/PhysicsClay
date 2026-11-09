@@ -525,7 +525,7 @@
       if (rec.settled) return;
       if (rec.status === "planning") { rec.status = "failed"; rec.message = "No response from the robot."; updateCard(rec); }
       finish({ ok: false, status: "timeout", message: "no response" });
-    }, 8000);
+    }, 20000); // a loaded server behind the public tunnel can take a while to plan; don't call it dead too early
     if (tasks.size > 60) { const k = tasks.keys().next().value; tasks.delete(k); }
     return p;
   }

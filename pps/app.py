@@ -187,7 +187,9 @@ async def mesh_bin(request):
     verts = np.ascontiguousarray(m.mesh_vert[va:va + vn], dtype="<f4")
     faces = np.ascontiguousarray(m.mesh_face[fa:fa + fn], dtype="<u4")
     body = np.array([vn, fn], dtype="<u4").tobytes() + verts.tobytes() + faces.tobytes()
-    return web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "max-age=3600"})
+    resp = web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "max-age=86400"})
+    resp.enable_compression()   # ~5 MB of meshes: compress for the public tunnel (upload bandwidth is the bottleneck)
+    return resp
 
 
 import certifi  # noqa: E402
