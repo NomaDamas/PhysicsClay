@@ -134,7 +134,7 @@ def resample(points, n):
     return out
 
 
-def lift_path(px_raw, pts2d, lm):
+def lift_path(px_raw, pts2d, lm, depth=0.0):
     """2D sketch (raw video px) -> 3D human-world points in the person's frontal plane (shoulder depth)."""
     try:
         ls, rs = np.array(pts2d[11]), np.array(pts2d[12])
@@ -146,7 +146,7 @@ def lift_path(px_raw, pts2d, lm):
         return None
     sc = m_w / px_w
     c_px, c_w = (ls + rs) / 2, (lsw + rsw) / 2
-    return [[float(c_w[0] + (p[0] - c_px[0]) * sc), float(c_w[1] + (p[1] - c_px[1]) * sc), float(c_w[2])] for p in px_raw]
+    return [[float(c_w[0] + (p[0] - c_px[0]) * sc), float(c_w[1] + (p[1] - c_px[1]) * sc), float(c_w[2] - depth)] for p in px_raw]
 
 
 def nearest_hand(px_first, pts2d):

@@ -10,13 +10,20 @@ Built at c0mpiled-17 Seoul (YC RFS: New Operating System for the Physical World)
 
 ## Run
 ```bash
-./scripts/setup.sh      # venv + mujoco + mink + mediapipe + Unitree G1 model + pose model
-./scripts/run.sh        # robot runtime (mjpython, MuJoCo viewer) + perception HUD (webcam)
+./scripts/setup.sh      # venv + mujoco + mink + mediapipe + pose/object models
+./scripts/web.sh --objects            # browser HUD at http://127.0.0.1:8777 (webcam + real G1 sim)
+./scripts/web.sh --video dance.mp4    # Show: drive the robot from any video, e.g. a dance clip
+./scripts/run.sh        # alternative: native MuJoCo viewer (mjpython) + OpenCV HUD, ghosts draggable in 3D
 # other intent sources (run the HUD process by hand, runtime via scripts/run.sh in another tab):
 .venv/bin/python -m pps.perceive --video dance.mp4          # Show: any video, e.g. a dance clip
 .venv/bin/python -m pps.perceive --objects                  # Scene: object context, what each hand holds
 ```
-Keys in the HUD window: `space` clutch · `R` record · `P` preview · `A` approve/export · `M` mirror · `H` home · `/` command (slower, faster, mirror off, hold, go, reset) · `Q` quit.
+In the browser: stand back about 2 m so your shoulders and hands are in frame. `space` engages the clutch and the
+G1 mirrors you. Draw a path on the camera view with the mouse: it is lifted into your body plane, compiled to the
+robot, and every waypoint is pre-checked (green reachable, red not). Drag a waypoint to edit, set "reach forward"
+for depth, press `F` and the robot follows it at a safe speed. `R` record, `P` preview, `A` approve and export.
+
+Keys in the native HUD window: `space` clutch · `R` record · `P` preview · `A` approve/export · `M` mirror · `H` home · `/` command (slower, faster, mirror off, hold, go, reset) · `Q` quit.
 With the clutch paused, double-click a ghost target in the viewer and Ctrl + right-drag to shape the pose.
 
 ## Architecture

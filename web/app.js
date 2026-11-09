@@ -113,10 +113,13 @@ overlay.addEventListener("pointermove", (ev) => {
   if (dragIdx >= 0) { localPath[dragIdx] = uv; drawOverlay(); return; }
   if (drawing) { const last = drawing[drawing.length - 1], p = toPx(...last), q = toPx(...uv); if (Math.hypot(q[0] - p[0], q[1] - p[1]) > 4) { drawing.push(uv); drawOverlay(); } }
 });
+const depth = () => Number($("depth").value) / 100;
 const finish = (ev) => {
-  if (dragIdx >= 0) { send({ type: "path", points: localPath, resample: false, hand: state.path_hand || undefined }); dragIdx = -1; return; }
-  if (drawing) { if (drawing.length >= 2) { localPath = drawing; send({ type: "path", points: drawing }); } drawing = null; drawOverlay(); }
+  if (dragIdx >= 0) { send({ type: "path", points: localPath, resample: false, hand: state.path_hand || undefined, depth: depth() }); dragIdx = -1; return; }
+  if (drawing) { if (drawing.length >= 2) { localPath = drawing; send({ type: "path", points: drawing, depth: depth() }); } drawing = null; drawOverlay(); }
 };
+$("depth").addEventListener("input", () => { $("depthTxt").textContent = `${$("depth").value} cm`; });
+$("depth").addEventListener("change", () => { if (localPath && localPath.length > 1) send({ type: "path", points: localPath, resample: false, hand: state.path_hand || undefined, depth: depth() }); });
 overlay.addEventListener("pointerup", finish); overlay.addEventListener("pointercancel", finish);
 
 // ---------------------------------------------------------------- sim orbit

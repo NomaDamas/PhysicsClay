@@ -116,8 +116,8 @@ def worker(args, shared):
     renderer = mujoco.Renderer(rt.model, 360, 480)
     cam3d = mujoco.MjvCamera()
     mujoco.mjv_defaultFreeCamera(rt.model, cam3d)
-    cam3d.azimuth, cam3d.elevation, cam3d.distance = 150, -15, 2.6
-    cam3d.lookat[:] = (0.1, 0.0, 0.8)
+    cam3d.azimuth, cam3d.elevation, cam3d.distance = 165, -20, 2.2
+    cam3d.lookat[:] = (0.35, 0.0, 0.9)
 
     pose = None if args.fake else Pose(str(ROOT / args.model))
     objects = Objects(str(ROOT / args.objects_model)) if (args.objects and not args.fake) else None
@@ -192,7 +192,7 @@ def worker(args, shared):
                     raw = [((1 - u) * W, v * H) for u, v in uv]
                     if c.get("resample", True):
                         raw = resample(raw, 24)
-                    lifted = lift_path(raw, last_pts, last_lm) if last_lm else None
+                    lifted = lift_path(raw, last_pts, last_lm, depth=float(c.get('depth', 0.2))) if last_lm else None
                     if lifted:
                         path_msg = {"points": lifted, "hand": c.get("hand") or nearest_hand(raw[0], last_pts)}
                         path_uv = [[1 - x / W, y / H] for x, y in raw]
@@ -245,7 +245,7 @@ def main():
     ap.add_argument("--video", help="video file instead of the webcam (e.g. a dance clip)")
     ap.add_argument("--objects", action="store_true", help="detect objects for scene context")
     ap.add_argument("--fake", action="store_true", help="synthetic landmarks, no camera")
-    ap.add_argument("--no-mirror", action="store_true")
+    ap.add_argument("--no-mirror", action="store_true", help="same-side mapping (default is mirror: the sim camera faces the robot)")
     ap.add_argument("--model", default="models/pose_landmarker_full.task")
     ap.add_argument("--objects-model", default="models/efficientdet_lite0.tflite")
     ap.add_argument("--port", type=int, default=8777)

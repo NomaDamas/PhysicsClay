@@ -56,3 +56,6 @@ body{display:flex;flex-direction:column;min-height:100vh}
 .cmd input:focus{outline:2px solid rgba(242,163,58,.5)}
 #saved{margin-top:8px;font-size:12px}
 @media (max-width:980px){.views,.panel{grid-template-columns:1fr}.viewhead .hint{display:none}}
+
+.slider{display:flex;align-items:center;gap:10px;margin-bottom:10px;font-size:13px;color:var(--muted)}
+.slider input{flex:1;accent-color:var(--accent)}
