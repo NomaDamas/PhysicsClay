@@ -220,3 +220,21 @@ the layout you want. The server orders the moves and runs them one by one.
 sequence:[{i, object, label, kind:"place"|"aside", to:[x,y], status: pending|running|done|failed, err_cm}], i, rev,
 photo:{source:"gemini"|"offline", view, summary, found:[{name,u,v}], box, ms, error}|null,
 objects:[{name, label, pos:[x,y,z], r, h, shape:"box"|"cyl"}], obstacles:[{name, pos:[x,y], r}], tolerance_cm, work_area}`.
+
+Features plug in through `pps/features/<name>.py`, `web/ui/<name>.js` and `scripts/checks/<name>.py` (see docs/UX2.md).
+
+### Teach timeline (#F) — `pps/features/timeline.py`, `web/ui/timeline.js` (slot "timeline")
+Each understood step is a card (object -> target, constraint chips). Reorder (drag, move buttons, arrow keys on the
+step number), delete and chip toggles need no new message: the browser sends the edited spec through the existing
+`{type:"teach", cmd:"set_spec", spec:{goal, steps:[{object, target}], constraints}}` (phase goes back to "confirm").
+A switched-off chip is only kept in the browser so it can be switched back on. "Show again" re-records one step:
+```
+{type:"timeline", op:"reshow", index}     keep the spec, start recording a new demonstration for step <index>
+                                          (only in phase confirm/done; ends with the usual {type:"teach", cmd:"stop"})
+{type:"timeline", op:"reshow_cancel"}     stop that recording and restore the old spec
+```
+On stop, the first understood step replaces step `index`; the other steps keep their place and new constraints are
+merged in (a new grasp_top/grasp_side replaces the old one). `state.timeline = {reshow: {index, steps:[{object, target}],
+constraints} | null}` (the steps being kept while recording). The dock gets a "Show" tool that starts or finishes a
+demonstration. Saved skills are a strip of cards: play sends task `play_skill`; motion skills (in `state.skills_meta`)
+edit a time range of one body part with task `edit_skill {name, part, t0?, t1?, speed | amplitude}`.
