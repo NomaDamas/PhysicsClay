@@ -479,6 +479,7 @@ def worker(args, shared):
 
         # ---------------- intents from the browser
         ctx.cam_params, ctx.frame, ctx.view = cam_params, frame, view
+        ctx.lm, ctx.pts, ctx.source = lm, pts, source   # pose landmarks for features (gestures)
         ctx.dispatch = lambda msg, _cp=cam_params: dispatch(tasks, rt, msg, _cp)
         for c in shared.pop_cmds():
             t = c.get("type")

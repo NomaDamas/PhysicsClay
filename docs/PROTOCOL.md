@@ -238,3 +238,23 @@ merged in (a new grasp_top/grasp_side replaces the old one). `state.timeline = {
 constraints} | null}` (the steps being kept while recording). The dock gets a "Show" tool that starts or finishes a
 demonstration. Saved skills are a strip of cards: play sends task `play_skill`; motion skills (in `state.skills_meta`)
 edit a time range of one body part with task `edit_skill {name, part, t0?, t1?, speed | amplitude}`.
+
+### G · Gestures and nudge pad (`pps/features/gestures.py`, `web/ui/gestures.js`, `web/ui/nudge.js`)
+- **Gestures** from the pose landmarks (the server exposes them to features as `ctx.lm`, `ctx.pts`, `ctx.source`):
+  `stop` both hands above the head (only when the mock brain is off; it owns stop when on) · `slower` both palms pressing
+  down, hands apart in front of the waist -> `speed_scale` x0.7 · `come_here` beckon with one hand -> a running target
+  moves 4 cm toward you (+x), otherwise the robot reaches toward you, carrying whatever it holds · `go_on` thumb up or an
+  open palm pushed forward -> confirms the proposed plan (via `ctx.store["confirm_hook"]` when a feature sets one), else
+  releases a hold, runs a drawn path that is waiting, or acknowledges. Static gestures must be held still 0.5-0.7 s;
+  each fires once and must end before it can fire again (2 s global cooldown). Off during the demo, teach recording,
+  video imitation, follow-me, and on synthetic/video input.
+- `state.gestures = {live: name|null, active: bool, last: {id, name, label, effect}|null, last_age: s|null}`.
+- **Nudge**: `{type:"nudge", dx, dy, dz}` metres in the robot frame (x forward, y left, z up), each clamped to ±5 cm,
+  total ±10 cm per target. The active target, in order: a feature's `ctx.store["nudge_hook"]` (e.g. the plan preview),
+  the running task (waypoints after the grasp up to the release, fading out on the way home; refused if unreachable),
+  the latest marker (x/y only), a drawn path that hasn't run yet.
+  `state.nudge = {active, target: label|null, kind: "hook"|"running"|"marker"|"path"|null, offset: [dx,dy,dz], last: {id, message, ok}|null}`.
+- **Speed**: `{type:"speed", scale}` sets `speed_scale` (0.1-1.0).
+- Test only: `{type:"gesture_feed", frames:[landmarks...], fps}` plays synthetic landmark frames through the detector.
+- Feature hooks (optional): `ctx.store["nudge_hook"] = fn(ctx, delta)` (delta `None` -> label of the target it owns or `None`;
+  a numpy delta -> apply, return a message) and `ctx.store["confirm_hook"] = fn(ctx)` (message if it confirmed something).
