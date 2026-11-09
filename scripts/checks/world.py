@@ -81,6 +81,13 @@ async def run(t):
     d = moved(p0, pos("red cup"))
     t.check("world: pick the red cup on the kitchen counter", res.get("status") == "done" and d and d > 0.05,
             f"{res.get('status')}: {res.get('message', '')[:70]}")
+    res = await t.task("pick_place", 6, object="banana", target="left", preview=True)
+    plan = st().get("plan") or {}
+    await t.send(type="plan", op="confirm", id=res.get("id"))
+    await t.pump(1.0)
+    fin = await t.until_done(40)
+    t.check("world: plan preview + confirm on an arm", res.get("status") == "proposed" and plan.get("ok") is True
+            and fin.get("id") == res.get("id") and fin.get("status") == "done", f"{res.get('status')} -> {fin.get('status')}: {fin.get('message', '')[:60]}")
     w = await world(op="add_object", object={"kind": "bottle", "color": "green"})
     t.check("world: add an object", bool(w) and "green bottle" in [o["name"] for o in st().get("scene_objects") or []],
             str([o["name"] for o in st().get("scene_objects") or []]))
