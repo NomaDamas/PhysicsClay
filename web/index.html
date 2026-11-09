@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhysicsClay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand"><span class="logo"></span>PhysicsClay <span class="tag">a new way to prompt Physical AI</span></div>
+  <div id="mode" class="chip mode">MIRROR</div>
+  <button id="clutch" class="btn clutch" title="space">Engage</button>
+  <div class="meter" title="feasible frames over the last 2 s"><div id="feas" class="fill"></div><span id="feasTxt">feasible 0%</span></div>
+  <div class="chip" id="speed">speed x1.0</div>
+  <button id="mirror" class="chip btnchip" title="M">mirror on</button>
+  <div class="spacer"></div>
+  <div class="mono dim" id="stats">connecting…</div>
+</header>
+
+<main class="views">
+  <section class="view cam">
+    <div class="viewhead"><span>Show it</span><span class="dim" id="source">camera</span><span class="hint">draw a path with the mouse · drag a waypoint to edit · F follow · C clear</span></div>
+    <div class="frame" id="camFrame">
+      <img id="cam" alt="camera">
+      <canvas id="overlay"></canvas>
+      <div id="noPose" class="toast hidden">No person detected</div>
+    </div>
+  </section>
+  <section class="view sim">
+    <div class="viewhead"><span>Simulate it</span><span class="dim">Unitree G1 · MuJoCo · drag to orbit</span><span class="hint" id="simHint">ghosts: green reached · red out of reach</span></div>
+    <div class="frame" id="simFrame"><img id="sim" alt="simulation"></div>
+  </section>
+</main>
+
+<footer class="panel">
+  <section class="says">
+    <h2>Robot says</h2>
+    <ul id="says"><li class="ok">Waiting for the robot…</li></ul>
+  </section>
+  <section class="context">
+    <h2>Context</h2>
+    <div class="chips" id="context"></div>
+    <div class="actions">
+      <button class="btn" data-key="F" title="F">Follow path</button>
+      <button class="btn" data-key="C" title="C">Clear path</button>
+      <button class="btn rec" data-key="R" title="R">Record</button>
+      <button class="btn" data-key="P" title="P">Preview</button>
+      <button class="btn ok" data-key="A" title="A">Approve</button>
+      <button class="btn" data-key="H" title="H">Home</button>
+    </div>
+    <form id="cmdForm" class="cmd"><span class="mono">/</span><input id="cmd" class="mono" placeholder="slower · faster · mirror off · hold · go · reset" autocomplete="off"><button class="btn" type="submit">Send</button></form>
+    <div id="saved" class="mono dim"></div>
+  </section>
+</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

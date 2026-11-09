@@ -143,7 +143,7 @@ class Runtime:
         ok = self.precheck(pts, palm)
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         cum = np.concatenate([[0.0], np.cumsum(seg)])
-        self.path = {"pts": pts, "ok": ok, "palm": palm, "cum": cum, "i": 0}
+        self.path = {"pts": pts, "ok": ok, "palm": palm, "cum": cum, "i": 0, "hand": path.get("hand", "r")}
         bad = int(sum(1 for o in ok if not o))
         side = "Left" if palm.startswith("left") else "Right"
         self.path_msg = (f"{side} hand path: {len(pts)} waypoints, all reachable. Press F to follow."
@@ -289,7 +289,12 @@ class Runtime:
 
     # ------------------------------------------------------------------ paint
     def paint(self, viewer):
-        m, d, res = self.model, self.data, self.last_result
+        self.paint_model()
+        self.paint_overlays(viewer.user_scn, reset=True)
+
+    def paint_model(self):
+        """Colour the real model: ghost targets by reachability, links at limits red, collision risks orange."""
+        m, res = self.model, self.last_result
         m.geom_rgba[:] = self.default_rgba
         for h in HANDS:
             bad = res["flags"].get(h) == "unreachable"
@@ -302,9 +307,14 @@ class Runtime:
                     bid = m.geom_bodyid[m.geom(name).id]
                 except KeyError:
                     continue
-                m.geom_rgba[self.body_geoms[bid]] = (1.0, 0.6, 0.1, 1.0)
-        scn = viewer.user_scn
-        scn.ngeom = 0
+                if bid in self.body_geoms and self.body_geoms[bid]:
+                    m.geom_rgba[self.body_geoms[bid]] = (1.0, 0.6, 0.1, 1.0)
+
+    def paint_overlays(self, scn, reset):
+        """Add path spheres/segments and unreachable connectors to an mjvScene (viewer.user_scn or a Renderer scene)."""
+        d, res = self.data, self.last_result
+        if reset:
+            scn.ngeom = 0
 
         def add_capsule(a, b, width, rgba):
             if scn.ngeom >= scn.maxgeom:
@@ -329,8 +339,7 @@ class Runtime:
         if self.path is not None:
             pts, ok, cur = self.path["pts"], self.path["ok"], self.path["i"]
             for k in range(len(pts)):
-                good = ok[k]
-                rgba = (0.3, 0.9, 0.4, 0.9) if good else (1.0, 0.25, 0.25, 0.9)
+                rgba = (0.3, 0.9, 0.4, 0.9) if ok[k] else (1.0, 0.25, 0.25, 0.9)
                 if k == cur and self.mode == "FOLLOW":
                     rgba = (1.0, 0.85, 0.2, 1.0)
                 add_sphere(pts[k], 0.014 if k != cur else 0.02, rgba)
