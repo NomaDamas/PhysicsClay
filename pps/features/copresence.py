@@ -26,7 +26,9 @@ across the table, facing the robot. Their pointing, hands and words are read in 
 * Hand paths: the person's wrist paths of the last PATH_S s in robot-world coordinates (`hand_path(ctx, side)`),
   not mirrored, for Teach-by-Showing.
 
-Messages: {type:"copresence", op: "on"|"off"|"view"(on: bool)|"heard"|"utter"|"handover"|"demo"|"place"(x, y)}.
+Messages: {type:"copresence", op: "on"|"off"|"view"(on: bool)|"heard"|"utter"|"handover"|"demo"(phase?)|"place"(x, y)}.
+"demo" plays a synthetic person (no camera needed): the whole 24 s sequence, or with phase point_mug | point_spot |
+offer | take | rest one pose held for 30 s.
 Test-only: {type:"copresence_feed", frames:[lm, ...], fps:20, hold: seconds} plays landmark frames (MediaPipe world
 coordinates) instead of the camera; the last frame stays for `hold` s. `synth_pose()` builds such frames.
 
@@ -211,7 +213,7 @@ def arm_ray(J, sd):
     across = J["l_shoulder"] - J["r_shoulder"]
     facing = _unit(np.cross(across, [0.0, 0.0, 1.0]))
     fwd = float(np.dot(tip - sh, facing))
-    if ext_ < EXTEND or fwd < FORWARD:
+    if ext_ < EXTEND or fwd < FORWARD or grip_open(J, sd):   # an open hand held out is an offer, not a point
         return None
     d = _unit(tip - sh)
     hit = None
@@ -247,17 +249,24 @@ def ray_candidates(tasks, ray, skip=()):
 
 
 def grip_open(J, sd):
-    """Open hand: the fingertip landmark far from the wrist relative to the forearm (perceive.grip_state's rule)."""
+    """Open hand: the pinky (or, without it, the index) landmark far from the wrist relative to the forearm. A
+    pointing hand has the index out but the pinky curled, so it does not count as open."""
     try:
-        wr, idx, el = J[f"{sd}_wrist"], J[f"{sd}_index"], J[f"{sd}_elbow"]
+        wr, el = J[f"{sd}_wrist"], J[f"{sd}_elbow"]
     except KeyError:
         return None
     fore = float(np.linalg.norm(wr - el))
-    return None if fore < 1e-3 else bool(np.linalg.norm(idx - wr) / fore >= 0.45)
+    if fore < 1e-3:
+        return None
+    if f"{sd}_pinky" in J:
+        return bool(np.linalg.norm(J[f"{sd}_pinky"] - wr) / fore >= 0.40)
+    if f"{sd}_index" in J:
+        return bool(np.linalg.norm(J[f"{sd}_index"] - wr) / fore >= 0.45)
+    return None
 
 
 def offered_hand(J):
-    """The hand held out toward the robot (wrist well in front of the shoulder), or None."""
+    """The hand held out toward the robot (wrist well in front of the shoulder; open hands first), or None."""
     if J is None:
         return None
     across = J["l_shoulder"] - J["r_shoulder"]
@@ -267,8 +276,9 @@ def offered_hand(J):
         if f"{sd}_wrist" not in J:
             continue
         f = float(np.dot(J[f"{sd}_wrist"] - J[f"{sd}_shoulder"], facing))
-        if f > 0.15 and (best is None or f > best[0]):
-            best = (f, sd)
+        score = (bool(grip_open(J, sd)), f)            # an open hand wins over a pointing one
+        if f > 0.15 and (best is None or score > best[0]):
+            best = (score, sd)
     return None if best is None else best[1]
 
 
@@ -898,17 +908,37 @@ def on_copresence(ctx, msg):
     elif op == "handover":
         _handover(ctx, dict(msg, action="handover", id=msg.get("id") or "cp-handover"))
     elif op == "demo":
-        frames = demo_frames(ctx)
-        on_feed(ctx, {"frames": frames, "fps": 20, "hold": 0.5})
+        ph = msg.get("phase")
+        if ph:                     # hold one pose for 30 s: point_mug | point_spot | offer | take | rest
+            on_feed(ctx, {"frames": [demo_pose(ctx, ph)], "fps": 20, "hold": float(msg.get("hold") or 30.0)})
+        else:
+            on_feed(ctx, {"frames": demo_frames(ctx), "fps": 20, "hold": 0.5})
+
+
+def demo_pose(ctx, phase):
+    """One synthetic pose: pointing at the mug or at a free spot, an open hand held out, or reaching for the object
+    the robot offers ("take")."""
+    tasks, st = ctx.tasks, _st(ctx)
+    if phase == "point_mug" and "mug" in getattr(tasks, "objs", {}):
+        return synth_pose(point_at=tasks.mug_center("mug"))
+    if phase == "point_spot":
+        return synth_pose(point_at=[0.44, -0.30, TABLE_TOP])
+    if phase == "offer":
+        return synth_pose(offer=[0.75, -0.05, TABLE_TOP + 0.25])
+    if phase == "take" and st["handover"] is not None:
+        rt = ctx.rt
+        return synth_pose(offer=rt.data.site_xpos[rt.palm_sid[st["handover"]["palm"]]].copy())
+    return synth_pose()
 
 
 def demo_frames(ctx, fps=20):
-    """A canned person for headless demos: rest, point at the mug, point at a free spot, hold out a hand."""
+    """A canned person for headless demos (24 s): rest, point at the mug (1-7 s), point at a free spot (8-14 s), hold
+    out an open hand (15-23 s)."""
     tasks = ctx.tasks
     mug = tasks.mug_center("mug") if "mug" in getattr(tasks, "objs", {}) else np.array([0.4, -0.15, 0.8])
-    seq = [(1.0, synth_pose()), (3.0, synth_pose(point_at=mug)), (1.0, synth_pose()),
-           (3.0, synth_pose(point_at=[0.55, 0.22, TABLE_TOP])), (1.0, synth_pose()),
-           (3.0, synth_pose(offer=[0.75, -0.05, TABLE_TOP + 0.25])), (1.0, synth_pose())]
+    seq = [(1.0, synth_pose()), (6.0, synth_pose(point_at=mug)), (1.0, synth_pose()),
+           (6.0, synth_pose(point_at=[0.44, -0.30, TABLE_TOP])), (1.0, synth_pose()),
+           (8.0, synth_pose(offer=[0.75, -0.05, TABLE_TOP + 0.25])), (1.0, synth_pose())]
     out = []
     for sec, f in seq:
         out += [f] * int(sec * fps)

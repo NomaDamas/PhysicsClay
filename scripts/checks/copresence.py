@@ -3,8 +3,9 @@
 Deterministic: {"type": "copresence_feed"} plays synthetic landmark frames (pps.features.copresence.synth_pose builds a
 person standing across the table who points at a world point or holds out an open hand) instead of the camera.
 
-Standalone (starts its own --fake --mock server on PC_COPRESENCE_PORT, default 8931):
-    .venv/bin/python scripts/checks/copresence.py
+Standalone (starts its own --fake --mock server on PC_COPRESENCE_PORT, default 8931); extra check names run after it
+on the same server (e.g. the neighbours this feature touches):
+    .venv/bin/python scripts/checks/copresence.py [candidates point gestures plan]
 """
 import asyncio
 import json
@@ -215,9 +216,19 @@ def _main():
             return st.get("task") or {}
 
         t = SimpleNamespace(send=lambda **k: ws.send_str(json.dumps(k)), pump=pump, task=task, until_done=until_done,
-                            check=check, state=lambda: st)
+                            check=check, state=lambda: st, http=s, base=base, frames=lambda: {})
         try:
+            import importlib.util
             await run(t)
+            for name in sys.argv[1:]:
+                await task("reset_scene", 1)
+                spec = importlib.util.spec_from_file_location(f"checks_{name}", ROOT / "scripts" / "checks" / f"{name}.py")
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                try:
+                    await mod.run(t)
+                except Exception as e:
+                    check(f"checks/{name}.py ran", False, repr(e)[:120])
         finally:
             await ws.close()
             await s.close()
