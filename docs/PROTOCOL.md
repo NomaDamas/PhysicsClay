@@ -88,3 +88,24 @@ PCGemini.DEFAULT_LIVE_MODEL, PCGemini.DEFAULT_ER_MODEL
 ```
 API key + model names are entered in the site's Settings dialog and kept in localStorage (never sent to our server).
 Without a key: fall back to the browser Web Speech API (continuous, interim results) + the rule parser in app.js.
+
+## Teach by Showing (core UX)
+The robot does not copy the user live. It watches a demonstration (your camera) plus speech/text, extracts a task spec,
+asks back, practices in simulation with its own body, and takes corrections.
+```
+{type:"teach", cmd:"start"}                       begin watching (hands, grasps, objects in your camera)
+{type:"teach", cmd:"utterance", text}             every final user utterance; while confirm/done it is treated as a correction
+{type:"teach", cmd:"stop"}                        extract the spec -> phase "confirm" with a question
+{type:"teach", cmd:"correct", text}               "yes"/"응" practices; anything else edits the spec
+{type:"teach", cmd:"practice"} | {cmd:"save", name} | {cmd:"set_spec", spec} | {cmd:"cancel"}
+```
+`state.teach = {phase: idle|recording|confirm|practice|done, seconds, utterances, spec:{goal, steps:[{id, action, object,
+target, status, message}], constraints:[{type, object?}]}, question, evidence:{hand_uv, grasps, moved, objects_seen}}`.
+Objects: mug, red_block (movable); vase, blue_block (fixed obstacles). Targets: left/right/center/front/back, marker A-F,
+"there" (pointing marker P or the side the hand moved toward), "next to <object>" (free side chosen automatically).
+Saved task skills replay with `play_skill`.
+
+## Other additions
+- `{type:"mock", enabled}`: offline brain (pointing -> marker P, both hands up -> stop, wave), narrates verdicts as `state.say`.
+- `{type:"path3d", points:[[x,y,z]...], hand?}`: 3D route from the browser editor; `pick_place` target "along my path" carries along it.
+- `GET /scene.json`, `GET /mesh/<id>.bin`, `state.geom_poses`: everything a browser 3D view needs.
