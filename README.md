@@ -1,31 +1,54 @@
 # PhysicsClay
 
-**New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.**
+### New Generation of interactive prompt for Physical AI
+**Turning human intent into spatial instructions that robots can understand and execute.**
 
-Some tasks are nearly impossible to give a robot in text alone. You can't put everything you're thinking into words:
-where exactly, which path, how high, what not to touch. And some motions you can't describe at all — a Taekwondo kick,
-a sprinter's stride, a fighter's stance: showing beats describing. Physical AI needs its own prompt, a spatial one.
+> Some tasks are nearly impossible to give a robot in text alone. You can't put everything you think into words —
+> where exactly, which path, what not to touch — and some motions (a Taekwondo kick, a sprinter's stride, a dance)
+> you can't describe at all. Showing beats describing. Physical AI needs its own prompt: a spatial one.
 
-**Three key features of the new physical prompt**
-1. **Video → Physical AI action**: show a video (a dance, a reaction, a kick); the robot learns the motion, seated or as a duet.
-2. **Real-time trajectory lining and pointing destinations, with real-time voice**: draw the route in 3D, point and say “there”.
-3. **Real-time video understanding**: Gemini Live + YOLO segmentation + Gemini Robotics-ER read your camera as part of the prompt.
+| | |
+|---|---|
+| **Demo video (2 min)** | [`docs/demo/physicsclay_demo.mp4`](docs/demo/physicsclay_demo.mp4) |
+| **Live app** | https://physicsclay.jinminseong.com (phone camera + mic over HTTPS) |
+| **Narrated pitch** | https://physicsclay.jinminseong.com/static/present.html |
+| **Browser physics lab** | https://physicsclay.jinminseong.com/static/lab.html (MuJoCo WASM + React) |
+| **Track** | YC RFS Fall 2026 · *New Operating System for the Physical World* |
 
-**Demo video:** `recordings/video/physicsclay_demo.mp4` (built by `scripts/make_video.py`, 1:51, OpenAI TTS narration)
+## 3 key features
 
-**Live:** https://physicsclay.jinminseong.com (phone camera + mic work over HTTPS) · pitch: `/static/present.html` ·
-browser physics lab: `/static/lab.html` · before/after samples: `web/samples/`
+### ① Video → Robot action
+Show a video; the robot learns the motion with its own body (arms, torso twist, squats, kicks), balance-checked, saved as a reusable skill.
 
-Text alone cannot carry a physical instruction. PhysicsClay combines four channels and grounds them in physics:
+| Seated: the robot sits like the person | Duet: two robots dance the same clip |
+|---|---|
+| ![seated](docs/readme/seated.jpg) | ![duet](docs/readme/duet.jpg) |
 
-| Channel | What it carries | How |
-|---|---|---|
-| Voice (realtime) | what to do, constraints ("put the mug on the left, slowly") | Gemini Live, native audio, tool calls |
-| Your camera | gestures and actions, understood semantically | frames streamed to Gemini Live; MediaPipe pose for follow mode |
-| Robot's view | where: tap a spot, draw a path on what the robot sees | MuJoCo raycast to 3D table points; Gemini Robotics-ER pointing for "next to the mug" |
-| Physics | whether the robot can actually do it, and why not | IK pre-check of every waypoint on the real Unitree G1 model, joint limits, self-collision, speed |
+### ② Real-time trajectory lining + pointing, with real-time voice
+Say what, draw where. A text-only command is refused by physics; a route drawn in 3D over the vase succeeds; point and say "there".
 
-Imitation is a mode, not the default: say "follow me", show a motion, then "learn this as wave" and later "do wave".
+| Text only: refused (13 cm too low) | 3D route: carried over the vase |
+|---|---|
+| ![refuse](docs/readme/refuse.jpg) | ![carry](docs/readme/carry.jpg) |
+
+### ③ Real-time video understanding
+Your camera is part of the prompt: YOLO11 segmentation, SAM 2.1 masks, 33 MediaPipe pose joints, Gemini Live (voice + video)
+and Gemini Robotics-ER (pointing). Teach the robot like a friend: show & tell → it asks back → practices in sim → you correct.
+
+| Vision stack on a person's video | Teach by showing: the robot asks back |
+|---|---|
+| ![vision](docs/readme/vision.jpg) | ![teach](docs/readme/teach.jpg) |
+
+## How it works
+```
+You: show (camera / video) · say (voice / text) · point & draw (robot view / 3D)
+  -> intent: Gemini Live + Robotics-ER, YOLO11-seg, SAM 2.1, MediaPipe Pose      (understanding)
+  -> spatial task spec: steps, targets, constraints ("avoid the vase", "slowly")   (the new prompt)
+  -> physics: IK pre-check of every waypoint on a real Unitree G1 model, joint limits, collisions, balance
+  -> refuse with a reason + a reachable alternative, or execute in MuJoCo; same spec compiles for a UR5e arm
+```
+Business: free browser playground (users) -> paid per robot for robot teams (humanoid makers, integrators, labs).
+Roadmap: VR/XR teaching at true scale -> real robots -> learning from corrections across robots.
 
 ## Run
 ```bash

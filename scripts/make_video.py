@@ -245,6 +245,13 @@ def main():
     a = tts("Here's the live system.", "alloy", "n4", NARRATOR)
     tl.say(a); tl.hold(card, duration(a) + 0.2)
     asyncio.run(capture_app(tl, "keyfeatures", limit_s=100))
+    vis = ROOT / "recordings" / "samples" / "vision_overlay.mp4"
+    if vis.exists():
+        a = tts("Under the hood, your camera is part of the prompt: YOLO and SAM segment the scene, "
+                "MediaPipe tracks thirty-three joints, and Gemini reads the meaning.", "alloy", "n5", NARRATOR)
+        tl.say(a)
+        for c in clip_frames(vis, 9.0):
+            tl.frame(c)
     # 5) business + close
     img = shot(pres + "6", TMP / "s6.png")
     a = tts("It's free to try in the browser, and robot teams pay per robot they teach.", "alloy", "n6", NARRATOR)
