@@ -78,6 +78,7 @@ class Runtime:
         self.speed_scale = 1.0
         self.last_lm = None
         self.last_grip = {"l": 0, "r": 0}
+        self.last_context = {}
         self.new_pose = False
         self.saved = None
         self.preview_t = 0.0
@@ -109,6 +110,7 @@ class Runtime:
             self.new_pose = True
         if msg.get("grip"):
             self.last_grip = msg["grip"]
+        self.last_context = {"holding": msg.get("holding") or {}, "scene": msg.get("scene") or [], "source": msg.get("source")}
         key = msg.get("key")
         if key:
             self.handle_key(key.upper())
@@ -194,7 +196,7 @@ class Runtime:
         targets = {h: d.mocap_pos[self.hands_mid[h]].copy() for h in HANDS}
         res = self.validator.evaluate(targets, vel)
         if self.mode == "REC" and self.new_pose:
-            self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"])
+            self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"], self.last_context)
         self.new_pose = False
         self.last_result = res
         return res

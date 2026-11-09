@@ -1,7 +1,11 @@
-"""Perception + HUD process (plain python): webcam -> MediaPipe Pose -> UDP; HUD shows robot read-back.
+"""Perception + HUD process (plain python).
 
-Keys:  Space clutch (engage/pause)   R rec   P preview   A approve/save   M mirror   H home
-       /  type a command (slower, faster, mirror off, hold, go, reset) then Enter      Q quit
+Multimodal intent inputs -> UDP -> robot runtime:
+  Demonstrate : live webcam pose (MediaPipe Pose)                  --camera N
+  Show        : any video file, e.g. a dance clip (same pipeline)  --video path.mp4
+  Scene       : object detection (MediaPipe EfficientDet) tags what each hand is holding  --objects
+  Say         : typed /commands (voice/LLM slot in here later)
+Keys:  Space clutch   R rec   P preview   A approve/save   M mirror   H home   / command   Q quit
 """
 import argparse
 import time
@@ -51,6 +55,57 @@ class Pose:
         return pts, lm
 
 
+class Objects:
+    """Scene context: what objects are in view, and what each hand is touching."""
+
+    def __init__(self, model_path, infer_width=640, every=3):
+        import mediapipe as mp
+        from mediapipe.tasks.python import vision
+        from mediapipe.tasks.python.core.base_options import BaseOptions
+        self.mp = mp
+        self.detector = vision.ObjectDetector.create_from_options(vision.ObjectDetectorOptions(
+            base_options=BaseOptions(model_asset_path=model_path),
+            running_mode=vision.RunningMode.VIDEO, max_results=8, score_threshold=0.45))
+        self.infer_width, self.every, self.n = infer_width, every, 0
+        self.t0, self.last_ts, self.last = time.monotonic(), -1, []
+
+    def __call__(self, frame_bgr):
+        self.n += 1
+        if self.n % self.every:
+            return self.last
+        h, w = frame_bgr.shape[:2]
+        s = self.infer_width / w
+        small = cv2.resize(frame_bgr, (self.infer_width, int(h * s)))
+        img = self.mp.Image(image_format=self.mp.ImageFormat.SRGB, data=cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+        ts = max(int((time.monotonic() - self.t0) * 1000), self.last_ts + 1)
+        self.last_ts = ts
+        out = []
+        for det in self.detector.detect_for_video(img, ts).detections:
+            b = det.bounding_box
+            label = det.categories[0].category_name
+            if label == "person":
+                continue
+            out.append((label, float(det.categories[0].score),
+                        (b.origin_x / s, b.origin_y / s, (b.origin_x + b.width) / s, (b.origin_y + b.height) / s)))
+        self.last = out
+        return out
+
+
+def holding(objects, pts):
+    """Which detected object (if any) contains each wrist -> {"l": label|None, "r": label|None}."""
+    out = {"l": None, "r": None}
+    if not objects or not pts:
+        return out
+    for side, idx in (("l", 15), ("r", 16)):
+        x, y = pts[idx]
+        for label, _, (x1, y1, x2, y2) in objects:
+            mx, my = 0.15 * (x2 - x1), 0.15 * (y2 - y1)
+            if x1 - mx <= x <= x2 + mx and y1 - my <= y <= y2 + my:
+                out[side] = label
+                break
+    return out
+
+
 def grip_state(lm, side):
     try:
         wr, idx, el = (np.array(lm[f"{side}_{k}"]) for k in ("wrist", "index", "elbow"))
@@ -66,9 +121,9 @@ def put(img, text, xy, scale=0.6, color=(235, 235, 235), thick=1):
     cv2.putText(img, text, (int(xy[0]), int(xy[1])), FONT, scale, color, thick, cv2.LINE_AA)
 
 
-def draw_hud(canvas, rb, engaged, grip, fps, cmd_mode, cmd_buf, pose_ok):
+def draw_hud(canvas, rb, engaged, grip, hold, scene, fps, cmd_mode, cmd_buf, pose_ok, source):
     mode = rb.get("mode", "—")
-    if rb.get("saved") and mode == "MIRROR" and rb.get("_saved_flash", 0) > time.time():
+    if rb.get("_saved_flash", 0) > time.time():
         mode = "SAVED"
     cv2.rectangle(canvas, (0, 0), (W, TOP), (28, 28, 28), -1)
     cv2.rectangle(canvas, (12, 10), (150, 46), MODE_COLOR.get(mode, (120, 120, 120)), -1)
@@ -81,13 +136,12 @@ def draw_hud(canvas, rb, engaged, grip, fps, cmd_mode, cmd_buf, pose_ok):
     put(canvas, f"feasible {feas * 100:3.0f}%", (640, 37), 0.6)
     put(canvas, f"speed x{rb.get('speed_scale', 1.0)}", (800, 37), 0.6)
     put(canvas, f"mirror {'on' if rb.get('mirror', True) else 'off'}", (930, 37), 0.6)
-    put(canvas, f"{fps:4.0f} fps / ik {rb.get('ik_hz', 0):4.0f} Hz", (1060, 37), 0.55, (170, 170, 170))
-    if mode == "REC":
-        put(canvas, f"REC {rb.get('rec_duration', 0):.1f}s  {rb.get('rec_frames', 0)} frames", (170, 52 + H + 24), 0.6, (60, 60, 230))
-    elif mode == "PREVIEW":
-        put(canvas, f"PREVIEW {rb.get('preview_t', 0):.1f}s / {rb.get('rec_duration', 0):.1f}s", (170, 52 + H + 24), 0.6, (230, 160, 40))
-    # bottom panel
+    put(canvas, f"{source}  {fps:3.0f} fps / ik {rb.get('ik_hz', 0):3.0f} Hz", (1050, 37), 0.5, (170, 170, 170))
     y0 = TOP + H
+    if mode == "REC":
+        put(canvas, f"REC {rb.get('rec_duration', 0):.1f}s  {rb.get('rec_frames', 0)} frames", (640, y0 + 28), 0.6, (60, 60, 230))
+    elif mode == "PREVIEW":
+        put(canvas, f"PREVIEW {rb.get('preview_t', 0):.1f}s / {rb.get('rec_duration', 0):.1f}s", (640, y0 + 28), 0.6, (230, 160, 40))
     cv2.rectangle(canvas, (0, y0), (W, y0 + BOT), (22, 22, 22), -1)
     put(canvas, "ROBOT SAYS", (16, y0 + 28), 0.6, (120, 200, 255), 2)
     msgs = rb.get("messages", [])
@@ -98,9 +152,15 @@ def draw_hud(canvas, rb, engaged, grip, fps, cmd_mode, cmd_buf, pose_ok):
     for i, mtxt in enumerate(msgs[:3]):
         col = (90, 210, 90) if mtxt.startswith(("OK", "Paused")) else (80, 120, 255)
         put(canvas, "- " + mtxt, (16, y0 + 58 + 26 * i), 0.62, col, 1)
-    put(canvas, f"L hand: {'FIST' if grip.get('l') else 'OPEN'}   R hand: {'FIST' if grip.get('r') else 'OPEN'}", (900, y0 + 28), 0.55, (170, 170, 170))
+    put(canvas, "CONTEXT", (900, y0 + 28), 0.6, (120, 200, 255), 2)
+    hands = []
+    for s, name in (("l", "L"), ("r", "R")):
+        state = "FIST" if grip.get(s) else "OPEN"
+        hands.append(f"{name}: {state}" + (f" on {hold[s]}" if hold.get(s) else ""))
+    put(canvas, "   ".join(hands), (900, y0 + 58), 0.52, (200, 200, 200))
+    put(canvas, "scene: " + (", ".join(sorted({o[0] for o in scene})) if scene else "(no objects)"), (900, y0 + 84), 0.5, (170, 170, 170))
     if rb.get("saved"):
-        put(canvas, f"saved: {rb['saved']}", (900, y0 + 58), 0.45, (80, 200, 80))
+        put(canvas, f"saved: {rb['saved'].split('/')[-1]}", (900, y0 + 110), 0.45, (80, 200, 80))
     prompt = "> " + cmd_buf + ("_" if cmd_mode else "")
     put(canvas, prompt if cmd_mode else "/ command   space clutch   R rec   P preview   A approve   M mirror   H home   Q quit",
         (16, y0 + BOT - 16), 0.55, (200, 200, 200) if cmd_mode else (130, 130, 130))
@@ -109,7 +169,11 @@ def draw_hud(canvas, rb, engaged, grip, fps, cmd_mode, cmd_buf, pose_ok):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, default=0)
+    ap.add_argument("--video", help="video file instead of the webcam (e.g. a dance clip)")
+    ap.add_argument("--no-loop", action="store_true", help="do not loop the video file")
+    ap.add_argument("--objects", action="store_true", help="detect objects for scene context")
     ap.add_argument("--model", default="models/pose_landmarker_full.task")
+    ap.add_argument("--objects-model", default="models/efficientdet_lite0.tflite")
     ap.add_argument("--fake", action="store_true", help="synthetic landmarks, no camera")
     ap.add_argument("--no-window", action="store_true")
     ap.add_argument("--frames", type=int, default=0, help="exit after N frames (testing)")
@@ -118,41 +182,61 @@ def main():
     send = make_sender(PERCEIVE_TO_ROBOT)
     recv = make_receiver(ROBOT_TO_PERCEIVE)
     pose = None if args.fake else Pose(args.model)
-    cap = None
-    if not args.fake:
+    objects = Objects(args.objects_model) if (args.objects and not args.fake) else None
+    cap, video_dt, source = None, 0.0, "fake"
+    if args.video:
+        cap = cv2.VideoCapture(args.video)
+        fps_v = cap.get(cv2.CAP_PROP_FPS) or 30.0
+        video_dt, source = 1.0 / fps_v, "video"
+    elif not args.fake:
         cap = cv2.VideoCapture(args.camera)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
+        source = "webcam"
 
-    engaged, cmd_mode, cmd_buf = False, False, ""
+    engaged, cmd_mode, cmd_buf = args.video is not None, False, ""   # a video file starts engaged
     key_to_send, cmd_to_send = None, None
     rb, grip_hist = {}, {"l": [], "r": []}
-    t0, n, fps = time.time(), 0, 0.0
-    saved_seen = None
+    t0, n, fps, saved_seen = time.time(), 0, 0.0, None
+    next_frame_t = time.time()
     while True:
         if cap is not None:
+            if args.video:
+                now = time.time()
+                if now < next_frame_t:
+                    time.sleep(next_frame_t - now)
+                next_frame_t = max(next_frame_t + video_dt, time.time() - video_dt)
             ok, frame = cap.read()
             if not ok:
+                if args.video and not args.no_loop:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
+                if args.video:
+                    break
                 time.sleep(0.02)
                 continue
-            frame = cv2.resize(frame, (W, H)) if frame.shape[1] != W else frame
+            if frame.shape[1] != W or frame.shape[0] != H:
+                frame = cv2.resize(frame, (W, H))
             pts, lm = pose(frame)
         else:
             frame = np.full((H, W, 3), 40, np.uint8)
             lm, pts = fake_landmarks(time.time() - t0), None
+        scene = objects(frame) if objects is not None else []
+        hold = holding(scene, pts)
         grip = {}
         for s in ("l", "r"):
             g = grip_state(lm, s) if lm else None
             hist = grip_hist[s]
             hist.append(g if g is not None else 0)
             del hist[:-5]
-            grip[s] = 1 if sum(hist) >= 3 else 0
+            grip[s] = 1 if (sum(hist) >= 3 or hold.get(s)) else 0
         for m in recv():
             rb = m
         if rb.get("saved") and rb.get("saved") != saved_seen:
             saved_seen = rb["saved"]
             rb["_saved_flash"] = time.time() + 3.0
-        send({"t": time.time(), "engaged": engaged, "lm": lm, "grip": grip, "key": key_to_send, "cmd": cmd_to_send})
+        send({"t": time.time(), "engaged": engaged, "lm": lm, "grip": grip, "holding": hold,
+              "scene": sorted({o[0] for o in scene}), "source": source, "key": key_to_send, "cmd": cmd_to_send})
         key_to_send = cmd_to_send = None
 
         n += 1
@@ -165,6 +249,10 @@ def main():
             continue
 
         shown = cv2.flip(frame, 1)
+        for label, score, (x1, y1, x2, y2) in scene:
+            p1, p2 = (int(W - x2), int(y1)), (int(W - x1), int(y2))
+            cv2.rectangle(shown, p1, p2, (255, 190, 60), 2)
+            put(shown, f"{label} {score:.2f}", (p1[0] + 4, p1[1] + 18), 0.5, (255, 190, 60))
         if pts:
             flip = lambda p: (int(W - p[0]), int(p[1]))
             for a, b in SKELETON:
@@ -175,8 +263,8 @@ def main():
             cv2.rectangle(shown, (0, 0), (W - 1, H - 1), (90, 210, 90), 6)
         canvas = np.zeros((TOP + H + BOT, W, 3), np.uint8)
         canvas[TOP:TOP + H] = shown
-        draw_hud(canvas, rb, engaged, grip, fps, cmd_mode, cmd_buf, pose_ok=bool(lm))
-        cv2.imshow("Physical Prompt Studio", canvas)
+        draw_hud(canvas, rb, engaged, grip, hold, scene, fps, cmd_mode, cmd_buf, bool(lm), source)
+        cv2.imshow("PhysicsClay", canvas)
         k = cv2.waitKey(1) & 0xFF
         if k == 255:
             continue

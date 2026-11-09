@@ -23,7 +23,7 @@ class IntentRecorder:
         self.t0 = time.time()
         self.min_speed_scale = 1.0
 
-    def add(self, lm, targets, grip, qpos, flags, residuals, speed_scale):
+    def add(self, lm, targets, grip, qpos, flags, residuals, speed_scale, context=None):
         t = time.time() - self.t0
         self.min_speed_scale = min(self.min_speed_scale, speed_scale)
         self.frames.append({
@@ -31,6 +31,7 @@ class IntentRecorder:
             "human": lm,
             "targets": {k: [round(float(x), 4) for x in v] for k, v in targets.items()},
             "grip": grip,
+            "context": context or {},
             "qpos": [round(float(x), 4) for x in qpos],
             "flags": dict(flags),
             "residuals": {k: round(float(v), 4) for k, v in residuals.items()},
@@ -49,6 +50,7 @@ class IntentRecorder:
                     "targets": [{"body_part": k, "reference_frame": "world", "position": v}
                                 for k, v in f["targets"].items()],
                     "grip": f["grip"],
+                    "holding": (f.get("context") or {}).get("holding", {}),
                 })
                 last = f["t"]
         return {
@@ -58,6 +60,7 @@ class IntentRecorder:
             "mirror": self.mirror,
             "duration_sec": self.duration,
             "speed_scale": round(self.min_speed_scale, 3),
+            "scene_objects": sorted({o for f in self.frames for o in (f.get("context") or {}).get("scene", [])}),
             "keyframes": keyframes,
             "constraints": {"feet_contact": True, "maintain_balance": "com_fixed",
                             "self_collision": "avoid", "joint_limits": True},
