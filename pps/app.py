@@ -374,7 +374,7 @@ def worker(args, shared):
     if args.video:
         cap = cv2.VideoCapture(args.video)
         video_dt, source = 1.0 / (cap.get(cv2.CAP_PROP_FPS) or 30.0), "video"
-    elif not args.fake:
+    elif args.webcam and not args.fake:   # the laptop webcam stays off unless asked for
         cap = cv2.VideoCapture(args.camera)
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, W)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
@@ -756,6 +756,7 @@ def state(rt, tasks, view, cam, fps, source, pts, lm, scene, grip, hold):
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--webcam", action="store_true", help="open this computer's webcam (off by default)")
     ap.add_argument("--camera", type=int, default=0)
     ap.add_argument("--video", help="video file instead of the webcam (e.g. a dance clip)")
     ap.add_argument("--objects", action="store_true", help="detect objects in your camera for context")

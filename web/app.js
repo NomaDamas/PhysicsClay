@@ -1219,10 +1219,9 @@
   }
 
   // ------------------------------------------------------------------ this device's camera -> server (0x10 + JPEG)
-  const LOCAL = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(location.hostname);
   const IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (window.matchMedia && matchMedia("(pointer: coarse)").matches);
   const phoneCam = {
-    get want() { return LS.get("pc.phoneCam", LOCAL ? "0" : "1") === "1"; },
+    get want() { return LS.get("pc.phoneCam", "0") === "1"; },
     facing: LS.get("pc.facing", IS_PHONE ? "environment" : "user"),
     stream: null, video: null, canvas: null, timer: 0, busy: false, status: "off", sent: 0, gen: 0,
   };
