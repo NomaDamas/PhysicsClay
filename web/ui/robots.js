@@ -77,7 +77,7 @@
       const robots = arr(W.robots).filter((r) => r && r.id);
       if (!robots.some((r) => r.id === robot.id)) robots.unshift(robot);
       const scene = W.scene && typeof W.scene === "object" ? W.scene : { template: "table", objects: [] };
-      return { world: true, rev: W.rev, id: robot.id, robot, robots, scene, templates: arr(W.templates).length ? W.templates : TEMPLATES };
+      return { world: true, rev: W.rev, id: robot.id, robot, robots, scene, templates: arr(W.templates).length ? arr(W.templates).map((t) => (t && typeof t === "object" ? String(t.id || "") : String(t))).filter(Boolean) : TEMPLATES };
     }
     const robot = { id: "g1", label: "Unitree G1", kind: "humanoid", base: "legged", capabilities: G1_CAPS };
     const objects = arr(s.scene_objects).map((o) => ({ name: String(o.name || ""), kind: "", color: "", pos: o.pos, movable: !/vase|blue block/.test(String(o.name)) }));
