@@ -22,35 +22,36 @@
 
   <worldbody>
     <light pos="0 0 3" directional="true"/>
+    <camera name="robot_view" pos="0.13 0 1.40" xyaxes="0 -1 0 0.845 0 0.536" fovy="72"/>
     <light pos="1.5 -1 2.5" dir="-0.5 0.3 -1" diffuse="0.4 0.4 0.4"/>
     <geom name="floor" size="2 2 0.01" type="plane" material="grid"/>
-    <geom name="table" type="box" size=".30 .50 .02" pos="0.60 0 0.720" material="wood"/>
-    <geom type="box" size=".025 .025 0.350" pos="0.35 -0.45 0.350" material="wood" contype="0" conaffinity="0"/>
-    <geom type="box" size=".025 .025 0.350" pos="0.35 0.45 0.350" material="wood" contype="0" conaffinity="0"/>
-    <geom type="box" size=".025 .025 0.350" pos="0.85 -0.45 0.350" material="wood" contype="0" conaffinity="0"/>
-    <geom type="box" size=".025 .025 0.350" pos="0.85 0.45 0.350" material="wood" contype="0" conaffinity="0"/>
-    <body name="mug" pos="0.45 -0.20 0.808">
+    <geom name="table" type="box" size=".30 .50 .02" pos="0.52 0 0.720" material="wood"/>
+    <geom type="box" size=".025 .025 0.350" pos="0.25 -0.45 0.350" material="wood" contype="0" conaffinity="0"/>
+    <geom type="box" size=".025 .025 0.350" pos="0.25 0.45 0.350" material="wood" contype="0" conaffinity="0"/>
+    <geom type="box" size=".025 .025 0.350" pos="0.79 -0.45 0.350" material="wood" contype="0" conaffinity="0"/>
+    <geom type="box" size=".025 .025 0.350" pos="0.79 0.45 0.350" material="wood" contype="0" conaffinity="0"/>
+    <body name="mug" pos="0.33 -0.18 0.808" mocap="true">
       <geom type="mesh" mesh="mug" material="mug_mat" contype="0" conaffinity="0" group="2"/>
       <geom name="mug_collision" type="cylinder" size="0.065 0.071" pos="-0.000 -0.008 0.003" rgba="0 0 0 0" contype="1" conaffinity="1" group="3"/>
     </body>
     <body name="com_target" pos="0.5 0 .5" mocap="true">
-      <geom type="sphere" size=".06" contype="0" conaffinity="0" rgba=".6 .3 .3 .2"/>
+      <geom type="sphere" size=".06" contype="0" conaffinity="0" group="1" rgba=".6 .3 .3 0"/>
       <site type="sphere" size="0.01" rgba="0 0 1 1" group="1"/>
     </body>
     <body name="left_palm_target" pos="0.5 0 .5" quat="0 1 0 0" mocap="true">
-      <geom type="box" size=".035 .035 .035" contype="0" conaffinity="0" rgba=".3 .9 .4 .35"/>
+      <geom type="box" size=".035 .035 .035" contype="0" conaffinity="0" group="1" rgba=".3 .9 .4 .35"/>
       <site type="sphere" size="0.01" rgba="0 0 1 1" group="1"/>
     </body>
     <body name="right_palm_target" pos="0.5 0 .5" quat="0 1 0 0" mocap="true">
-      <geom type="box" size=".035 .035 .035" contype="0" conaffinity="0" rgba=".3 .9 .4 .35"/>
+      <geom type="box" size=".035 .035 .035" contype="0" conaffinity="0" group="1" rgba=".3 .9 .4 .35"/>
       <site type="sphere" size="0.01" rgba="0 0 1 1" group="1"/>
     </body>
     <body name="left_foot_target" pos="0.5 0 .5" quat="0 1 0 0" mocap="true">
-      <geom type="box" size=".03 .03 .03" contype="0" conaffinity="0" rgba=".6 .3 .3 .15"/>
+      <geom type="box" size=".03 .03 .03" contype="0" conaffinity="0" group="1" rgba=".6 .3 .3 .15"/>
       <site type="sphere" size="0.01" rgba="0 0 1 1" group="1"/>
     </body>
     <body name="right_foot_target" pos="0.5 0 .5" quat="0 1 0 0" mocap="true">
-      <geom type="box" size=".03 .03 .03" contype="0" conaffinity="0" rgba=".6 .3 .3 .15"/>
+      <geom type="box" size=".03 .03 .03" contype="0" conaffinity="0" group="1" rgba=".6 .3 .3 .15"/>
       <site type="sphere" size="0.01" rgba="0 0 1 1" group="1"/>
     </body>
   </worldbody>

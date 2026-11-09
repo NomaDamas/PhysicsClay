@@ -6,3 +6,5 @@ __pycache__/
 recordings/*.mp4
 .DS_Store
 models/*.tflite
+certs/
+recordings/

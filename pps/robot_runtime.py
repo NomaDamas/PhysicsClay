@@ -32,7 +32,7 @@ COLLISION_PAIRS = [
     (["right_hand_collision", "right_wrist_collision"], ["right_thigh_collision"]),
     (["left_hand_collision"], ["right_hand_collision"]),
     (["left_hand_collision", "right_hand_collision", "left_wrist_collision", "right_wrist_collision",
-      "left_elbow_yaw_collision", "right_elbow_yaw_collision"], ["table", "mug_collision"]),
+      "left_elbow_yaw_collision", "right_elbow_yaw_collision"], ["table"]),
 ]
 FEET = ["right_foot", "left_foot"]
 HANDS = ["right_palm", "left_palm"]
@@ -157,15 +157,18 @@ class Runtime:
         saved = task.transform_target_to_world
         mid = self.hands_mid[palm]
         quat = self.data.mocap_quat[mid].copy()
-        ok = []
+        ok, dists = [], []
         for p in pts:
             task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat), p))
             for _ in range(iters):
                 v = mink.solve_ik(cfg, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
                 cfg.integrate_inplace(v, dt)
-            ok.append(bool(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p) < self.validator.reach_tol))
+            dist = float(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p))
+            dists.append(dist)
+            ok.append(dist < self.validator.reach_tol)
         if saved is not None:
             task.set_target(saved)
+        self.last_precheck_dists = dists
         return ok
 
     def handle_key(self, key):
@@ -342,10 +345,10 @@ class Runtime:
                 rgba = (0.3, 0.9, 0.4, 0.9) if ok[k] else (1.0, 0.25, 0.25, 0.9)
                 if k == cur and self.mode == "FOLLOW":
                     rgba = (1.0, 0.85, 0.2, 1.0)
-                add_sphere(pts[k], 0.014 if k != cur else 0.02, rgba)
+                add_sphere(pts[k], 0.008 if k != cur else 0.016, rgba)
                 if k + 1 < len(pts):
                     seg_rgba = (0.3, 0.9, 0.4, 0.7) if (ok[k] and ok[k + 1]) else (1.0, 0.25, 0.25, 0.7)
-                    add_capsule(pts[k], pts[k + 1], 0.004, seg_rgba)
+                    add_capsule(pts[k], pts[k + 1], 0.003, seg_rgba)
 
 
 def main():

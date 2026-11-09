@@ -1,0 +1,45 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PCGemini test</title>
+<style>body{font:14px system-ui;margin:16px;max-width:720px}input,button{font:inherit;margin:2px}#log{white-space:pre-wrap;border:1px solid #ccc;padding:8px;height:260px;overflow:auto}#lvl{display:inline-block;height:8px;background:#3a3;width:0}</style>
+</head><body>
+<h3>PCGemini test</h3>
+<div><input id="key" type="password" placeholder="Gemini API key" size="40">
+<input id="model" placeholder="live model" size="30"></div>
+<div><button id="conn">Connect</button><button id="mic" disabled>Mic on</button><button id="cls" disabled>Close</button>
+<span id="st">idle</span> <span id="lvl"></span></div>
+<div><input id="txt" placeholder="say something" size="40"><button id="send" disabled>Send text</button></div>
+<div id="log"></div>
+<h4>Point</h4>
+<div><input id="img" type="file" accept="image/*"> <input id="q" placeholder="query, e.g. the red cup" size="25"><button id="pt">Point</button></div>
+<div style="position:relative;display:inline-block"><img id="prev" style="max-width:100%;display:block"><div id="dots"></div></div>
+<script src="gemini.js"></script>
+<script>
+var $=function(i){return document.getElementById(i)},S=null,lines={};
+$("key").value=localStorage.getItem("pc_test_key")||"";
+$("model").placeholder=PCGemini.DEFAULT_LIVE_MODEL;
+function log(t){$("log").textContent+=t+"\n";$("log").scrollTop=1e9;}
+$("conn").onclick=function(){
+  localStorage.setItem("pc_test_key",$("key").value);
+  PCGemini.connectLive({apiKey:$("key").value,model:$("model").value,
+    systemInstruction:"You are a friendly robot. Keep answers short.",
+    tools:[{functionDeclarations:[{name:"wave",description:"Wave the robot arm",parameters:{type:"OBJECT",properties:{times:{type:"INTEGER"}}}}]}],
+    onStatus:function(s){$("st").textContent=s;},
+    onTranscript:function(t){if(t.final)log(t.role+": "+t.text);else $("st").textContent="("+t.role+") "+t.text.slice(-60);},
+    onToolCall:function(c){log("tool "+c.name+" "+JSON.stringify(c.args));return Promise.resolve({ok:true});},
+    onAudioLevel:function(l){$("lvl").style.width=(l*200)+"px";}
+  }).then(function(s){S=s;$("mic").disabled=$("cls").disabled=$("send").disabled=false;},function(e){log("connect failed: "+e.message);});
+};
+$("mic").onclick=function(){if(!S)return;if(S.isMicOn){S.stopMic();$("mic").textContent="Mic on";}else S.startMic().then(function(){$("mic").textContent="Mic off";},function(e){log("mic: "+e.message);});};
+$("cls").onclick=function(){if(S)S.close();S=null;$("mic").disabled=$("cls").disabled=$("send").disabled=true;};
+$("send").onclick=function(){if(S)S.sendText($("txt").value);$("txt").value="";};
+$("pt").onclick=function(){
+  var f=$("img").files[0];if(!f)return;var r=new FileReader();
+  r.onload=function(){$("prev").src=r.result;$("dots").innerHTML="";log("pointing...");
+    PCGemini.point({apiKey:$("key").value,imageBase64:r.result,query:$("q").value}).then(function(pts){
+      log("points: "+JSON.stringify(pts));
+      pts.forEach(function(p){var d=document.createElement("div");d.title=p.label;d.style.cssText="position:absolute;width:10px;height:10px;margin:-5px;border-radius:50%;background:red;left:"+p.u*100+"%;top:"+p.v*100+"%";$("dots").appendChild(d);});
+    },function(e){log("point failed: "+e.message);});};
+  r.readAsDataURL(f);
+};
+</script></body></html>

@@ -1,13 +1,16 @@
-"""PhysicsClay web app, one process.
+"""PhysicsClay server: one process.
 
-camera / video / synthetic  ->  MediaPipe pose + objects  ->  retarget + mink IK on the real Unitree G1
-->  physics validation  ->  streamed to a browser HUD (camera frame, sim frame, state) over WebSocket.
-The browser sends: clutch, keys, typed commands, drawn / edited trajectories, sim camera orbit.
-Run:  .venv/bin/python -m pps.app [--video clip.mp4] [--objects] [--fake]   then open http://127.0.0.1:8765
+your camera (webcam / video / synthetic) -> MediaPipe pose (+ objects) -> follow mode / context
+robot view (MuJoCo, real Unitree G1 + table + scanned mug) <- tasks (pick_place, reach, paths, skills) <- browser intents
+Browser talks to Gemini Live itself (key stays in the browser); intents arrive here as tasks, the physics verdict goes back.
+Protocol: docs/PROTOCOL.md.   Run: .venv/bin/python -m pps.app [--video clip.mp4] [--objects] [--fake] [--https]
 """
 import argparse
 import asyncio
 import json
+import socket
+import ssl
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -18,20 +21,23 @@ import numpy as np
 from aiohttp import WSMsgType, web
 
 from .fake import fake_landmarks
-from .perceive import H, W, Objects, Pose, grip_state, holding, lift_path, nearest_hand, resample
+from .perceive import H, W, Objects, Pose, grip_state, holding
 from .protocol import LANDMARKS
-from .robot_runtime import Runtime
+from .robot_runtime import HANDS, Runtime
+from .tasks import REGIONS, Tasks
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
 IK_ITERS, IK_DT = 4, 1 / 120
+SIM_W, SIM_H = 640, 480
+ASPECT = SIM_W / SIM_H
 
 
 class Shared:
     def __init__(self):
         self.lock = threading.Lock()
         self.cam = self.sim = None
-        self.state = b"{}"
+        self.state = "{}"
         self.fid = 0
         self.cmds = []
         self.clients = set()
@@ -76,8 +82,8 @@ async def ws_handler(request):
     return ws
 
 
-async def broadcaster(app):
-    shared, last = app["shared"], -1
+async def broadcaster(shared):
+    last = -1
     while True:
         await asyncio.sleep(1 / 30)
         cam, sim, state, fid = shared.get()
@@ -86,7 +92,7 @@ async def broadcaster(app):
         last = fid
         for ws in list(shared.clients):
             try:
-                await ws.send_str(state.decode("utf-8"))
+                await ws.send_str(state)
                 await ws.send_bytes(b"\x01" + cam)
                 await ws.send_bytes(b"\x02" + sim)
             except Exception:
@@ -94,30 +100,64 @@ async def broadcaster(app):
 
 
 async def index(request):
-    return web.FileResponse(WEB / "index.html")
+    return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
 
 
-def run_server(shared, port):
-    async def start_bg(app):
-        app["bg"] = asyncio.create_task(broadcaster(app))
+def lan_ip():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        return "127.0.0.1"
 
-    app = web.Application()
-    app["shared"] = shared
-    app.router.add_get("/", index)
-    app.router.add_get("/ws", ws_handler)
-    app.router.add_static("/static", WEB)
-    app.on_startup.append(start_bg)
-    web.run_app(app, host="127.0.0.1", port=port, print=None, handle_signals=False, access_log=None)
+
+def ensure_cert():
+    d = ROOT / "certs"
+    d.mkdir(exist_ok=True)
+    cert, key = d / "cert.pem", d / "key.pem"
+    if not cert.exists():
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(cert),
+                        "-days", "30", "-subj", "/CN=physicsclay"], check=True, capture_output=True)
+    ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ctx.load_cert_chain(str(cert), str(key))
+    return ctx
+
+
+def run_server(shared, port, https_port):
+    async def main():
+        app = web.Application()
+        app["shared"] = shared
+        app.router.add_get("/", index)
+        app.router.add_get("/ws", ws_handler)
+        app.router.add_static("/static", WEB)
+        runner = web.AppRunner(app, access_log=None)
+        await runner.setup()
+        await web.TCPSite(runner, "0.0.0.0", port).start()
+        if https_port:
+            await web.TCPSite(runner, "0.0.0.0", https_port, ssl_context=ensure_cert()).start()
+        asyncio.create_task(broadcaster(shared))
+        while True:
+            await asyncio.sleep(3600)
+
+    asyncio.run(main())
 
 
 # ------------------------------------------------------------------ worker (main thread: GL + camera)
 def worker(args, shared):
     rt = Runtime(mirror=not args.no_mirror)
-    renderer = mujoco.Renderer(rt.model, 360, 480)
-    cam3d = mujoco.MjvCamera()
-    mujoco.mjv_defaultFreeCamera(rt.model, cam3d)
-    cam3d.azimuth, cam3d.elevation, cam3d.distance = 165, -20, 2.2
-    cam3d.lookat[:] = (0.35, 0.0, 0.9)
+    tasks = Tasks(rt)
+    m, d = rt.model, rt.data
+    renderer = mujoco.Renderer(m, SIM_H, SIM_W)
+    robot_cam = m.camera("robot_view").id
+    orbit = mujoco.MjvCamera()
+    mujoco.mjv_defaultFreeCamera(m, orbit)
+    orbit.azimuth, orbit.elevation, orbit.distance = 165, -20, 2.2
+    orbit.lookat[:] = (0.35, 0.0, 0.9)
+    view = "robot"
+    cam_params = None
 
     pose = None if args.fake else Pose(str(ROOT / args.model))
     objects = Objects(str(ROOT / args.objects_model)) if (args.objects and not args.fake) else None
@@ -131,14 +171,16 @@ def worker(args, shared):
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
         source = "webcam"
 
-    engaged = args.video is not None
-    last_pts = last_lm = None
-    path_uv = []
     grip_hist = {"l": [], "r": []}
-    t0, n, fps, next_frame_t = time.time(), 0, 0.0, time.time()
-    print(f"PhysicsClay: source={source}  open http://127.0.0.1:{args.port}", flush=True)
+    t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
+    t_phys = time.time()
+    ip = lan_ip()
+    print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}\n  phone : http://{ip}:{args.port}"
+          + (f"   (mic/camera on phone: https://{ip}:{args.https_port}, accept the certificate warning)" if args.https else ""),
+          flush=True)
 
     while shared.running:
+        # ---------------- your camera
         if cap is not None:
             if args.video:
                 now = time.time()
@@ -158,13 +200,11 @@ def worker(args, shared):
         else:
             frame = np.full((H, W, 3), 40, np.uint8)
             cv2.putText(frame, "synthetic input (no camera)", (40, 60), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (160, 160, 160), 2)
-            lm = fake_landmarks(time.time() - t0)
-            pts = [(W / 2, H / 2)] * 33   # synthetic 2D projection so paths can be lifted and the skeleton drawn
+            lm = fake_landmarks(time.time() - t_start)
+            pts = [(W / 2, H / 2)] * 33
             for name, i in LANDMARKS.items():
                 if name in lm:
                     pts[i] = (W / 2 - lm[name][0] * 700, H * 0.55 + lm[name][1] * 700)
-        if lm:
-            last_pts, last_lm = pts, lm
         scene = objects(frame) if objects is not None else []
         hold = holding(scene, pts)
         grip = {}
@@ -174,43 +214,59 @@ def worker(args, shared):
             hist.append(g if g is not None else 0)
             del hist[:-5]
             grip[s] = 1 if (sum(hist) >= 3 or hold.get(s)) else 0
+        if lm:
+            rt.last_lm, rt.new_pose = lm, True
+        rt.last_grip = grip
+        rt.last_context = {"holding": hold, "scene": sorted({o[0] for o in scene}), "source": source}
 
-        key = cmd = path_msg = None
+        # ---------------- intents from the browser
         for c in shared.pop_cmds():
             t = c.get("type")
-            if t == "clutch":
-                engaged = bool(c.get("engaged"))
-            elif t == "key":
-                key = str(c.get("key", ""))[:1].upper() or None
-                if key == "C":
-                    path_uv = []
-            elif t == "cmd":
-                cmd = c.get("text")
-            elif t == "path":
-                uv = c.get("points") or []
-                if len(uv) >= 2:
-                    raw = [((1 - u) * W, v * H) for u, v in uv]
-                    if c.get("resample", True):
-                        raw = resample(raw, 24)
-                    lifted = lift_path(raw, last_pts, last_lm, depth=float(c.get('depth', 0.2))) if last_lm else None
-                    if lifted:
-                        path_msg = {"points": lifted, "hand": c.get("hand") or nearest_hand(raw[0], last_pts)}
-                        path_uv = [[1 - x / W, y / H] for x, y in raw]
+            try:
+                if t == "tap" and cam_params is not None:
+                    hit = tasks.raycast(cam_params, float(c["u"]), float(c["v"]), ASPECT)
+                    if hit is not None:
+                        mid = tasks.add_marker(hit)
+                        rt.path_msg = f"Marker {mid} placed. Say 'put the mug on {mid}'."
                     else:
-                        rt.path_msg = "Stand in view first: the path is placed in your body plane"
-            elif t == "camera":
-                cam3d.azimuth += float(c.get("dazimuth", 0.0))
-                cam3d.elevation = float(np.clip(cam3d.elevation + float(c.get("delevation", 0.0)), -85, 20))
-                cam3d.distance = float(np.clip(cam3d.distance * float(c.get("zoom", 1.0)), 1.0, 6.0))
+                        rt.path_msg = "That tap missed the scene."
+                elif t == "draw" and cam_params is not None:
+                    tasks.draw(c.get("points") or [], cam_params, ASPECT, c.get("hand"))
+                elif t == "clear":
+                    tasks.markers, tasks.next_marker = [], 0
+                    if rt.mode != "FOLLOW":
+                        rt.path = None
+                    rt.path_msg = None
+                elif t == "view":
+                    view = "orbit" if c.get("name") == "orbit" else "robot"
+                elif t == "camera":
+                    orbit.azimuth += float(c.get("dazimuth", 0.0))
+                    orbit.elevation = float(np.clip(orbit.elevation + float(c.get("delevation", 0.0)), -85, 10))
+                    orbit.distance = float(np.clip(orbit.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
+                elif t == "task":
+                    dispatch(tasks, rt, c, cam_params)
+            except Exception as e:  # never let one bad intent kill the loop
+                tasks.set_task(c.get("id", "?"), c.get("action", t), "failed", f"Internal error: {e}")
 
-        rt.handle_message({"engaged": engaged, "lm": lm, "grip": grip, "holding": hold,
-                           "scene": sorted({o[0] for o in scene}), "source": source,
-                           "key": key, "cmd": cmd, "path": path_msg})
+        # ---------------- physics (real time: the step size follows the wall clock)
+        now = time.time()
+        dt = float(np.clip(now - t_phys, 1 / 240, 1 / 12)) / IK_ITERS
+        t_phys = now
         for _ in range(IK_ITERS):
-            rt.step(IK_DT)
+            rt.step(dt)
+            tasks.tick()
 
+        # ---------------- robot view
         rt.paint_model()
-        renderer.update_scene(rt.data, cam3d)
+        if view == "robot":
+            renderer.update_scene(d, camera=robot_cam)
+            fovy = float(m.cam_fovy[robot_cam])
+        else:
+            renderer.update_scene(d, orbit)
+            fovy = float(m.vis.global_.fovy)
+        gl = renderer.scene.camera[0]
+        fwd, up = np.array(gl.forward, float), np.array(gl.up, float)
+        cam_params = (np.array(gl.pos, float), fwd / np.linalg.norm(fwd), up / np.linalg.norm(up), fovy)
         renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
         renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
         rt.paint_overlays(renderer.scene, reset=False)
@@ -221,38 +277,111 @@ def worker(args, shared):
 
         n += 1
         if n % 10 == 0:
-            fps, t0_fps = 10 / max(time.time() - getattr(worker, "_t", time.time() - 0.3), 1e-6), time.time()
-            worker._t = t0_fps
-        rb = rt.readback(ik_hz=IK_ITERS * fps)
-        rb.update({
-            "engaged": engaged, "source": source, "fps": round(fps, 1), "grip": grip, "holding": hold,
-            "scene": sorted({o[0] for o in scene}),
-            "objects": [[lab, round(sc, 2), 1 - x2 / W, y1 / H, 1 - x1 / W, y2 / H] for lab, sc, (x1, y1, x2, y2) in scene],
-            "pose": [[1 - x / W, y / H] for x, y in pts] if pts else None,
-            "pose_ok": bool(lm), "path_uv": path_uv,
-            "path_hand": None if rt.path is None else rt.path.get("hand"),
-        })
-        shared.put(cam_jpg, sim_jpg, json.dumps(rb).encode("utf-8"))
+            now = time.time()
+            fps, t_fps = 10 / max(now - t_fps, 1e-6), now
+        shared.put(cam_jpg, sim_jpg, json.dumps(state(rt, tasks, view, cam_params, fps, source, pts, lm, scene, grip, hold)))
         if args.frames and n >= args.frames:
             shared.running = False
     if cap is not None:
         cap.release()
 
 
+def dispatch(tasks, rt, c, cam):
+    tid, a = str(c.get("id", "t?")), c.get("action")
+    if a == "pick_place":
+        tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT)
+    elif a == "reach":
+        tasks.reach(tid, c.get("target"), c.get("target_uv"), cam, ASPECT)
+    elif a == "follow_path":
+        tasks.follow_path(tid)
+    elif a == "follow_me":
+        tasks.follow_me(tid, bool(c.get("enabled", True)))
+    elif a == "learn_skill":
+        tasks.learn_skill(tid, c.get("name"))
+    elif a == "play_skill":
+        tasks.play_skill(tid, c.get("name"))
+    elif a == "set_speed":
+        v = c.get("value", "slower")
+        if isinstance(v, str) and "slow" in v.lower():
+            rt.speed_scale = max(0.1, rt.speed_scale * 0.7)
+        elif isinstance(v, str) and "fast" in v.lower():
+            rt.speed_scale = min(1.0, rt.speed_scale / 0.7)
+        else:
+            rt.speed_scale = float(np.clip(float(v), 0.1, 1.0))
+        tasks.set_task(tid, a, "done", f"Speed set to x{rt.speed_scale:.1f}.")
+    elif a == "stop":
+        tasks.stop(tid)
+    elif a == "home":
+        tasks.home(tid)
+    elif a == "reset_scene":
+        tasks.home(tid, reset_scene=True)
+    elif a == "export":
+        if not rt.recorder.frames:
+            tasks.set_task(tid, a, "failed", "Nothing recorded yet.")
+        else:
+            rt.saved = rt.recorder.save((ROOT / "recordings").as_posix())
+            tasks.set_task(tid, a, "done", f"Exported intent, trajectory and report to {Path(rt.saved).name}.")
+    else:
+        tasks.set_task(tid, str(a), "failed", f"Unknown action '{a}'.")
+
+
+def public_mode(rt, tasks):
+    if rt.mode == "FOLLOW":
+        return "TASK" if tasks.kind == "task" else "PATH"
+    if rt.mode == "PREVIEW":
+        return "PREVIEW"
+    if rt.engaged and rt.mode in ("MIRROR", "REC"):
+        return "FOLLOW"
+    return "IDLE"
+
+
+def state(rt, tasks, view, cam, fps, source, pts, lm, scene, grip, hold):
+    r = rt.last_result
+    proj = (lambda p: Tasks.project(cam, p, ASPECT)) if cam is not None else (lambda p: None)
+    path = None
+    if rt.path is not None:
+        path = {"uv": [proj(p) for p in rt.path["pts"]], "ok": [bool(o) for o in rt.path["ok"]],
+                "i": int(rt.path["i"]), "hand": rt.path.get("hand") if rt.path.get("hand") in ("left", "right")
+                else ("right" if rt.path["palm"].startswith("right") else "left")}
+    msgs = list(r["messages"])
+    if rt.path_msg:
+        msgs = [rt.path_msg] + msgs
+    mug = tasks.mug_center()
+    return {
+        "mode": public_mode(rt, tasks), "view": view,
+        "feasibility": round(r["feasibility"], 3), "messages": msgs[:4],
+        "speed_scale": round(rt.speed_scale, 2), "mirror": rt.retargeter.mirror,
+        "fps": round(fps, 1), "ik_hz": round(fps * IK_ITERS, 1), "source": source,
+        "pose": [[1 - x / W, y / H] for x, y in pts] if pts else None, "pose_ok": bool(lm),
+        "objects": [[lab, round(sc, 2), 1 - x2 / W, y1 / H, 1 - x1 / W, y2 / H] for lab, sc, (x1, y1, x2, y2) in scene],
+        "grip": grip, "user_holding": hold,
+        "markers": [{"id": mk["id"], "pos": [round(float(x), 3) for x in mk["pos"]], "uv": proj(mk["pos"])} for mk in tasks.markers],
+        "path": path, "task": tasks.task,
+        "holding": {("left" if h.startswith("left") else "right"): o for h, o in tasks.holding.items()},
+        "scene_objects": [{"name": "mug", "pos": [round(float(x), 3) for x in mug], "uv": proj(mug)}],
+        "regions": list(REGIONS.keys()), "skills": tasks.skills(),
+        "recording": {"active": rt.mode == "REC" or (rt.mode == "FOLLOW" and tasks.kind is not None),
+                      "seconds": round(rt.recorder.duration, 1)},
+        "saved": rt.saved,
+    }
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--camera", type=int, default=0)
     ap.add_argument("--video", help="video file instead of the webcam (e.g. a dance clip)")
-    ap.add_argument("--objects", action="store_true", help="detect objects for scene context")
+    ap.add_argument("--objects", action="store_true", help="detect objects in your camera for context")
     ap.add_argument("--fake", action="store_true", help="synthetic landmarks, no camera")
-    ap.add_argument("--no-mirror", action="store_true", help="same-side mapping (default is mirror: the sim camera faces the robot)")
+    ap.add_argument("--no-mirror", action="store_true")
+    ap.add_argument("--https", action="store_true", help="also serve HTTPS (phone mic/camera need it)")
     ap.add_argument("--model", default="models/pose_landmarker_full.task")
     ap.add_argument("--objects-model", default="models/efficientdet_lite0.tflite")
     ap.add_argument("--port", type=int, default=8777)
+    ap.add_argument("--https-port", type=int, default=8443)
     ap.add_argument("--frames", type=int, default=0, help="exit after N frames (testing)")
     args = ap.parse_args()
     shared = Shared()
-    threading.Thread(target=run_server, args=(shared, args.port), daemon=True).start()
+    threading.Thread(target=run_server, args=(shared, args.port, args.https_port if args.https else 0), daemon=True).start()
     try:
         worker(args, shared)
     except KeyboardInterrupt:
