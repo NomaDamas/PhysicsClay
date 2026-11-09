@@ -39,6 +39,10 @@ async def run(t):
                 break
         return order
 
+    # earlier self-test stages (video imitation, demo autopilot) may still be finishing: start from a quiet robot
+    await until(lambda: t.state().get("video") is None and t.state().get("demo") is None, 60)
+    await T(cmd="cancel"); await t.task("reset_scene", 2)
+
     # teach two steps
     await T(cmd="start"); await until(lambda: tc()["phase"] == "recording")
     for u in ["pick up the mug and put it in the middle", "then put the red block on the right"]:
@@ -55,7 +59,8 @@ async def run(t):
     await T(cmd="set_spec", spec={"goal": spec["goal"], "steps": rev, "constraints": spec["constraints"]}); await until(lambda: steps_of() == base[::-1])
     t.check("timeline: reorder -> spec order", steps_of() == base[::-1] and tc()["phase"] == "confirm", str(steps_of()))
     order = await practise()
-    t.check("timeline: reorder changes the practised sequence", order == base[::-1] and tc()["phase"] == "done", f"{tc()['phase']}: {order}")
+    t.check("timeline: reorder changes the practised sequence", order == base[::-1] and tc()["phase"] == "done",
+            f"{tc()['phase']}: {order} " + " | ".join(s["message"][:60] for s in tc()["spec"]["steps"] if s["status"] == "failed"))
 
     # delete one card -> only the remaining step is practised
     await T(cmd="set_spec", spec={"goal": spec["goal"], "steps": [{"object": "mug", "target": "center"}], "constraints": []}); await until(lambda: len(steps_of()) == 1 and tc()["phase"] == "confirm")
