@@ -1,0 +1,17 @@
+{
+  "label": "Franka Panda",
+  "kind": "arm",
+  "tagline": "7-joint arm bolted to the table: precise picks, reaches around obstacles.",
+  "examples": [
+    "Stack the green block on the red block",
+    "Put the mug next to the bowl, handle facing me",
+    "Line the blocks up along the front edge",
+    "Move the cup there without touching the vase"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "path"
+  ]
+}

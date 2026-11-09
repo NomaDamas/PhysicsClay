@@ -1,0 +1,17 @@
+{
+  "label": "Spot with arm",
+  "kind": "quadruped_arm",
+  "tagline": "Four legs and a claw arm: walks to the floor or the table and grabs.",
+  "examples": [
+    "Walk to the box and pick up the bottle",
+    "Pick up the can on the floor and put it on the table",
+    "Bring the bowl to the counter",
+    "Follow me"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "drive"
+  ]
+}

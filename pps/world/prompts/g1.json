@@ -1,0 +1,18 @@
+{
+  "label": "Unitree G1",
+  "kind": "humanoid",
+  "tagline": "Humanoid at the table: picks with either hand, copies you, learns by watching.",
+  "examples": [
+    "Put the mug on the right",
+    "Carry the red block over the vase to the left",
+    "Let me show you how to stack the blocks",
+    "Follow me"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "show",
+    "path"
+  ]
+}

@@ -15,6 +15,9 @@
     { label: "Move the red block to the left", action: "pick_place", args: { object: "red block", target: "left" } },
     { label: "Reach over the front", action: "reach", args: { target: "front" } },
   ];
+  // P.examples (strings, set per robot by robots.js) replace these; a string chip goes to P.runExample(text)
+  const examples = () => (Array.isArray(P.examples) && P.examples.length ? P.examples : EXAMPLES);
+  const exLabel = (e) => (typeof e === "string" ? e : e.label);
   if (new URLSearchParams(location.search).get("preview") === "0") P.planPreview = false;
 
   const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -135,7 +138,15 @@
   host.appendChild(card);
   card.addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-act], button[data-ex]"); if (!b) return;
-    if (b.dataset.ex != null) { const e = EXAMPLES[+b.dataset.ex]; run(e.action, e.args, e.label); return; }
+    if (b.dataset.ex != null) {
+      const e = examples()[+b.dataset.ex]; if (!e) return;
+      if (typeof e === "string" || !e.action) {
+        const text = exLabel(e), cmd = document.querySelector("#cmd");
+        if (P.runExample) P.runExample(text); else if (cmd) { cmd.value = text; cmd.focus(); }
+        return;
+      }
+      run(e.action, e.args, e.label); return;
+    }
     act(b.dataset.act);
   });
 
@@ -144,7 +155,7 @@
     if (!p) {
       return `<header class="plan-head"><span class="plan-eyebrow">Robot's plan</span><span class="plan-phase">${PHASE.idle}</span></header>
         <p class="plan-intent">Tell me, point, or show me.</p>
-        <div class="plan-examples">${EXAMPLES.map((e, i) => `<button type="button" class="plan-example" data-ex="${i}">${esc(e.label)}</button>`).join("")}</div>`;
+        <div class="plan-examples">${examples().map((e, i) => `<button type="button" class="plan-example" data-ex="${i}">${esc(exLabel(e))}</button>`).join("")}</div>`;
     }
     const ph = p.phase, bad = ph === "blocked" || ph === "needs_you" || ph === "failed";
     const steps = (p.steps || []).map((s, i) => `<li data-i="${i}"><span class="n">${i + 1}</span><span>${esc(s.text)}</span></li>`).join("");
@@ -172,7 +183,7 @@
   }
   let lastKey = null;
   function render(p) {
-    const key = JSON.stringify(p ? Object.assign({}, p, { progress: 0, step_i: 0 }) : null);
+    const key = JSON.stringify(p ? Object.assign({}, p, { progress: 0, step_i: 0 }) : examples().map(exLabel));
     if (key !== lastKey) {
       lastKey = key;
       card.dataset.phase = p ? p.phase : "idle";
@@ -239,4 +250,5 @@
   P.onState(onState);
   onState(P.state);
   window.addEventListener("pc3d-ready", () => { ghostKey = undefined; onState(P.state); });
+  window.addEventListener("pc-examples", () => onState(P.state));   // robot switched: new example chips
 })();

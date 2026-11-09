@@ -1,0 +1,191 @@
+{
+ "g1": {
+  "label": "Unitree G1",
+  "kind": "humanoid",
+  "tagline": "Humanoid at the table: picks with either hand, copies you, learns by watching.",
+  "examples": [
+   "Put the mug on the right",
+   "Carry the red block over the vase to the left",
+   "Let me show you how to stack the blocks",
+   "Follow me"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "show",
+   "path"
+  ]
+ },
+ "panda": {
+  "label": "Franka Panda",
+  "kind": "arm",
+  "tagline": "7-joint arm bolted to the table: precise picks, reaches around obstacles.",
+  "examples": [
+   "Stack the green block on the red block",
+   "Put the mug next to the bowl, handle facing me",
+   "Line the blocks up along the front edge",
+   "Move the cup there without touching the vase"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "path"
+  ]
+ },
+ "ur5e": {
+  "label": "UR5e",
+  "kind": "arm",
+  "tagline": "Industrial 6-joint arm: runs the same tasks you taught the humanoid.",
+  "examples": [
+   "Sort the blocks: red on the left, green on the right",
+   "Put the can in the box",
+   "Move the mug to marker B",
+   "Run the skill I taught the G1"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "path"
+  ]
+ },
+ "xarm7": {
+  "label": "uFactory xArm7",
+  "kind": "arm",
+  "tagline": "Compact 7-joint arm: short reach, works close to its base.",
+  "examples": [
+   "Put the fruit in the bowl",
+   "Bring the cup closer to you",
+   "Can you reach the bottle at the back?",
+   "Put the block on the bottom shelf"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "path"
+  ]
+ },
+ "iiwa14": {
+  "label": "KUKA iiwa 14",
+  "kind": "arm",
+  "tagline": "Strong collaborative arm: heavier boxes and full bottles.",
+  "examples": [
+   "Move the box to the back of the table",
+   "Put the bottle upright in the center, slowly",
+   "Stack the plates on the left",
+   "Clear the table into the box"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "path"
+  ]
+ },
+ "aloha": {
+  "label": "ALOHA",
+  "kind": "bimanual",
+  "tagline": "Two arms facing each other: hand things over, hold with one and work with the other.",
+  "examples": [
+   "Pass the cup from the left arm to the right arm",
+   "Hold the bowl with your left arm and put the fruit in with your right",
+   "Use your right arm to put the block in the middle",
+   "Swap the cup and the can"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "path",
+   "handover"
+  ]
+ },
+ "apollo": {
+  "label": "Apptronik Apollo",
+  "kind": "humanoid",
+  "tagline": "Full-size humanoid: two-handed carries, high shelves, learns by watching.",
+  "examples": [
+   "Carry the box to the top shelf with both hands",
+   "Put the bottle on the shelf at chest height",
+   "Let me show you how to pack the box",
+   "Copy my arms"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "show",
+   "path"
+  ]
+ },
+ "stretch3": {
+  "label": "Hello Robot Stretch 3",
+  "kind": "mobile_manipulator",
+  "tagline": "Slim home robot: drives to a spot, lifts and reaches sideways.",
+  "examples": [
+   "Drive to the counter and bring me the cup",
+   "Pick up the can from the floor",
+   "Put the mug on the low shelf",
+   "Move the fruit from the counter to the table"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "drive"
+  ]
+ },
+ "tidybot": {
+  "label": "Stanford TidyBot",
+  "kind": "mobile_manipulator",
+  "tagline": "Mobile base with a Kinova arm: drives around and tidies up.",
+  "examples": [
+   "Tidy up: put the cups and bowls on the counter",
+   "Pick up the block on the floor and put it in the box",
+   "Drive to the shelf and put the bottle on the middle level",
+   "Bring the mug to me"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "path",
+   "drive"
+  ]
+ },
+ "spot": {
+  "label": "Spot with arm",
+  "kind": "quadruped_arm",
+  "tagline": "Four legs and a claw arm: walks to the floor or the table and grabs.",
+  "examples": [
+   "Walk to the box and pick up the bottle",
+   "Pick up the can on the floor and put it on the table",
+   "Bring the bowl to the counter",
+   "Follow me"
+  ],
+  "tools": [
+   "point",
+   "zone",
+   "goal",
+   "drive"
+  ]
+ },
+ "h2": {
+  "label": "Unitree H2",
+  "kind": "humanoid",
+  "tagline": "Full-size humanoid, experimental: whole-body motion and imitation; grasping not yet.",
+  "examples": [
+   "Copy my arms",
+   "Learn this wave from my video",
+   "Point at the mug",
+   "Make the second half of the dance slower"
+  ],
+  "tools": [
+   "point",
+   "show"
+  ]
+ }
+}
