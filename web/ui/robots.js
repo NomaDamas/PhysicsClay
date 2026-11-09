@@ -144,7 +144,7 @@
   // ------------------------------------------------------------------ CSS
   const css = `
 /* ---- UX 3 robot UX (web/ui/robots.js) ---- */
-.rb-pill-btn { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; padding: 0; border: 0; background: none; border-radius: 999px; color: inherit; }
+.rb-pill-btn { display: inline-flex; align-items: center; min-width: 0; max-width: 100%; min-height: 44px; padding: 0; border: 0; background: none; border-radius: 999px; color: inherit; }
 .rb-pill-btn .status-pill { cursor: pointer; transition: background var(--fast), border-color var(--fast); padding-right: 10px; }
 .rb-pill-btn:hover .status-pill { background: var(--active); }
 .rb-pill-btn:focus-visible { outline: none; }
@@ -165,6 +165,7 @@
 .rb-tab:focus-visible { outline: none; box-shadow: var(--ring); }
 .rb-body { padding: 16px 20px 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; min-height: 0; }
 .rb-body[hidden] { display: none; }
+.rb-body > * { flex: none; }
 .rb-sec-title { margin: 4px 0 -4px; font-size: var(--fs-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--t2); }
 .rb-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
 .rb-card { position: relative; display: flex; gap: 12px; align-items: flex-start; min-height: 44px; padding: 14px; border-radius: 18px; text-align: left;
@@ -177,7 +178,7 @@
 .rb-ico { flex: none; width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; background: var(--field); color: var(--t1); }
 .rb-card[aria-pressed="true"] .rb-ico { background: var(--accent); color: #fff; }
 .rb-main { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 5px; }
-.rb-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding-right: 64px; }
+.rb-top { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rb-name { font-size: var(--fs-md); font-weight: 650; letter-spacing: -.01em; }
 .rb-kind { font-size: 11px; font-weight: 600; color: var(--t2); background: var(--field); padding: 2px 8px; border-radius: 999px; }
 .rb-exp { font-size: 11px; font-weight: 650; color: var(--hot-ink); background: rgba(245,145,69,.16); padding: 2px 8px; border-radius: 999px; }
@@ -186,7 +187,7 @@
 .rb-cap { font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--t2); }
 .rb-note { font-size: var(--fs-xs); color: var(--t2); line-height: 1.4; }
 .rb-note.warn { color: var(--hot-ink); }
-.rb-state { position: absolute; top: 14px; right: 14px; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 650; color: var(--accent-ink); }
+.rb-state { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 650; color: var(--accent-ink); }
 .rb-state.busy { color: var(--hot-ink); }
 .rb-spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid currentColor; border-right-color: transparent; animation: spin .8s linear infinite; }
 .rb-hint { margin: 0; font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.5; padding: 10px 12px; border-radius: 12px; background: var(--field); }
@@ -288,8 +289,9 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
     setTab(t || "robot");
     if (!dlg.open) { try { dlg.showModal(); } catch (e) { dlg.setAttribute("open", ""); } }
     if (pillBtn) pillBtn.setAttribute("aria-expanded", "true");
-    const first = dlg.querySelector(t === "scene" ? ".sc-tpl-btn[aria-pressed='true'], .sc-tpl-btn" : ".rb-card[aria-pressed='true'], .rb-card:not(:disabled)");
-    if (first) first.focus();
+    const q = (a, b) => dlg.querySelector(a) || dlg.querySelector(b);   // a selector list would return document order
+    const first = t === "scene" ? q(".sc-tpl-btn[aria-pressed='true']", ".sc-tpl-btn") : q(".rb-card[aria-pressed='true']", ".rb-card:not(:disabled)");
+    if (first) { first.focus(); requestAnimationFrame(() => first.scrollIntoView({ block: "nearest" })); }
   }
   function closeDlg() { if (dlg.open) dlg.close(); }
   dlg.addEventListener("close", () => { if (pillBtn) pillBtn.setAttribute("aria-expanded", "false"); });
@@ -385,8 +387,11 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
       momentary("drive");
       const mk = arr(U.state.markers), last = mk[mk.length - 1];
       if (!last) {
-        if (document.querySelector('.pcui-tool[data-tool="point"]:not([hidden])')) setTimeout(() => U.selectTool("point"), 0);
-        U.toast("Point at where to drive first, then press Drive.");
+        const point = document.querySelector('.pcui-tool[data-tool="point"]:not([hidden])');
+        setTimeout(() => {   // after Point's own "click a spot" toast, so this one stays
+          if (point) U.selectTool("point");
+          U.toast("Tap where to drive, then press Drive.");
+        }, 0);
         return;
       }
       askAgent("Driving the base", `Drive the base next to marker ${last.id}, then stop`);
@@ -447,7 +452,8 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
     if (!pill) return;
     const m = model(U.state), p = profile(m);
     const sw = pending && pending.kind === "robot" ? pending : null;
-    if (label && label.textContent !== p.label) label.textContent = p.label;   // app.js writes its own label once; ours wins
+    const fixLabel = () => { if (label && label.textContent !== p.label) label.textContent = p.label; };
+    fixLabel(); requestAnimationFrame(fixLabel);   // app.js writes its own label on its next frame; ours wins
     const key = JSON.stringify([m.id, p.label, p.kind, sw && sw.label]);
     if (key === pillKey) return;
     pillKey = key;
@@ -476,11 +482,11 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
     return `<button type="button" class="rb-card" data-robot="${esc(r.id)}" aria-pressed="${cur}" ${available ? "" : "disabled"}>
       <span class="rb-ico">${icon(IC[kind] ? kind : "arm", 22)}</span>
       <span class="rb-main">
-        <span class="rb-top"><span class="rb-name">${esc(lab)}</span>${kind ? `<span class="rb-kind">${esc(KIND[kind] || kind)}</span>` : ""}${r.experimental ? '<span class="rb-exp">Experimental</span>' : ""}</span>
+        <span class="rb-top"><span class="rb-name">${esc(lab)}</span>${kind ? `<span class="rb-kind">${esc(KIND[kind] || kind)}</span>` : ""}${r.experimental ? '<span class="rb-exp">Experimental</span>' : ""}${state}</span>
         ${p.tagline ? `<span class="rb-tag">${esc(p.tagline)}</span>` : ""}
         ${cs.length ? `<span class="rb-caps">${cs.map((c) => `<span class="rb-cap">${esc(CAP[c] || c)}</span>`).join("")}</span>` : ""}
         ${note}
-      </span>${state}</button>`;
+      </span></button>`;
   }
   function robotsHTML(m) {
     const avail = new Map(m.robots.map((r) => [r.id, r]));
@@ -512,7 +518,7 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
       <div class="sc-tpl">${m.templates.map((t) => `<button type="button" class="sc-tpl-btn" data-tpl="${esc(t)}" aria-pressed="${t === tpl}" ${ro || busy ? "disabled" : ""}>${icon(IC[t] ? t : "table", 20)}<b>${esc((TPL[t] || [cap(t)])[0])}</b><span>${esc((TPL[t] || [, ""])[1])}</span></button>`).join("")}</div>
       <h3 class="rb-sec-title">Objects</h3>
       <ul class="sc-list">${objs.length ? objs.map((o) => {
-        const nm = String(o.name || ""), sw = COLORS[o.color] || "";
+        const nm = String(o.name || ""), sw = COLORS[o.color] || COLORS[nm.split(/[ _]/)[0]] || "";
         const meta = [o.kind, where(o)].filter(Boolean).join(" · ");
         return `<li><span class="sc-sw" style="${sw ? `background:${sw}` : ""}" aria-hidden="true"></span><span class="sc-name">${esc(nm.replace(/_/g, " "))}</span>
           ${meta ? `<span class="sc-meta">${esc(meta)}</span>` : ""}${o.movable === false ? '<span class="sc-fixed">fixed</span>' : ""}
