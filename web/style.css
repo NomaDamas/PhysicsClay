@@ -664,3 +664,4 @@ body .pcg-toggle .pcg-strip { display: none; }
 .plan-scroll > [data-slot="plan"] { order: 0; }
 .plan-scroll > [data-slot="side"] { order: 1; }
 .plan-scroll > * { order: 2; }
+.byok-note { margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--accent-tint); color: var(--t1); line-height: 1.45; }

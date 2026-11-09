@@ -6,6 +6,7 @@ Browser talks to Gemini Live itself (key stays in the browser); intents arrive h
 Protocol: docs/PROTOCOL.md.   Run: .venv/bin/python -m pps.app [--video clip.mp4] [--objects] [--fake] [--https]
 """
 import argparse
+import os
 import asyncio
 import json
 import socket
@@ -27,7 +28,7 @@ from .protocol import LANDMARKS
 from .robot_runtime import HANDS, Runtime
 from .compile_other import compile_ur5e
 from .mock import MockBrain
-from .spatial import ER_MODEL, Spatial, gemini_key
+from .spatial import ER_MODEL, Spatial, byok, gemini_key
 from .teach import Teacher
 from .demo import Demo
 from .tasks import REGIONS, Tasks, edit_skill, skills_meta
@@ -256,6 +257,8 @@ TTS_DIR = ROOT / "recordings" / "tts"
 
 
 def openai_key():
+    if byok():
+        return None
     env = ROOT / ".env"
     if env.exists():
         for line in env.read_text().splitlines():
@@ -269,17 +272,21 @@ async def tts_handler(request):
     import hashlib
     text = (request.query.get("text") or "")[:600]
     voice = request.query.get("voice") or "coral"
-    if not text or not openai_key():
+    if not text:
         raise web.HTTPNotFound()
     TTS_DIR.mkdir(parents=True, exist_ok=True)
     f = TTS_DIR / (hashlib.sha1((voice + "|" + text).encode()).hexdigest() + ".mp3")
+    # BYOK: the visitor's own key comes in a header; it is used for this one request and never stored or logged
+    key = (request.headers.get("X-OpenAI-Key") or "").strip() or openai_key()
+    if not f.exists() and not key:
+        raise web.HTTPNotFound()   # no key: the browser falls back to its built-in voice (cached lines still play)
     if not f.exists():
         body = {"model": "gpt-4o-mini-tts", "voice": voice, "input": text, "response_format": "mp3",
                 "instructions": "A friendly, natural humanoid robot assistant; calm, clear and precise." if voice == "coral"
                 else "A confident startup founder giving a crisp product demo; warm and energetic."}
         async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX)) as sess:
             async with sess.post("https://api.openai.com/v1/audio/speech", json=body,
-                                 headers={"Authorization": "Bearer " + openai_key()}) as r:
+                                 headers={"Authorization": "Bearer " + key}) as r:
                 if r.status != 200:
                     raise web.HTTPBadGateway(text=(await r.text())[:200])
                 f.write_bytes(await r.read())
@@ -533,9 +540,9 @@ def worker(args, shared):
                 elif t == "spatial":
                     if c.get("target") == "robot":
                         spatial.ask_er(cv2.imdecode(np.frombuffer(sim_jpg_last[0], np.uint8), cv2.IMREAD_COLOR) if sim_jpg_last[0] else frame,
-                                       "robot", c.get("query"))
+                                       "robot", c.get("query"), key=c.get("key"))
                     else:
-                        spatial.ask_er(frame, "camera", c.get("query"), mirrored=True)
+                        spatial.ask_er(frame, "camera", c.get("query"), mirrored=True, key=c.get("key"))
                 elif t == "path3d":
                     tasks.set_path_world(c.get("points") or [], c.get("hand") if c.get("hand") in ("left", "right") else None)
                 elif t == "mock":
@@ -651,6 +658,7 @@ def worker(args, shared):
         st["robots"] = [{"id": "g1", "label": "Unitree G1 humanoid"}, {"id": "ur5e", "label": "UR5e arm (compile + reach check)"}]
         st["spatial"] = spatial.state()
         st["server_gemini"] = gemini_key() is not None
+        st["byok"] = byok()
         st["geom_poses"] = {str(g): [round(float(x), 4) for x in d.geom_xpos[g]] + [round(float(x), 4) for x in d.geom_xmat[g]] for g in dyn_geoms}
         if st["path"] is not None:
             st["path"]["pts"] = [[round(float(x), 3) for x in p] for p in rt.path["pts"]]
@@ -778,6 +786,7 @@ def state(rt, tasks, view, cam, fps, source, pts, lm, scene, grip, hold):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--webcam", action="store_true", help="open this computer's webcam (off by default)")
+    ap.add_argument("--byok", action="store_true", help="public deployment: never use the server's API keys; visitors bring their own")
     ap.add_argument("--camera", type=int, default=0)
     ap.add_argument("--video", help="video file instead of the webcam (e.g. a dance clip)")
     ap.add_argument("--objects", action="store_true", help="detect objects in your camera for context")
@@ -791,6 +800,8 @@ def main():
     ap.add_argument("--https-port", type=int, default=8443)
     ap.add_argument("--frames", type=int, default=0, help="exit after N frames (testing)")
     args = ap.parse_args()
+    if args.byok:
+        os.environ["PC_BYOK"] = "1"
     shared = Shared()
     threading.Thread(target=run_server, args=(shared, args.port, args.https_port if args.https else 0), daemon=True).start()
     try:

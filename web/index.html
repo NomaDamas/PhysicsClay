@@ -305,9 +305,14 @@
       </section>
       <section class="set-sec" id="secAI"><h3>AI</h3>
         <p id="serverGemini" class="server-gemini small" hidden>Gemini: server key active</p>
-        <label class="field"><span>Gemini API key (optional)</span>
+        <p id="byokNote" class="byok-note small" hidden>Bring your own keys. This public demo never uses ours: add yours below to talk with Gemini Live, ask Gemini Robotics-ER, read goal photos and hear the natural robot voice. Without keys the offline mock demo still works.</p>
+        <label class="field"><span>Gemini API key</span>
           <input id="setKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
-          <small>Stored only in this browser.</small>
+          <small>Stored only in this browser. Talk connects straight to Google; spatial pointing and goal photos send it to this server for that one request.</small>
+        </label>
+        <label class="field"><span>OpenAI API key (robot voice)</span>
+          <input id="setOpenAI" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+          <small>Stored only in this browser and sent only with voice requests. Without it the browser's own voice is used.</small>
         </label>
         <label class="field"><span>Live model</span><input id="setLive" type="text" spellcheck="false"></label>
         <label class="field"><span>Robotics-ER model</span><input id="setEr" type="text" spellcheck="false"></label>

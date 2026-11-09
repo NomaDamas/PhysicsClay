@@ -514,7 +514,7 @@ def on_goal(ctx, msg):
         profiles = {n: _colour_profile(tasks, n) for n in names}
         view = "robot" if msg.get("view") == "robot" else "user"
         offline = bool(msg.get("offline"))
-        key = None if offline else gemini_key()
+        key = None if offline else ((msg.get("key") or "").strip() or gemini_key())   # BYOK: the visitor's key
         g["run_after_photo"] = bool(msg.get("run"))
         _set(g, "locating", "Reading your photo" + (" with Gemini Robotics-ER…" if key else " (offline colour reader)…"))
 

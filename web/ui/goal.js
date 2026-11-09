@@ -197,7 +197,7 @@
   });
   function sendPhoto() {
     if (!photo) return;
-    if (!PCUI.send({ type: "goal", op: "photo", jpg_b64: photo.b64, view: photoView })) { PCUI.toast("Not connected to the robot."); return; }
+    if (!PCUI.send({ type: "goal", op: "photo", jpg_b64: photo.b64, view: photoView, key: (() => { try { return localStorage.getItem("pc.geminiKey") || undefined; } catch (e) { return undefined; } })() })) { PCUI.toast("Not connected to the robot."); return; }
     PCUI.say("you", "Make it look like this photo.");
     for (const g of ghosts.values()) g.touched = false;
   }

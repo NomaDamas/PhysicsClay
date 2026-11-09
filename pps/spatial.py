@@ -22,7 +22,14 @@ API = "https://generativelanguage.googleapis.com/v1beta/models/"
 ER_MODEL = "gemini-robotics-er-2-preview"
 
 
+def byok():
+    """Bring-your-own-key mode (public deployments): the server never uses its own API keys; visitors send theirs."""
+    return os.environ.get("PC_BYOK") == "1"
+
+
 def gemini_key():
+    if byok():
+        return None
     k = os.environ.get("GEMINI_API_KEY")
     if k:
         return k
@@ -90,8 +97,8 @@ class Spatial:
                 time.sleep(2)
 
     # ------------------------------------------------------------------ Gemini Robotics-ER
-    def ask_er(self, frame_bgr, target, query=None, mirrored=False):
-        key = gemini_key()
+    def ask_er(self, frame_bgr, target, query=None, mirrored=False, key=None):
+        key = key or gemini_key()
         if key is None or self._busy_er:
             return False
         self._busy_er = True

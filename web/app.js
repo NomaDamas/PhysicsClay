@@ -37,6 +37,7 @@
   const G = () => window.PCGemini;
   const settings = {
     get key() { return LS.get("pc.geminiKey", ""); },
+    get openaiKey() { return LS.get("pc.openaiKey", ""); },
     get liveModel() { return LS.get("pc.liveModel", "") || (G() && G().DEFAULT_LIVE_MODEL) || ""; },
     get erModel() { return LS.get("pc.erModel", "") || (G() && G().DEFAULT_ER_MODEL) || ""; },
     get sendCam() { return LS.get("pc.sendCam", "1") === "1"; },
@@ -797,17 +798,23 @@
     if (ttsBusy || !ttsQ.length) return;
     const item = ttsQ.shift(); ttsBusy = true;
     const text = item.text;
-    const a = new Audio("/tts?voice=" + item.voice + "&text=" + encodeURIComponent(text));
-    let settled = false, guard = 0;
+    const a = new Audio();
+    let settled = false, guard = 0, url = "";
     const settle = (fallback, bad) => {
       if (settled) return; settled = true; clearTimeout(guard);
       if (bad) ttsOK = false;
       if (fallback) { try { a.pause(); } catch (e) { /* noop */ } speakBrowser(text); }
+      if (url) URL.revokeObjectURL(url);
       ttsBusy = false; ttsNext();
     };
     guard = setTimeout(() => settle(false), 30000); // a stalled stream must not block the queue
     a.onended = () => settle(false); a.onerror = () => settle(true, true);
-    a.play().catch(() => settle(true));
+    // BYOK: the visitor's OpenAI key rides in a header (never in the URL); no key -> cached lines or the browser voice
+    const k = settings.openaiKey;
+    fetch("/tts?voice=" + item.voice + "&text=" + encodeURIComponent(text), { headers: k ? { "X-OpenAI-Key": k } : {} })
+      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("tts " + r.status))))
+      .then((b) => { if (settled) return; url = URL.createObjectURL(b); a.src = url; return a.play(); })
+      .catch(() => settle(true, !k && !state.byok ? true : false));
   }
   function speak(msg, lang, voice) {
     if (live.session || !msg) return;
@@ -1172,12 +1179,12 @@
   // ------------------------------------------------------------------ settings dialog
   function openSettings(section) {
     if (typeof section !== "string") section = "";
-    $("setKey").value = settings.key; $("setLive").value = settings.liveModel; $("setEr").value = settings.erModel;
+    $("setKey").value = settings.key; $("setOpenAI").value = settings.openaiKey; $("setLive").value = settings.liveModel; $("setEr").value = settings.erModel;
     $("setLive").placeholder = (G() && G().DEFAULT_LIVE_MODEL) || "live model"; $("setEr").placeholder = (G() && G().DEFAULT_ER_MODEL) || "ER model";
     $("setMock").checked = typeof state.mock === "boolean" ? state.mock : settings.mock;
     $("setSendCam").checked = settings.sendCam; $("setSendRobot").checked = settings.sendRobot; $("setLang").value = settings.lang;
     $("geminiStatus").textContent = G() ? "gemini.js loaded · " + (settings.key ? "own key set → Talk uses Gemini Live" : state.server_gemini ? "server key → Talk uses Gemini Live (proxy)" : "no key → Talk uses browser speech") : "gemini.js not loaded → Talk uses browser speech";
-    $("serverGemini").hidden = !state.server_gemini;
+    $("serverGemini").hidden = !state.server_gemini; $("byokNote").hidden = !state.byok;
     $("setPhoneCam").checked = phoneCam.want; renderSettingsLive();
     if (typeof el.dlg.showModal === "function") el.dlg.showModal(); else el.dlg.setAttribute("open", "");
     if (section) { const sec = $(section); if (sec) { sec.scrollIntoView({ block: "start" }); sec.classList.add("flash"); setTimeout(() => sec.classList.remove("flash"), 1200); } }
@@ -1185,6 +1192,7 @@
   el.dlg.addEventListener("close", () => {
     if (el.dlg.returnValue !== "save") return;
     LS.set("pc.geminiKey", $("setKey").value.trim());
+    LS.set("pc.openaiKey", $("setOpenAI").value.trim()); ttsOK = true;
     const lm = $("setLive").value.trim(), em = $("setEr").value.trim();
     LS.set("pc.liveModel", G() && lm === G().DEFAULT_LIVE_MODEL ? "" : lm);
     LS.set("pc.erModel", G() && em === G().DEFAULT_ER_MODEL ? "" : em);
@@ -1208,7 +1216,7 @@
     if (sp && sp.model && document.activeElement !== $("setSpatial")) $("setSpatial").value = String(sp.model);
     const er = sp && sp.er && typeof sp.er === "object" ? sp.er : null;
     $("erStatus").textContent = er ? `ER · ${er.target || ""} · ${arr(er.points).length} points${er.ms ? " · " + Math.round(er.ms) + " ms" : ""}` : "";
-    $("serverGemini").hidden = !state.server_gemini;
+    $("serverGemini").hidden = !state.server_gemini; $("byokNote").hidden = !state.byok;
     $("camStatus").textContent = phoneCam.status;
   }
   // robot body
@@ -1219,8 +1227,8 @@
   }));
   // spatial model + Robotics-ER
   $("setSpatial").addEventListener("change", () => { send({ type: "spatial_model", name: $("setSpatial").value }); });
-  $("erCam").addEventListener("click", () => { if (send({ type: "spatial", target: "camera" })) { $("erStatus").textContent = "asking Gemini Robotics-ER (camera)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in your camera…"); } });
-  $("erRobot").addEventListener("click", () => { if (send({ type: "spatial", target: "robot" })) { $("erStatus").textContent = "asking Gemini Robotics-ER (robot view)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in the robot view…"); } });
+  $("erCam").addEventListener("click", () => { if (send({ type: "spatial", target: "camera", key: settings.key || undefined })) { $("erStatus").textContent = "asking Gemini Robotics-ER (camera)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in your camera…"); } });
+  $("erRobot").addEventListener("click", () => { if (send({ type: "spatial", target: "robot", key: settings.key || undefined })) { $("erStatus").textContent = "asking Gemini Robotics-ER (robot view)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in the robot view…"); } });
   // demo autopilot
   document.querySelectorAll("[data-demo]").forEach((b) => b.addEventListener("click", () => {
     if (!send({ type: "demo", name: b.dataset.demo })) { toast("Not connected to the robot."); return; }
