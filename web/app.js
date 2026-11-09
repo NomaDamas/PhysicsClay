@@ -785,6 +785,9 @@
     if (live.session) { live.session.sendText(text); return; } // gemini.js echoes it as a final user transcript -> teachHear there
     addLine("user", text);
     if (teachHear(text)) return;
+    // UX 3: nothing on pc-hear took it (plan "go", "which one?" answers, zone phrases) -> the LLM agent (web/ui/agent.js)
+    // may take it here; if it doesn't, the UX 2.0 rule parser below runs as before.
+    if (!window.dispatchEvent(new CustomEvent("pc-intent", { detail: { text, source }, cancelable: true }))) return;
     const it = parseIntent(text);
     if (!it) { const msg = "I didn't catch an action. Try “put the mug on the right”, “follow me”, or tap the table."; addLine("robot", msg); speak(msg); return; }
     if (it[0] === "clear") { clearAll(); speak("Cleared."); return; }
