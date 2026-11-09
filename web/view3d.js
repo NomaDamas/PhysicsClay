@@ -18,7 +18,7 @@ let isActive = false, loopOn = false, sceneState = "idle", retryTimer = 0;
 let state = {};
 const geomObjs = new Map(); // id -> Object3D (dynamic ones get matrix updates)
 const meshCache = new Map();
-let hand = "auto";
+let hand = "auto", editing = false; // UX 2.0: clicks add waypoints only while the path editor is open
 const wps = []; // THREE.Mesh waypoints
 let selected = null, dirty = true, gizmoPress = false, down = null;
 const wpGroup = new THREE.Group(), linkGroup = new THREE.Group(), srvGroup = new THREE.Group(), mkGroup = new THREE.Group(), objGroup = new THREE.Group(), rayGroup = new THREE.Group();
@@ -304,12 +304,12 @@ function onUp(ev) {
   const hit = raycaster.intersectObjects(wps, false)[0];
   if (hit) { select(hit.object); return; }
   const p = tableHit(ev);
-  if (p) { addWaypoint(new THREE.Vector3(p.x, p.y, HOVER_Z)); select(null); hintEl.textContent = "Click a waypoint to move it — the blue (Z) arrow sets its height."; }
+  if (p && editing) { addWaypoint(new THREE.Vector3(p.x, p.y, HOVER_Z)); select(null); hintEl.textContent = "Click a waypoint to move it — the blue (Z) arrow sets its height."; }
   else select(null);
 }
 function onMove(ev) {
   if (captured("move", ev)) { if (hoverGhost) hoverGhost.visible = false; return; }
-  if (!hoverGhost || down) { if (hoverGhost) hoverGhost.visible = false; return; }
+  if (!hoverGhost || down || !editing) { if (hoverGhost) hoverGhost.visible = false; return; }
   const p = tableHit(ev); hoverGhost.visible = !!p && !tc.axis;
   if (p) hoverGhost.position.set(p.x, p.y, HOVER_Z);
   needs = true;
@@ -329,7 +329,7 @@ function onKey(ev) {
 // ------------------------------------------------------------------ mount / loop
 function buildUi(container) {
   container.innerHTML = `
-    <button type="button" class="btn sm v3d-toggle" aria-expanded="false" title="Show the 3D path editor">✎ Path editor</button>
+    <button type="button" class="btn sm v3d-toggle" aria-expanded="false" title="Show the 3D path editor">Edit path</button>
     <div class="v3d-panel" role="group" aria-label="3D path editor" hidden>
       <div class="v3d-row"><span class="label mono">3D PATH</span><span class="grow"></span>
         <div class="seg" role="group" aria-label="Hand">
@@ -361,7 +361,7 @@ function buildUi(container) {
   const panel = container.querySelector(".v3d-panel");
   const tog = container.querySelector(".v3d-toggle");
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => tog.addEventListener(t, (e) => e.stopPropagation()));
-  tog.addEventListener("click", () => { panel.hidden = !panel.hidden; tog.setAttribute("aria-expanded", String(!panel.hidden)); tog.textContent = panel.hidden ? "✎ Path editor" : "✕ Close editor"; });
+  tog.addEventListener("click", () => editPath(panel.hidden));
   ["pointerdown", "pointerup", "pointermove", "wheel"].forEach((t) => panel.addEventListener(t, (e) => e.stopPropagation()));
   panel.querySelectorAll("[data-hand]").forEach((b) => b.addEventListener("click", () => {
     hand = b.dataset.hand; dirty = true;
@@ -374,6 +374,14 @@ function buildUi(container) {
   const views = container.querySelector(".v3d-views");
   ["pointerdown", "pointerup", "pointermove", "wheel"].forEach((t) => views.addEventListener(t, (e) => e.stopPropagation()));
   views.querySelectorAll("[data-cam]").forEach((b) => b.addEventListener("click", () => camPreset(b.dataset.cam)));
+}
+function editPath(on) { // open / close the waypoint editor (the "Path" tool calls this too)
+  if (!root) return;
+  const panel = root.querySelector(".v3d-panel"), tog = root.querySelector(".v3d-toggle");
+  editing = !!on; panel.hidden = !editing;
+  tog.setAttribute("aria-expanded", String(editing)); tog.textContent = editing ? "Done editing" : "Edit path";
+  if (!editing && hoverGhost) hoverGhost.visible = false;
+  needs = true; window.dispatchEvent(new CustomEvent("pc-path-edit", { detail: editing }));
 }
 function mount(container) {
   if (root || !container) return;
@@ -458,7 +466,7 @@ function layer(name) {
 }
 function capture(fn) { captures.push(fn); return () => { const i = captures.indexOf(fn); if (i >= 0) captures.splice(i, 1); }; }
 window.PC3D = {
-  mount, setState, active, reload, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE,
+  mount, setState, active, reload, editPath, get editing() { return editing; }, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE,
   get scene() { return scene; }, get camera() { return camera; }, get mounted() { return !!root; }, get isActive() { return isActive; },
   tableHit: (ev) => (renderer ? tableHit(ev) : null),
   get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); },
