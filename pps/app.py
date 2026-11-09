@@ -932,6 +932,8 @@ def dispatch(tasks, rt, c, cam):
         tasks.set_task(tid, a, "planning", "Compiling for UR5e.")
         r = compile_ur5e(pts)
         tasks.set_task(tid, a, "done" if r["ok"] else "failed", r["message"])
+    elif a == "drive":
+        tasks.drive(tid, c.get("dx", 0.0), c.get("dy", 0.0), c.get("dyaw", 0.0))
     elif a == "stop":
         tasks.stop(tid)
     elif a == "home":

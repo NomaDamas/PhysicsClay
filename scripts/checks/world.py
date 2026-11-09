@@ -47,6 +47,17 @@ async def run(t):
         d = moved(p0, pos("mug"))
         t.check(f"world: {r['id']} switches in and picks & places the mug", ok and res.get("status") == "done" and d and d > 0.05,
                 f"{res.get('status')}: {res.get('message', '')[:70]} (moved {round(d or 0, 3)} m)")
+        if "drive_base" in r.get("capabilities", []):
+            res = await t.task("drive", 3, dy=0.2)
+            if res.get("status") == "running":
+                res = await t.until_done(10)
+            t.check(f"world: {r['id']} drives its base", res.get("status") == "done" and "Drove" in res.get("message", ""),
+                    res.get("message", "")[:70])
+
+    w = await world(op="set", robot="h2")
+    res = await t.task("pick_place", 3, object="mug", target="center")
+    t.check("world: experimental body loads and says what it can't do", bool(w) and w["robot"].get("experimental") is True
+            and res.get("status") == "failed", res.get("message", "")[:80])
 
     w = await world(op="set", robot="panda", scene=KITCHEN)
     names = sorted(o["name"] for o in st().get("scene_objects") or [])

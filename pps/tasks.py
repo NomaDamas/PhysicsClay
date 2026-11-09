@@ -431,7 +431,8 @@ class Tasks:
         for palm, obj in self.holding.items():
             if obj in self.objs and self.grasp_off is not None:
                 d.mocap_pos[self.objs[obj]["mid"]] = d.site_xpos[rt.palm_sid[palm]] + self.grasp_off
-        active = (self.kind in ("task", "path") and rt.mode == "FOLLOW") or (self.kind == "skill" and rt.mode == "PREVIEW")
+        active = (self.kind in ("task", "path") and rt.mode == "FOLLOW") or (self.kind == "skill" and rt.mode == "PREVIEW") \
+            or (self.kind == "drive" and getattr(rt, "driving", False))
         if self.kind and not active:
             if self.task and self.task["status"] == "running":
                 self.set_task(self.task["id"], self.task["action"], "done", self.done_msg or "Done.")
@@ -667,10 +668,34 @@ class Tasks:
         self.done_msg = f"Finished '{key}'."
         self.set_task(tid, "play_skill", "running", f"Playing '{key}' at x{rt.speed_scale:.1f} speed.")
 
+    def drive(self, tid, dx=0.0, dy=0.0, dyaw=0.0):
+        """Mobile bases (drive_base): move the base by (dx, dy) m in the world frame and dyaw degrees."""
+        rt = self.rt
+        if "drive_base" not in getattr(rt, "capabilities", ()) or not hasattr(rt, "start_drive"):
+            self.set_task(tid, "drive", "failed", f"The {getattr(rt, 'label', 'robot')} has no base to drive.")
+            return
+        try:
+            dx, dy, dyaw = float(dx or 0), float(dy or 0), float(dyaw or 0)
+        except (TypeError, ValueError):
+            self.set_task(tid, "drive", "failed", "Say how far: dx / dy in metres, dyaw in degrees.")
+            return
+        if self.kind:
+            self.set_task(tid, "drive", "failed", "I'm still busy with the last task. Say stop first.")
+            return
+        ok, msg = rt.start_drive(dx, dy, dyaw)
+        if not ok:
+            self.set_task(tid, "drive", "failed", msg)
+            return
+        self.kind, self.done_msg = "drive", msg.replace("Driving", "Drove", 1).replace("Turning", "Turned", 1).replace("turning", "turned", 1)
+        self.set_task(tid, "drive", "running", msg)
+
     def stop(self, tid):
         rt = self.rt
         rt.engaged = False
         rt.mode = "MIRROR"
+        if getattr(rt, "drive_goal", None) is not None:
+            rt.drive_goal = None
+            rt.base_task.set_cost(np.zeros(rt.model.nv))
         if self.task and self.task.get("status") in ("running", "planning") and self.task.get("id") != tid:
             self.task["status"], self.task["message"] = "failed", "Stopped by you before it finished."
             self.stopped_task = dict(self.task)

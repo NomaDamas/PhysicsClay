@@ -49,6 +49,13 @@ def _down_quat(xmat, axis):
     return q
 
 
+def _direction(v):
+    x, y = float(v[0]), float(v[1])
+    if abs(x) >= abs(y):
+        return "forward" if x > 0 else "back"
+    return "to the left" if y > 0 else "to the right"
+
+
 class BodyRuntime(Runtime):
     def __init__(self, world, mirror=True):          # noqa: C901  (deliberately does not call Runtime.__init__)
         p, m = world.profile, world.model
@@ -103,6 +110,15 @@ class BodyRuntime(Runtime):
             dc = np.zeros(m.nv)
             dc[base_dofs] = p.base_cost
             self.tasks.append(mink.DampingTask(m, dc))
+        # explicit driving (drive_base): a posture task on the base joints only, switched on while a drive runs
+        self.base_dofs = base_dofs
+        self.base_joints = [m.joint(n).id for n in p.base_joints if n in [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j)
+                                                                             for j in range(m.njnt)]]
+        self.drive_goal = None
+        self.base_task = None
+        if self.base_joints:
+            self.base_task = mink.PostureTask(m, cost=np.zeros(m.nv))
+            self.tasks.append(self.base_task)
         self.limits = [mink.ConfigurationLimit(m)]
         pairs = self._collision_pairs(robot_bodies) if p.base != "legged" else []
         if pairs:
@@ -197,6 +213,11 @@ class BodyRuntime(Runtime):
             mink.move_mocap_to_frame(m, d, f"{f}_target", fname, typ)
         if self.com_mid is not None:
             d.mocap_pos[self.com_mid] = d.subtree_com[1]
+        if getattr(self, "base_task", None) is not None:
+            self.drive_goal = None
+            self.base_task.set_cost(np.zeros(m.nv))
+            self.base_task.set_target_from_configuration(self.configuration)
+            self.base_home = d.xpos[m.jnt_bodyid[self.base_joints[0]]].copy()
         for h in self.hands:
             sid = self.palm_sid[h]
             mid = self.hands_mid[h]
@@ -224,10 +245,92 @@ class BodyRuntime(Runtime):
             return
         super().handle_key(key)
 
+    # ------------------------------------------------------------------ drive
+    DRIVE_SPEED, TURN_SPEED, DRIVE_MAX = 0.25, 0.8, 0.6
+
+    def start_drive(self, dx=0.0, dy=0.0, dyaw_deg=0.0):
+        """Drive the base by (dx, dy) metres in the world and dyaw degrees. -> (ok, message). The arm targets ride along."""
+        m, d = self.model, self.data
+        if not self.base_joints:
+            return False, "I have no base to drive."
+        want = np.array([float(dx or 0.0), float(dy or 0.0), 0.0])
+        n = np.linalg.norm(want)
+        if n > self.DRIVE_MAX:
+            want *= self.DRIVE_MAX / n
+        bb = m.jnt_bodyid[self.base_joints[0]]
+        note = ""
+        slides = [d.xaxis[j] for j in self.base_joints if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_SLIDE]
+        if abs(want[0]) > 0.005 and not any(abs(ax[0]) > 0.3 for ax in slides):
+            want[0], note = 0.0, " My base only drives along the table, not towards it."
+        room_x = self.base_home[0] + 0.05 - d.xpos[bb][0]      # never into the table
+        if want[0] > room_x and want[0] > 0.005:
+            want[0], note = max(0.0, room_x), " I stop before the table."
+        lo, hi = self.base_home[1] - 0.6 - d.xpos[bb][1], self.base_home[1] + 0.6 - d.xpos[bb][1]
+        if not lo <= want[1] <= hi:
+            want[1], note = float(np.clip(want[1], lo, hi)), note + " I stay along the table."
+        yaw = np.radians(float(np.clip(float(dyaw_deg or 0.0), -90, 90)))
+        goal, got, turned = {}, np.zeros(3), 0.0
+        for j in self.base_joints:
+            adr = m.jnt_qposadr[j]
+            if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_SLIDE:
+                ax = d.xaxis[j].copy()
+                step = float(np.dot(want, ax))
+                goal[adr] = d.qpos[adr] + step
+                got += step * ax
+            elif m.jnt_type[j] == mujoco.mjtJoint.mjJNT_HINGE:
+                goal[adr] = d.qpos[adr] + yaw
+                turned = yaw
+        missing = float(np.linalg.norm(want - got))
+        if np.linalg.norm(got) < 0.005 and abs(turned) < 1e-3:
+            return False, (note.strip() or "My base can't move that way" + (" (it only drives along its own axis)." if missing > 0.005 else "."))
+        self.drive_goal = goal
+        cost = np.zeros(m.nv)
+        cost[self.base_dofs] = 20.0
+        self.base_task.set_cost(cost)
+        parts = []
+        if np.linalg.norm(got) >= 0.005:
+            parts.append(f"driving {np.linalg.norm(got) * 100:.0f} cm " + _direction(got))
+        if abs(turned) > 1e-3:
+            parts.append(f"turning {abs(np.degrees(turned)):.0f}° {'left' if turned > 0 else 'right'}")
+        msg = " and ".join(parts)
+        msg = msg[:1].upper() + msg[1:] + "." + note
+        if missing > 0.01:
+            msg += f" My base only drives along its own axis, so {missing * 100:.0f} cm of that is left out."
+        return True, msg
+
+    def _drive_tick(self, dt):
+        m, d = self.model, self.data
+        if self.drive_goal is None:
+            return
+        q = self.configuration.q.copy()
+        tgt = q.copy()
+        done = True
+        for j in self.base_joints:
+            adr = m.jnt_qposadr[j]
+            g = self.drive_goal[adr]
+            v = self.DRIVE_SPEED if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_SLIDE else self.TURN_SPEED
+            err = g - q[adr]
+            tgt[adr] = q[adr] + float(np.clip(err, -v * dt, v * dt))
+            done &= abs(err) < 0.004
+        if done:
+            self.drive_goal = None
+            self.base_task.set_cost(np.zeros(m.nv))
+            return
+        self.base_task.set_target(tgt)
+
+    @property
+    def driving(self):
+        return self.drive_goal is not None
+
     # ------------------------------------------------------------------- step
     def step(self, dt):
         d = self.data
         self.update_targets(dt)
+        ride = None
+        if self.drive_goal is not None:                  # the hand targets ride along with the base
+            bb = self.model.jnt_bodyid[self.base_joints[0]]
+            ride = (bb, d.xpos[bb].copy(), d.xmat[bb].reshape(3, 3).copy())
+            self._drive_tick(dt)
         if self.com_task is not None:
             self.com_task.set_target(d.mocap_pos[self.com_mid])
         for task, mid in zip(self.feet_tasks, self.feet_mid):
@@ -236,6 +339,17 @@ class BodyRuntime(Runtime):
             task.set_target(mink.SE3.from_mocap_id(d, self.hands_mid[h]))
         vel = mink.solve_ik(self.configuration, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
         self.configuration.integrate_inplace(vel, dt)
+        if ride is not None:
+            bb, p0, R0 = ride
+            p1, R1 = d.xpos[bb], d.xmat[bb].reshape(3, 3)
+            dR, dq = R1 @ R0.T, np.zeros(4)
+            mujoco.mju_mat2Quat(dq, dR.flatten())
+            for h in self.hands:
+                mid = self.hands_mid[h]
+                d.mocap_pos[mid] = p1 + dR @ (d.mocap_pos[mid] - p0)
+                q = np.zeros(4)
+                mujoco.mju_mulQuat(q, dq, d.mocap_quat[mid].copy())
+                d.mocap_quat[mid] = q
         mujoco.mj_camlight(self.model, d)
         targets = {h: d.mocap_pos[self.hands_mid[h]].copy() for h in self.hands}
         res = self.validator.evaluate(targets, vel)
