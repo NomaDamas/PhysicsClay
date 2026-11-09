@@ -584,6 +584,7 @@
   function teachHear(text) {
     const t = String(text).trim(), low = t.toLowerCase().replace(/[.!?。]+$/g, "").trim(), ph = teachPhase();
     if (!low) return false;
+    if (!window.dispatchEvent(new CustomEvent("pc-text", { detail: { text: t }, cancelable: true }))) return true; // web/ui modules hear every final utterance first
     if (ph === "recording") {
       if (TEACH_STOP.test(low)) { teachStop(); return true; }
       teachCmd("utterance", { text: t }); return true;
@@ -680,7 +681,7 @@
   // mock / scripted brain utterances: state.say = {id, text, kind: "robot"|"user"|"vision"}
   let lastSayId = null;
   function onSay() {
-    const sy = state.say; if (!sy || typeof sy !== "object" || sy.id == null || !sy.text) return;
+    const sy = state.say; if (!sy || typeof sy !== "object" || sy.id == null || !sy.text) { if (gotState && lastSayId === null) lastSayId = ""; return; } // nothing stale: the next line is new
     const id = String(sy.id); if (id === lastSayId) return;
     const first = lastSayId === null; lastSayId = id;
     if (first && !state.mock && !settings.mock && !state.demo) return; // stale line from before this page loaded

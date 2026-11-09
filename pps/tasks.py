@@ -56,6 +56,7 @@ class Tasks:
             self.obstacles[name] = {"pos": d.geom_xpos[vg].copy(), "r": float(max(sz[0], sz[1]) if box else sz[0]),
                                     "h": float(sz[2] if box else sz[1])}
         self.vase = self.obstacles.get("vase")
+        self.keepout = None      # keep-out zones hook (pps/features/zones.py): .at(p, r), .along(pts, events, palm), .route(kps, ev, palm)
         self.robot_root = m.body(ROBOT_BODIES_ROOT).id
         self.markers = []        # [{"id": "A", "pos": np.array}]
         self.next_marker = 0
@@ -204,7 +205,7 @@ class Tasks:
             for n, c, r in others:
                 if np.linalg.norm(np.asarray(p)[:2] - np.asarray(c)[:2]) < r + r_me + 0.01:
                     return n
-            return None
+            return self.keepout.at(p, r_me) if self.keepout else None
 
         who = blocker_at(dest)
         if who is None:
@@ -263,6 +264,15 @@ class Tasks:
             self.set_task(tid, action, "failed",
                           f"I can't carry it that way: {self.pretty(self.cur)} would hit {self.pretty(self.hit_obstacle)} ({hit[0]:.0f} cm too low). "
                           "Draw a route over the vase in 3D, then say 'carry it along my path'.")
+            return False
+        zs = self.keepout.along(pts, {idx_map[k]: n for k, n in events.items()}, palm) if self.keepout else None
+        if zs and any(zs):
+            zone, who = next(z for z in zs if z)
+            ok = [o and not z for o, z in zip(ok, zs)]
+            rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
+            self.kind, self.fail_reason = None, "zone"
+            self.set_task(tid, action, "failed", (f"I can't: my {side} hand would enter {zone}." if who == "hand" else
+                          f"I can't carry it that way: {who} would pass through {zone}.") + " Draw a route around it in 3D, or remove the zone.")
             return False
         rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
         rt.path_msg = None
@@ -396,6 +406,9 @@ class Tasks:
         kps += [place_hand + np.array([0, 0, 0.12]), place_hand]
         ev[len(kps) - 1] = "release"
         kps += [place_hand + np.array([-0.10, 0, 0.07]), self.home_palm[palm]]
+        if via is None and self.keepout:   # keep-out zones: detour around or over them (adds e.g. ", going around zone A")
+            kps, ev, note = self.keepout.route(kps, ev, palm)
+            label += note
         side = "right" if palm.startswith("right") else "left"
         what = self.pretty(name)
         self.done_msg = f"Placed {what} on {label}."
@@ -458,6 +471,11 @@ class Tasks:
         bad = sum(1 for o in ok if not o)
         self.rt.path_msg = (f"{side.capitalize()} hand path: {len(pts)} waypoints, all reachable. Say 'go' or press F."
                             if bad == 0 else f"{side.capitalize()} hand path: {bad}/{len(pts)} waypoints out of reach (red).")
+        zs = self.keepout.along(pts, {}, palm) if self.keepout else None
+        if zs and any(zs):   # waypoints inside a keep-out zone are not ok either
+            self.rt.path["ok"] = [o and not z for o, z in zip(ok, zs)]
+            self.rt.path["why"] = f"Part of that path goes through {next(z for z in zs if z)[0]} (red). Redraw it around."
+            self.rt.path_msg = f"{side.capitalize()} hand path: {sum(1 for z in zs if z)}/{len(pts)} waypoints inside {next(z for z in zs if z)[0]} (red)."
 
     def follow_path(self, tid):
         rt = self.rt
@@ -465,7 +483,7 @@ class Tasks:
             self.set_task(tid, "follow_path", "failed", "There is no path yet. Draw one on my view.")
             return
         if not all(rt.path["ok"]):
-            self.set_task(tid, "follow_path", "failed", "Part of that path is out of my reach (red). Redraw it closer.")
+            self.set_task(tid, "follow_path", "failed", rt.path.get("why") or "Part of that path is out of my reach (red). Redraw it closer.")
             return
         self.events, self.fired, self.kind = {}, set(), "path"
         rt.engaged, rt.mode, rt.follow_s, rt.path["i"] = False, "FOLLOW", 0.0, 0
