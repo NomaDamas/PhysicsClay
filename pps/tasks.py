@@ -2,6 +2,7 @@
 (the physics verdict), then executed; the robot reports in one sentence what it will do or why it can't."""
 import json
 import os
+import sys
 import time
 
 import mujoco
@@ -17,8 +18,37 @@ REGIONS = {  # robot frame: x forward, y left
     "front": (0.27, 0.0), "back": (0.66, 0.0),
 }
 HOVER = 0.08
+SURFACE = "table"        # what the work surface is called (pps.world templates: counter, shelf, floor mat)
 SKILL_DIR = ROOT / "recordings" / "skills"
 ROBOT_BODIES_ROOT = "pelvis"
+LEGACY_OBJS = (("mug", "mug_collision", "cyl"), ("red_block", "red_block_collision", "box"), ("green_block", "green_block_collision", "box"))
+LEGACY_OBSTACLES = (("vase", "vase_collision"), ("blue_block", "blue_block_collision"))
+LEGACY_KEYS = {"mug": ("mug", "cup", "컵", "머그"), "red_block": ("red", "빨간"), "green_block": ("green", "초록", "녹색"), "blue_block": ("blue", "파란"),
+               "vase": ("vase", "꽃병", "화병")}
+# words people use -> what they mean (object kinds and colours of scenes built on the fly)
+WORDS = {"cup": ("cup", "컵", "잔"), "mug": ("mug", "머그", "컵"), "block": ("block", "cube", "블록", "큐브"), "box": ("box", "상자", "박스"),
+         "bowl": ("bowl", "그릇"), "bottle": ("bottle", "병"), "can": ("can", "캔"), "plate": ("plate", "dish", "접시"),
+         "fruit": ("fruit", "apple", "과일", "사과"), "vase": ("vase", "꽃병", "화병"),
+         "red": ("red", "빨간"), "green": ("green", "초록", "녹색"), "blue": ("blue", "파란"), "yellow": ("yellow", "노란"),
+         "orange": ("orange", "주황"), "purple": ("purple", "보라"), "white": ("white", "흰", "하얀"), "black": ("black", "검은"),
+         "pink": ("pink", "분홍")}
+
+
+def apply_surface(surface, regions):
+    """The world changed (pps.world): move the work surface. Feature modules imported TABLE_TOP & co. by value, so the
+    new values are pushed into every pps.* module that holds them (REGIONS is updated in place)."""
+    global TABLE_TOP, TABLE_X, TABLE_Y, SURFACE
+    TABLE_TOP, TABLE_X, TABLE_Y = float(surface["top"]), tuple(surface["x"]), tuple(surface["y"])
+    SURFACE = {"kitchen": "counter", "shelf": "shelf", "floor": "floor mat"}.get(surface.get("template"), "table")
+    REGIONS.clear()
+    REGIONS.update({k: tuple(v) for k, v in regions.items()})
+    me = sys.modules[__name__]
+    for mod in list(sys.modules.values()):
+        if mod is me or not getattr(mod, "__name__", "").startswith("pps."):
+            continue
+        for k, v in (("TABLE_TOP", TABLE_TOP), ("TABLE_X", TABLE_X), ("TABLE_Y", TABLE_Y)):
+            if k in vars(mod):
+                setattr(mod, k, v)
 
 
 def densify(pts, step=0.035):
@@ -31,23 +61,25 @@ def densify(pts, step=0.035):
 
 
 class Tasks:
-    def __init__(self, rt):
+    def __init__(self, rt, kinds=None):
+        """kinds: {object name: kind} from the world spec (scenes built on the fly), used to understand 'the cup'."""
         self.rt = rt
         m, d = rt.model, rt.data
+        self.hands = list(getattr(rt, "hands", HANDS))
+        self.kinds = dict(kinds or {})
         self.objs = {}
-        for name, geom, kind in (("mug", "mug_collision", "cyl"), ("red_block", "red_block_collision", "box"),
-                                 ("green_block", "green_block_collision", "box")):
+        self.legacy = False
+        for name, geom, kind in LEGACY_OBJS:          # the UX 2.0 scene (scene_pc.xml)
             try:
                 mid, g = m.body(name).mocapid[0], m.geom(geom).id
             except KeyError:
                 continue
+            self.legacy = True
             size = m.geom_size[g]
             self.objs[name] = {"mid": mid, "home": d.mocap_pos[mid].copy(), "off": m.geom_pos[g].copy(),
                                "r": float(size[0]), "half_h": float(size[1] if kind == "cyl" else size[2])}
-        self.cur = "mug"
-        self.home_palm = {h: d.site_xpos[rt.palm_sid[h]].copy() for h in HANDS}
         self.obstacles = {}
-        for name, geom in (("vase", "vase_collision"), ("blue_block", "blue_block_collision")):
+        for name, geom in LEGACY_OBSTACLES:
             try:
                 vg = m.geom(geom).id
             except KeyError:
@@ -56,12 +88,32 @@ class Tasks:
             box = m.geom_type[vg] == mujoco.mjtGeom.mjGEOM_BOX
             self.obstacles[name] = {"pos": d.geom_xpos[vg].copy(), "r": float(max(sz[0], sz[1]) if box else sz[0]),
                                     "h": float(sz[2] if box else sz[1])}
-        self.vase = self.obstacles.get("vase")
+        for b in range(1, m.nbody):                   # scenes built on the fly: obj_<name> (mocap) / obs_<name> (fixed)
+            bname = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or ""
+            if not bname.startswith(("obj_", "obs_")):
+                continue
+            try:
+                g = m.geom(f"{bname}_collision").id
+            except KeyError:
+                continue
+            sz = m.geom_size[g]
+            box = m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
+            r, hh = float(max(sz[0], sz[1]) if box else sz[0]), float(sz[2] if box else sz[1])
+            if bname.startswith("obj_") and m.body_mocapid[b] >= 0:
+                mid = m.body_mocapid[b]
+                self.objs[bname[4:]] = {"mid": mid, "home": d.mocap_pos[mid].copy(), "off": m.geom_pos[g].copy(), "r": r, "half_h": hh}
+            else:
+                self.obstacles[bname[4:]] = {"pos": d.geom_xpos[g].copy(), "r": r, "h": hh}
+        self.cur = "mug" if ("mug" in self.objs or not self.objs) else next(iter(self.objs))
+        self.home_palm = {h: d.site_xpos[rt.palm_sid[h]].copy() for h in self.hands}
+        self.vase = self.obstacles.get("vase") or (next(iter(self.obstacles.values())) if self.obstacles else None)
         self.keepout = None      # keep-out zones hook (pps/features/zones.py): .at(p, r), .along(pts, events, palm), .route(kps, ev, palm)
-        self.robot_root = m.body(ROBOT_BODIES_ROOT).id
+        roots = getattr(rt, "robot_roots", None)
+        self.robot_roots = set(roots) if roots else {m.body(ROBOT_BODIES_ROOT).id}
+        self.robot_root = min(self.robot_roots)
         self.markers = []        # [{"id": "A", "pos": np.array}]
         self.next_marker = 0
-        self.holding = {"left_palm": None, "right_palm": None}
+        self.holding = {h: None for h in reversed(self.hands)}
         self.grasp_off = None
         self.task = None         # {"id","action","status","message","step"}
         self.events = {}         # waypoint index -> event name
@@ -87,7 +139,56 @@ class Tasks:
         o = self.objs[name or self.cur]
         return self.rt.data.mocap_pos[o["mid"]] + o["off"]
 
+    def limb(self, side, what="hand"):
+        """'right hand' / 'left arm' on two-armed bodies, 'gripper' / 'arm' on single arms."""
+        if len(self.hands) > 1:
+            return f"{side} {what}"
+        return "gripper" if what == "hand" else "arm"
+
+    def hand_for(self, p):
+        """Which end effector handles a point: by side for two-armed bodies, the only one otherwise."""
+        if len(self.hands) == 1:
+            return self.hands[0]
+        return "right_palm" if p[1] <= 0 else "left_palm"
+
+    def keys_for(self, name):
+        """Words that name an object or obstacle."""
+        if self.legacy and name in LEGACY_KEYS:
+            return LEGACY_KEYS[name]
+        toks = [w for w in name.split("_") if w and not w.isdigit()]
+        keys = [name.replace("_", " ")] + toks
+        for w in toks + [self.kinds.get(name, "")]:
+            keys += list(WORDS.get(w, ()))
+        return tuple(dict.fromkeys(k for k in keys if k))
+
+    def _match(self, text):
+        """-> (movable object | None, fixed obstacle | None) that best fits the words (scenes built on the fly)."""
+        t = str(text or "").lower().strip()
+        if not t:
+            return (self.cur if self.cur in self.objs else next(iter(self.objs), None)), None
+        best, bscore, fixed = None, 0, False
+        for pool, is_fixed in ((self.objs, False), (self.obstacles, True)):
+            for n in pool:
+                score = 10 if (n.replace("_", " ") in t or n in t) else 0
+                kind_words = WORDS.get(self.kinds.get(n, ""), ())
+                for k in self.keys_for(n)[1:]:
+                    if k in t:
+                        score += 3 if k in kind_words else 2
+                if score > bscore:
+                    best, bscore, fixed = n, score, is_fixed
+        if best is None:
+            return None, None
+        return (None, best) if fixed else (best, None)
+
+    def movable_list(self):
+        names = [self.pretty(n) for n in self.objs]
+        if not names:
+            return "nothing here"
+        return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " or " + names[-1]
+
     def obj_name(self, text):
+        if not self.legacy:
+            return self._match(text)[0]
         t = str(text or "").lower()
         if any(k in t for k in ("blue", "파란", "vase", "꽃병", "화병")):
             return None
@@ -102,7 +203,7 @@ class Tasks:
     @staticmethod
     def pretty(name):
         return {"mug": "the mug", "red_block": "the red block", "green_block": "the green block", "blue_block": "the blue block",
-                "vase": "the vase"}.get(name, name)
+                "vase": "the vase"}.get(name, ("the " + str(name).replace("_", " ")) if name else name)
 
     def raycast(self, cam, u, v, aspect):
         """cam = (pos, forward, up, fovy_deg). Returns world hit point or None (ignores the robot and ghosts)."""
@@ -122,7 +223,7 @@ class Tasks:
                 return None
             hit = pnt + vec * dist
             body = m.geom_bodyid[gid[0]]
-            if m.body_rootid[body] == self.robot_root:
+            if m.body_rootid[body] in self.robot_roots:
                 pnt, exclude = hit + vec * 1e-3, body
                 continue
             return hit
@@ -175,11 +276,14 @@ class Tasks:
                     return mk["pos"].copy(), f"marker {mk['id']}"
             for name, (x, y) in REGIONS.items():
                 if name in t:
-                    return np.array([x, y, TABLE_TOP]), f"the {name} of the table"
+                    return np.array([x, y, TABLE_TOP]), f"the {name} of the {SURFACE}"
             near = any(k in t for k in ("next to", "beside", "near", "옆"))
-            for oname in list(self.objs) + list(self.obstacles):
-                keys = {"mug": ("mug", "cup", "컵", "머그"), "red_block": ("red", "빨간"), "green_block": ("green", "초록", "녹색"), "blue_block": ("blue", "파란"),
-                        "vase": ("vase", "꽃병", "화병")}[oname]
+            order = list(self.objs) + list(self.obstacles)
+            if not self.legacy:   # best match first, so 'next to the red cup' doesn't stop at another cup
+                best = [x for x in self._match(t) if x]
+                order = best + [n for n in order if n not in best]
+            for oname in order:
+                keys = self.keys_for(oname)
                 if any(k in t for k in keys):
                     c = self.mug_center(oname) if oname in self.objs else self.obstacles[oname]["pos"]
                     if near:
@@ -255,7 +359,7 @@ class Tasks:
             rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
             rt.path_msg = None
             self.kind = None
-            msg = f"I can't: {sum(1 for o in ok if not o)} of {len(ok)} waypoints are out of my {side} arm's reach, worst by {short:.0f} cm."
+            msg = f"I can't: {sum(1 for o in ok if not o)} of {len(ok)} waypoints are out of my {self.limb(side, 'arm')}'s reach, worst by {short:.0f} cm."
             self.set_task(tid, action, "failed", msg)
             return False
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
@@ -265,9 +369,10 @@ class Tasks:
             rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
             self.kind = None
             self.fail_reason = "vase"
+            over = "the vase" if self.legacy else self.pretty(self.hit_obstacle)
             self.set_task(tid, action, "failed",
                           f"I can't carry it that way: {self.pretty(self.cur)} would hit {self.pretty(self.hit_obstacle)} ({hit[0]:.0f} cm too low). "
-                          "Draw a route over the vase in 3D, then say 'carry it along my path'.")
+                          f"Draw a route over {over} in 3D, then say 'carry it along my path'.")
             return False
         zs = self.keepout.along(pts, {idx_map[k]: n for k, n in events.items()}, palm) if self.keepout else None
         if zs and any(zs):
@@ -275,7 +380,7 @@ class Tasks:
             ok = [o and not z for o, z in zip(ok, zs)]
             rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
             self.kind, self.fail_reason = None, "zone"
-            self.set_task(tid, action, "failed", (f"I can't: my {side} hand would enter {zone}." if who == "hand" else
+            self.set_task(tid, action, "failed", (f"I can't: my {self.limb(side)} would enter {zone}." if who == "hand" else
                           f"I can't carry it that way: {who} would pass through {zone}.") + " Draw a route around it in 3D, or remove the zone.")
             return False
         rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
@@ -352,8 +457,21 @@ class Tasks:
                 self.task["step"] = "placed"
 
     # ------------------------------------------------------------------ actions
-    def pick_place(self, tid, obj, target, target_uv, cam, aspect, via_pts=None, grasp="side"):
+    def pick_place(self, tid, obj, target, target_uv, cam, aspect, via_pts=None, grasp=None):
+        caps = getattr(self.rt, "capabilities", None)
+        if caps is not None and "pick_place" not in caps:
+            prof = getattr(self.rt, "profile", None)
+            self.set_task(tid, "pick_place", "failed", "I can't pick things up with this body. " + (getattr(prof, "note", "") or ""))
+            return
+        grasp = grasp or getattr(getattr(self.rt, "profile", None), "grasp", "side")
         name = self.obj_name(obj)
+        if name is None and not self.legacy:
+            fixed = self._match(obj)[1]
+            if fixed:
+                self.set_task(tid, "pick_place", "failed", f"{self.pretty(fixed).capitalize()} is fixed in this scene; I can move {self.movable_list()}.")
+            else:
+                self.set_task(tid, "pick_place", "failed", f"I don't see '{obj}'. I can move {self.movable_list()}.")
+            return
         if name is None:
             if any(k in str(obj).lower() for k in ("blue", "파란", "vase", "꽃병", "화병")):
                 self.set_task(tid, "pick_place", "failed", f"{self.pretty('blue_block' if 'blu' in str(obj).lower() or '파란' in str(obj) else 'vase').capitalize()} is fixed in this scene; I can move the mug or the red block.")
@@ -379,7 +497,7 @@ class Tasks:
             self.set_task(tid, "pick_place", "failed", label[0].upper() + label[1:] + ".")
             return
         if not self.on_table(dest):
-            self.set_task(tid, "pick_place", "failed", f"I can't place it there: {label} is not on the table.")
+            self.set_task(tid, "pick_place", "failed", f"I can't place it there: {label} is not on the {SURFACE}.")
             return
         if via is None:
             free, blocker = self.free_spot(dest, name)
@@ -390,7 +508,7 @@ class Tasks:
                 dest, label = free, f"{label} (beside {self.pretty(blocker)}, which is there)"
         held = next((h for h, o in self.holding.items() if o == name), None)
         c = self.mug_center()
-        palm = held or ("right_palm" if c[1] <= 0 else "left_palm")
+        palm = held or self.hand_for(c)
         d = self.rt.data
         cur = d.site_xpos[self.rt.palm_sid[palm]].copy()
         off = np.array([0.0, 0.0, self.mug_half_h + 0.035]) if grasp == "top" else np.array([-(self.mug_r + 0.015), 0.0, 0.01])
@@ -417,7 +535,7 @@ class Tasks:
         what = self.pretty(name)
         self.done_msg = f"Placed {what} on {label}."
         ok = self._launch(tid, "pick_place", kps, palm, ev, "task",
-                          f"Every waypoint is reachable. Picking up {what} with my {side} hand and placing it on {label}.")
+                          f"Every waypoint is reachable. Picking up {what} with my {self.limb(side)} and placing it on {label}.")
         if not ok and getattr(self, "fail_reason", "reach") == "reach" and via is None:
             self.suggest(tid, dest, palm, off)
         self.fail_reason = "reach"
@@ -446,7 +564,7 @@ class Tasks:
         if dest is None:
             self.set_task(tid, "reach", "failed", label[0].upper() + label[1:] + ".")
             return
-        palm = "right_palm" if dest[1] <= 0 else "left_palm"
+        palm = self.hand_for(dest)
         cur = self.rt.data.site_xpos[self.rt.palm_sid[palm]].copy()
         self.done_msg = f"My hand is over {label}."
         self._launch(tid, "reach", [cur, np.array([dest[0], dest[1], dest[2] + HOVER + 0.04])], palm, {}, "task",
@@ -466,20 +584,22 @@ class Tasks:
         if len(pts) < 2:
             self.rt.path_msg = "A path needs at least two waypoints."
             return
-        palm = {"left": "left_palm", "right": "right_palm"}.get(hand) or ("right_palm" if np.mean([p[1] for p in pts]) <= 0 else "left_palm")
+        palm = {"left": "left_palm", "right": "right_palm"}.get(hand)
+        if palm not in self.hands:
+            palm = self.hand_for([0.0, float(np.mean([p[1] for p in pts]))])
         pts = densify(pts, 0.04)
         ok = self.rt.precheck(pts, palm)
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         side = "right" if palm.startswith("right") else "left"
         self.rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
         bad = sum(1 for o in ok if not o)
-        self.rt.path_msg = (f"{side.capitalize()} hand path: {len(pts)} waypoints, all reachable. Say 'go' or press F."
-                            if bad == 0 else f"{side.capitalize()} hand path: {bad}/{len(pts)} waypoints out of reach (red).")
+        self.rt.path_msg = (f"{self.limb(side).capitalize()} path: {len(pts)} waypoints, all reachable. Say 'go' or press F."
+                            if bad == 0 else f"{self.limb(side).capitalize()} path: {bad}/{len(pts)} waypoints out of reach (red).")
         zs = self.keepout.along(pts, {}, palm) if self.keepout else None
         if zs and any(zs):   # waypoints inside a keep-out zone are not ok either
             self.rt.path["ok"] = [o and not z for o, z in zip(ok, zs)]
             self.rt.path["why"] = f"Part of that path goes through {next(z for z in zs if z)[0]} (red). Redraw it around."
-            self.rt.path_msg = f"{side.capitalize()} hand path: {sum(1 for z in zs if z)}/{len(pts)} waypoints inside {next(z for z in zs if z)[0]} (red)."
+            self.rt.path_msg = f"{self.limb(side).capitalize()} path: {sum(1 for z in zs if z)}/{len(pts)} waypoints inside {next(z for z in zs if z)[0]} (red)."
 
     def follow_path(self, tid):
         rt = self.rt
@@ -493,7 +613,7 @@ class Tasks:
         rt.engaged, rt.mode, rt.follow_s, rt.path["i"] = False, "FOLLOW", 0.0, 0
         rt.recorder.start()
         self.done_msg = "Finished the path."
-        self.set_task(tid, "follow_path", "running", f"Following your path with my {rt.path['hand']} hand.")
+        self.set_task(tid, "follow_path", "running", f"Following your path with my {self.limb(rt.path['hand'])}.")
 
     def follow_me(self, tid, enabled):
         rt = self.rt
@@ -525,7 +645,7 @@ class Tasks:
             return
         rep = rt.recorder.report()
         with open(SKILL_DIR / f"{name}.json", "w") as f:
-            json.dump({"name": name, "robot": "unitree_g1", "created": time.time(), "frames": frames, "report": rep}, f)
+            json.dump({"name": name, "robot": "unitree_g1" if getattr(rt, "profile_id", "g1") == "g1" else rt.profile_id, "created": time.time(), "frames": frames, "report": rep}, f)
         self.set_task(tid, "learn_skill", "done",
                       f"Learned '{name}': {frames[-1]['t']:.1f} s, {rep['feasible_fraction'] * 100:.0f}% feasible.")
 

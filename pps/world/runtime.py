@@ -1,0 +1,258 @@
+"""Runtime for any robot body (arms, two-arm rigs, mobile manipulators, legged bodies) built by pps.world.scene.
+
+Same interface as the G1 Runtime (pps/robot_runtime.py), so tasks / app / features work unchanged:
+end-effector FrameTasks (keyed "right_palm" / "left_palm" by role) + PostureTask + ConfigurationLimit
+(+ arm-vs-table collision avoidance), legged bodies add feet / CoM / root tasks, mobile bases include their base
+joints in the IK with a damping cost so the arm moves first and the base drives only when it has to.
+Mirroring a person (follow me), whole-body retargeting and skill recording are G1 features: here they are no-ops.
+"""
+import mink
+import mujoco
+import numpy as np
+
+from ..ir import IntentRecorder
+from ..robot_runtime import Runtime
+from .validate import BodyValidator
+
+
+class NullRetargeter:
+    """Stands in for the human->robot retargeter on bodies that don't mirror a person."""
+
+    def __init__(self, shoulders):
+        self.mirror = True
+        self.robot_shoulders = shoulders
+
+    def reset(self):
+        pass
+
+    def targets(self, lm):
+        return {}
+
+    def map_point(self, pt, hand, lm):
+        return None, None
+
+
+def _down_quat(xmat, axis):
+    """Orientation (wxyz) that turns the site's approach axis straight down, keeping its heading."""
+    R = np.asarray(xmat, float).reshape(3, 3)
+    a = R @ np.asarray(axis, float)
+    a /= np.linalg.norm(a)
+    down = np.array([0.0, 0.0, -1.0])
+    v, c = np.cross(a, down), float(np.dot(a, down))
+    if np.linalg.norm(v) < 1e-9:
+        Ra = np.eye(3) if c > 0 else np.diag([1.0, -1.0, -1.0])
+    else:
+        vx = np.array([[0, -v[2], v[1]], [v[2], 0, -v[0]], [-v[1], v[0], 0]])
+        Ra = np.eye(3) + vx + vx @ vx * (1 / (1 + c))
+    q = np.zeros(4)
+    mujoco.mju_mat2Quat(q, (Ra @ R).flatten())
+    return q
+
+
+class BodyRuntime(Runtime):
+    def __init__(self, world, mirror=True):          # noqa: C901  (deliberately does not call Runtime.__init__)
+        p, m = world.profile, world.model
+        self.profile, self.profile_id, self.capabilities = p, p.id, tuple(p.capabilities)
+        self.model = m
+        self.home_q = None if world.home_q is None else np.asarray(world.home_q, float).copy()
+        self.configuration = mink.Configuration(m)
+        self.data = d = self.configuration.data
+        self.hands = [f"{r}_palm" for r in p.ee]
+        self.ee_site = {f"{r}_palm": s for r, s in p.ee.items()}
+        self.robot_roots = world.robot_roots
+        robot_bodies = world.robot_bodies
+
+        # ---- joints: frozen (fingers, heads, wheels), base (mobile), free (legged)
+        frozen_dofs, base_dofs, free_dofs, arm_joints = [], [], [], []
+        for j in range(m.njnt):
+            name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j) or ""
+            if m.jnt_bodyid[j] not in robot_bodies:
+                continue
+            dof, jt = m.jnt_dofadr[j], m.jnt_type[j]
+            if jt == mujoco.mjtJoint.mjJNT_FREE:
+                free_dofs += list(range(dof, dof + 6))
+            elif name in p.base_joints:
+                base_dofs.append(dof)
+            elif any(f in name for f in p.freeze):
+                frozen_dofs.append(dof)
+            else:
+                arm_joints.append(name)
+        cost = np.full(m.nv, 5e-2 if p.base == "legged" else 1e-2)
+        cost[frozen_dofs] = 50.0
+        cost[base_dofs] = 0.0
+        self.posture_task = mink.PostureTask(m, cost=cost)
+        pc, oc = p.hand_cost
+        self.hand_tasks = [mink.FrameTask(self.ee_site[h], "site", position_cost=pc, orientation_cost=oc, lm_damping=1.0)
+                           for h in self.hands]
+        self.tasks = [self.posture_task, *self.hand_tasks]
+        self.feet = [f for f, _ in p.feet]
+        self.feet_tasks, self.com_task, self.root_task, self.torso_task = [], None, None, None
+        if p.base == "legged":
+            quad = len(self.feet) == 4
+            self.root_task = mink.FrameTask(p.root, "body", position_cost=1.0 if quad else 0.0, orientation_cost=1.0, lm_damping=1.0)
+            self.feet_tasks = [mink.FrameTask(f, typ, position_cost=10.0, orientation_cost=0.0 if quad else 1.0, lm_damping=1.0)
+                               for f, typ in p.feet]
+            self.tasks += [self.root_task, *self.feet_tasks]
+            if p.torso:
+                self.torso_task = mink.FrameTask(p.torso, "body", position_cost=0.0, orientation_cost=1.0, lm_damping=1.0)
+                self.tasks.append(self.torso_task)
+            if not quad:
+                self.com_task = mink.ComTask(cost=10.0)
+                self.tasks.append(self.com_task)
+        if base_dofs and p.base_cost > 0:
+            dc = np.zeros(m.nv)
+            dc[base_dofs] = p.base_cost
+            self.tasks.append(mink.DampingTask(m, dc))
+        self.limits = [mink.ConfigurationLimit(m)]
+        pairs = self._collision_pairs(robot_bodies) if p.base != "legged" else []
+        if pairs:
+            self.limits.append(mink.CollisionAvoidanceLimit(model=m, geom_pairs=pairs, minimum_distance_from_collisions=0.005,
+                                                            collision_detection_distance=0.06))
+        self.hands_mid = {h: m.body(f"{h}_target").mocapid[0] for h in self.hands}
+        self.palm_sid = {h: m.site(self.ee_site[h]).id for h in self.hands}
+        self.feet_mid = [m.body(f"{f}_target").mocapid[0] for f in self.feet]
+        self.com_mid = m.body("com_target").mocapid[0] if self.com_task is not None else None
+        self.root_bid = m.body(p.root).id if p.root else None
+        self.home()
+
+        # arm "shoulders": the first moving body of each arm chain (used to suggest a nearer spot)
+        shoulders = {}
+        for h in self.hands:
+            b = m.site_bodyid[self.palm_sid[h]]
+            chain = []
+            while b != 0 and b in robot_bodies:
+                chain.append(b)
+                b = m.body_parentid[b]
+            arm = [c for c in chain if m.body_jntnum[c] > 0 and not any(
+                m.jnt_type[m.body_jntadr[c] + k] == mujoco.mjtJoint.mjJNT_FREE or
+                (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, m.body_jntadr[c] + k) or "") in p.base_joints
+                for k in range(m.body_jntnum[c]))]
+            shoulders[h] = d.xpos[arm[-1] if arm else chain[-1]].copy()
+        self.retargeter = NullRetargeter(shoulders)
+        self.body_rt = None
+        self.body_home = {"com": None if self.com_mid is None else d.mocap_pos[self.com_mid].copy(),
+                          "feet": {f: d.mocap_pos[mid].copy() for f, mid in zip(self.feet, self.feet_mid)}, "torso": None}
+        self.body_now = None
+        self.validator = BodyValidator(m, d, self.palm_sid, arm_joints, pairs,
+                                       feet=[(f, t) for f, t in p.feet] if p.base == "legged" else [],
+                                       root_body=self.root_bid or 1, reach_tol=p.reach_tol)
+        names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(m.njnt)]
+        self.recorder = IntentRecorder(p.id, names, mirror)
+
+        self.mode = "MIRROR"
+        self.engaged = False
+        self.hold = False
+        self.speed_scale = 1.0
+        self.last_lm = None
+        self.last_grip = {"l": 0, "r": 0}
+        self.last_context = {}
+        self.new_pose = False
+        self.saved = None
+        self.preview_t = 0.0
+        self.preview_idx = 0
+        self.path = None
+        self.follow_s = 0.0
+        self.follow_speed = 0.3
+        self.path_msg = None
+        self.last_result = {"flags": {}, "messages": [], "feasibility": 1.0, "speed_scale": 1.0, "residuals": {}}
+
+        self.default_rgba = m.geom_rgba.copy()
+        visual = [g for g in range(m.ngeom) if m.geom_group[g] in (0, 1, 2) and m.geom_bodyid[g] in robot_bodies]
+        self.joint_body = {n: m.jnt_bodyid[m.joint(n).id] for n in arm_joints}
+        self.body_geoms = {b: [g for g in visual if m.geom_bodyid[g] == b] for b in range(m.nbody)}
+        self.target_geoms = {h: [g for g in range(m.ngeom) if m.geom_bodyid[g] == m.body(f"{h}_target").id] for h in self.hands}
+
+    def _collision_pairs(self, robot_bodies):
+        """Collision geoms on the last links of each arm vs the work surface (cheap: a handful of pairs)."""
+        m = self.model
+        try:
+            table = m.geom("table").id
+        except KeyError:
+            return []
+        out = []
+        for h in self.hands:
+            b, links = m.site_bodyid[m.site(self.ee_site[h]).id], []
+            while b != 0 and b in robot_bodies and len(links) < 4:
+                links.append(b)
+                b = m.body_parentid[b]
+            geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] in links and m.geom_group[g] == 3
+                     and (m.geom_contype[g] or m.geom_conaffinity[g])]
+            if geoms:
+                out.append((geoms, [table]))
+        return out
+
+    # ------------------------------------------------------------------ setup
+    def home(self):
+        m, d, p = self.model, self.data, self.profile
+        if self.home_q is not None:
+            self.configuration.update(self.home_q.copy())
+        else:
+            self.configuration.update(m.qpos0.copy())
+        self.posture_task.set_target_from_configuration(self.configuration)
+        if self.root_task is not None:
+            self.root_task.set_target_from_configuration(self.configuration)
+        if self.torso_task is not None:
+            self.torso_task.set_target_from_configuration(self.configuration)
+        for f, (fname, typ) in zip(self.feet, p.feet):
+            mink.move_mocap_to_frame(m, d, f"{f}_target", fname, typ)
+        if self.com_mid is not None:
+            d.mocap_pos[self.com_mid] = d.subtree_com[1]
+        for h in self.hands:
+            sid = self.palm_sid[h]
+            mid = self.hands_mid[h]
+            d.mocap_pos[mid] = d.site_xpos[sid]
+            if p.ee_down:
+                d.mocap_quat[mid] = _down_quat(d.site_xmat[sid], p.ee_axis)
+            else:
+                mujoco.mju_mat2Quat(d.mocap_quat[mid], d.site_xmat[sid])
+        self.body_now = None
+
+    # whole-body mirroring is a G1 feature
+    def update_targets(self, dt):
+        if self.mode in ("MIRROR", "REC"):
+            return                      # nothing to mirror: targets stay where the task layer (or a drag) left them
+        super().update_targets(dt)
+
+    def apply_body(self, b):
+        self.body_now = None
+
+    def apply_body_frame(self, bf):
+        self.body_now = None
+
+    def handle_key(self, key):
+        if key in ("R", "M"):          # recording a mirrored motion / mirror toggle: G1 only
+            return
+        super().handle_key(key)
+
+    # ------------------------------------------------------------------- step
+    def step(self, dt):
+        d = self.data
+        self.update_targets(dt)
+        if self.com_task is not None:
+            self.com_task.set_target(d.mocap_pos[self.com_mid])
+        for task, mid in zip(self.feet_tasks, self.feet_mid):
+            task.set_target(mink.SE3.from_mocap_id(d, mid))
+        for task, h in zip(self.hand_tasks, self.hands):
+            task.set_target(mink.SE3.from_mocap_id(d, self.hands_mid[h]))
+        vel = mink.solve_ik(self.configuration, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
+        self.configuration.integrate_inplace(vel, dt)
+        mujoco.mj_camlight(self.model, d)
+        targets = {h: d.mocap_pos[self.hands_mid[h]].copy() for h in self.hands}
+        res = self.validator.evaluate(targets, vel)
+        if self.mode == "FOLLOW":
+            self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"],
+                              {"source": "drawn_path"})
+        self.new_pose = False
+        self.last_result = res
+        return res
+
+
+def make_runtime(world, mirror=True):
+    """World (pps.world.scene.build) -> runtime. The G1 keeps its own runtime (mirroring, whole-body retargeting)."""
+    if world.profile.id == "g1":
+        rt = Runtime(mirror=mirror, model=world.model, home_q=world.home_q)
+    else:
+        rt = BodyRuntime(world, mirror=mirror)
+    rt.profile = world.profile
+    rt.label = world.profile.label
+    return rt
