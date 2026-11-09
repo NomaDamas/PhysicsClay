@@ -290,6 +290,11 @@ def tool_specs(st, confirm=True):
         _fn("confirm_plan", "Run the plan card that is waiting. Only when the user just clearly approved it."),
         _fn("cancel_plan", "Drop the plan card that is waiting (nothing moves), or stop the plan that is running."),
     ]
+    if "drive_base" in caps:
+        T.append(_fn("drive", "Drive the mobile base (do this first when the target is out of the arm's reach). World frame: +x away from "
+                              "the robot toward the table, +y to the robot's left. Small moves; the base will not drive into furniture.",
+                     {"dx": {"type": "number", "description": "metres along x"}, "dy": {"type": "number", "description": "metres along y"},
+                      "dyaw": {"type": "number", "description": "turn in degrees, left positive"}}))
     if "follow_me" in caps:
         T.append(_fn("follow_me", "Start or stop copying the user's body from their camera.", {"enabled": {"type": "boolean"}}, ["enabled"]))
     if "teach_by_showing" in caps:
@@ -659,6 +664,16 @@ class Agent:
 
     def t_set_speed(self, a, confirm):
         return self._simple("set_speed", {"value": str(a.get("value") or "slower")})
+
+    def t_drive(self, a, confirm):
+        num = lambda k: float(a.get(k) or 0.0)
+        tid = self._tid("drive")
+        self.push({"type": "task", "id": tid, "action": "drive", "dx": num("dx"), "dy": num("dy"), "dyaw": num("dyaw")})
+        t, st = self._wait(lambda s: (s.get("task") or {}) if (s.get("task") or {}).get("id") == tid
+                           and (s.get("task") or {}).get("status") in ("done", "failed") else None, 25)
+        if t is None:
+            return {"ok": False, "status": "timeout", "message": "The base didn't finish driving in time."}
+        return {"ok": t.get("status") == "done", "status": t.get("status"), "message": t.get("message")}
 
     def t_follow_me(self, a, confirm):
         return self._simple("follow_me", {"enabled": bool(a.get("enabled", True))})
