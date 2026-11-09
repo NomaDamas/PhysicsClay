@@ -602,7 +602,8 @@ def worker(args, shared):
         teacher.tick()
         demo.tick()
         ext.run_ticks(ctx)
-        brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None or bool(demo.steps)))
+        brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None or bool(demo.steps)
+                                          or source == "synthetic"))   # no camera: the synthetic dancer is not a person gesturing
         if not demo.steps:
             brain.narrate(tasks.task)
 
