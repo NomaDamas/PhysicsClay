@@ -34,18 +34,28 @@ class Tasks:
     def __init__(self, rt):
         self.rt = rt
         m, d = rt.model, rt.data
-        self.mug_mid = m.body("mug").mocapid[0]
-        self.mug_home = d.mocap_pos[self.mug_mid].copy()
-        g = m.geom("mug_collision").id
-        self.mug_center_off = m.geom_pos[g].copy()          # body frame offset to the mug's centre
-        self.mug_half_h = float(m.geom_size[g][1])
-        self.mug_r = float(m.geom_size[g][0])
+        self.objs = {}
+        for name, geom, kind in (("mug", "mug_collision", "cyl"), ("red_block", "red_block_collision", "box")):
+            try:
+                mid, g = m.body(name).mocapid[0], m.geom(geom).id
+            except KeyError:
+                continue
+            size = m.geom_size[g]
+            self.objs[name] = {"mid": mid, "home": d.mocap_pos[mid].copy(), "off": m.geom_pos[g].copy(),
+                               "r": float(size[0]), "half_h": float(size[1] if kind == "cyl" else size[2])}
+        self.cur = "mug"
         self.home_palm = {h: d.site_xpos[rt.palm_sid[h]].copy() for h in HANDS}
-        try:
-            vg = m.geom("vase_collision").id
-            self.vase = {"pos": d.geom_xpos[vg].copy(), "r": float(m.geom_size[vg][0]), "h": float(m.geom_size[vg][1])}
-        except KeyError:
-            self.vase = None
+        self.obstacles = {}
+        for name, geom in (("vase", "vase_collision"), ("blue_block", "blue_block_collision")):
+            try:
+                vg = m.geom(geom).id
+            except KeyError:
+                continue
+            sz = m.geom_size[vg]
+            box = m.geom_type[vg] == mujoco.mjtGeom.mjGEOM_BOX
+            self.obstacles[name] = {"pos": d.geom_xpos[vg].copy(), "r": float(np.hypot(sz[0], sz[1]) if box else sz[0]),
+                                    "h": float(sz[2] if box else sz[1])}
+        self.vase = self.obstacles.get("vase")
         self.robot_root = m.body(ROBOT_BODIES_ROOT).id
         self.markers = []        # [{"id": "A", "pos": np.array}]
         self.next_marker = 0
@@ -59,8 +69,33 @@ class Tasks:
         os.makedirs(SKILL_DIR, exist_ok=True)
 
     # ------------------------------------------------------------------ geometry
-    def mug_center(self):
-        return self.rt.data.mocap_pos[self.mug_mid] + self.mug_center_off
+    # current object (the one being handled); the mug_* names are kept for the original single-object code paths
+    @property
+    def mug_mid(self): return self.objs[self.cur]["mid"]
+    @property
+    def mug_home(self): return self.objs[self.cur]["home"]
+    @property
+    def mug_center_off(self): return self.objs[self.cur]["off"]
+    @property
+    def mug_half_h(self): return self.objs[self.cur]["half_h"]
+    @property
+    def mug_r(self): return self.objs[self.cur]["r"]
+
+    def mug_center(self, name=None):
+        o = self.objs[name or self.cur]
+        return self.rt.data.mocap_pos[o["mid"]] + o["off"]
+
+    def obj_name(self, text):
+        t = str(text or "").lower()
+        if any(k in t for k in ("block", "cube", "red", "블록", "빨간", "큐브")):
+            return "red_block" if "red_block" in self.objs else None
+        if any(k in t for k in ("mug", "cup", "컵", "머그")) or not t:
+            return "mug"
+        return None
+
+    @staticmethod
+    def pretty(name):
+        return {"mug": "the mug", "red_block": "the red block", "blue_block": "the blue block", "vase": "the vase"}.get(name, name)
 
     def raycast(self, cam, u, v, aspect):
         """cam = (pos, forward, up, fovy_deg). Returns world hit point or None (ignores the robot and ghosts)."""
@@ -134,9 +169,26 @@ class Tasks:
             for name, (x, y) in REGIONS.items():
                 if name in t:
                     return np.array([x, y, TABLE_TOP]), f"the {name} of the table"
-            if "mug" in t:
-                c = self.mug_center()
-                return np.array([c[0], c[1], TABLE_TOP]), "the mug"
+            near = any(k in t for k in ("next to", "beside", "near", "옆"))
+            for oname in list(self.objs) + list(self.obstacles):
+                keys = {"mug": ("mug", "cup", "컵", "머그"), "red_block": ("red", "빨간"), "blue_block": ("blue", "파란"),
+                        "vase": ("vase", "꽃병", "화병")}[oname]
+                if any(k in t for k in keys):
+                    c = self.mug_center(oname) if oname in self.objs else self.obstacles[oname]["pos"]
+                    if near:
+                        others = [self.mug_center(n) for n in self.objs if n != oname and n != self.cur] + [o["pos"] for o in self.obstacles.values() if o is not self.obstacles.get(oname)]
+                        best, bscore = None, -1.0
+                        for dx, dy in ((0, 0.12), (0, -0.12), (-0.09, 0.0), (0.11, 0.0), (-0.08, 0.1), (-0.08, -0.1)):
+                            cand = np.array([c[0] + dx, c[1] + dy, TABLE_TOP])
+                            if not self.on_table(cand):
+                                continue
+                            clear = min([np.linalg.norm(cand[:2] - np.asarray(o)[:2]) for o in others] or [1.0])
+                            score = min(clear, 0.2) - 0.3 * max(0.0, cand[0] - 0.36)
+                            if score > bscore:
+                                best, bscore = cand, score
+                        if best is not None:
+                            return best, f"next to {self.pretty(oname)}"
+                    return np.array([c[0], c[1], TABLE_TOP]), self.pretty(oname)
             return None, f"I don't know where '{target}' is. Tap it on my view or use left, right, center, front or back"
         return None, "no target given"
 
@@ -180,7 +232,7 @@ class Tasks:
             self.kind = None
             self.fail_reason = "vase"
             self.set_task(tid, action, "failed",
-                          f"I can't carry it that way: the mug would hit the vase ({hit[0]:.0f} cm too low). "
+                          f"I can't carry it that way: {self.pretty(self.cur)} would hit {self.pretty(self.hit_obstacle)} ({hit[0]:.0f} cm too low). "
                           "Draw a route over the vase in 3D, then say 'carry it along my path'.")
             return False
         rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
@@ -198,22 +250,25 @@ class Tasks:
         """While the mug is in hand (grasp..release), does the carried mug sweep through the vase? -> (cm short, (i0,i1)) | None"""
         if self.vase is None:
             return None
-        held_now = self.holding.get(palm) == "mug"
+        held_now = self.holding.get(palm) == self.cur
         g = next((i for i, n in sorted(events.items()) if n == "grasp"), None)
         r = next((i for i, n in sorted(events.items()) if n == "release"), len(pts) - 1)
         start = 0 if held_now else g
         if start is None:
             return None
-        off = self.mug_center() - self.rt.data.site_xpos[self.rt.palm_sid[palm]] if held_now else np.array([self.mug_r + 0.015, 0, -0.01])
-        vp, vr, vh = self.vase["pos"], self.vase["r"], self.vase["h"]
-        worst, span = 0.0, None
-        for j in range(start + 1, r):
-            c = pts[j] + off
-            if np.linalg.norm(c[:2] - vp[:2]) < vr + self.mug_r + 0.01:
-                short = (vp[2] + vh) - (c[2] - self.mug_half_h) + 0.01
-                if short > 0:
-                    worst = max(worst, short)
-                    span = (j, j) if span is None else (span[0], j)
+        off = self.mug_center() - self.rt.data.site_xpos[self.rt.palm_sid[palm]] if held_now else -getattr(self, "cur_off", np.array([-(self.mug_r + 0.015), 0.0, 0.01]))
+        worst, span, who = 0.0, None, None
+        for oname, ob in self.obstacles.items():
+            vp, vr, vh = ob["pos"], ob["r"], ob["h"]
+            for j in range(start + 1, r):
+                c = pts[j] + off
+                if np.linalg.norm(c[:2] - vp[:2]) < vr + self.mug_r + 0.01:
+                    short = (vp[2] + vh) - (c[2] - self.mug_half_h) + 0.01
+                    if short > 0:
+                        if short > worst:
+                            worst, who = short, oname
+                        span = (j, j) if span is None else (min(span[0], j), max(span[1], j))
+        self.hit_obstacle = who
         return None if span is None else (worst * 100, span)
 
     def tick(self):
@@ -226,8 +281,8 @@ class Tasks:
                     self.fired.add(idx)
                     self._event(name, rt.path["palm"])
         for palm, obj in self.holding.items():
-            if obj == "mug" and self.grasp_off is not None:
-                d.mocap_pos[self.mug_mid] = d.site_xpos[rt.palm_sid[palm]] + self.grasp_off
+            if obj in self.objs and self.grasp_off is not None:
+                d.mocap_pos[self.objs[obj]["mid"]] = d.site_xpos[rt.palm_sid[palm]] + self.grasp_off
         active = (self.kind in ("task", "path") and rt.mode == "FOLLOW") or (self.kind == "skill" and rt.mode == "PREVIEW")
         if self.kind and not active:
             if self.task and self.task["status"] == "running":
@@ -237,11 +292,13 @@ class Tasks:
     def _event(self, name, palm):
         d = self.rt.data
         if name == "grasp":
-            self.holding[palm] = "mug"
+            self.holding[palm] = self.cur
             self.grasp_off = d.mocap_pos[self.mug_mid] - d.site_xpos[self.rt.palm_sid[palm]]
             if self.task:
                 self.task["step"] = "grasped"
         elif name == "release":
+            if self.holding.get(palm) in self.objs:
+                self.cur = self.holding[palm]
             self.holding[palm] = None
             self.grasp_off = None
             p = d.mocap_pos[self.mug_mid].copy()
@@ -252,19 +309,28 @@ class Tasks:
                 self.task["step"] = "placed"
 
     # ------------------------------------------------------------------ actions
-    def pick_place(self, tid, obj, target, target_uv, cam, aspect):
-        if obj and "mug" not in str(obj).lower() and "cup" not in str(obj).lower():
-            self.set_task(tid, "pick_place", "failed", f"I only see a mug on the table, not '{obj}'.")
+    def pick_place(self, tid, obj, target, target_uv, cam, aspect, via_pts=None, grasp="side"):
+        name = self.obj_name(obj)
+        if name is None:
+            if any(k in str(obj).lower() for k in ("blue", "파란", "vase", "꽃병", "화병")):
+                self.set_task(tid, "pick_place", "failed", f"{self.pretty('blue_block' if 'blu' in str(obj).lower() or '파란' in str(obj) else 'vase').capitalize()} is fixed in this scene; I can move the mug or the red block.")
+            else:
+                self.set_task(tid, "pick_place", "failed", f"I don't see '{obj}'. I can move the mug or the red block.")
             return
-        via = None
-        if target and str(target).strip().lower() in ("path", "my path", "along my path", "the path", "route", "경로", "경로대로", "내 경로"):
+        held_other = next((o for o in self.holding.values() if o and o != name), None)
+        if held_other:
+            self.set_task(tid, "pick_place", "failed", f"I'm still holding {self.pretty(held_other)}.")
+            return
+        self.cur = name
+        via = [np.asarray(v, float) for v in via_pts] if via_pts else None
+        if via is None and target and str(target).strip().lower() in ("path", "my path", "along my path", "the path", "route", "경로", "경로대로", "내 경로"):
             if self.rt.path is None or len(self.rt.path["pts"]) < 2:
                 self.set_task(tid, "pick_place", "failed", "There is no route yet. Draw one on my view or in 3D first.")
                 return
             via = [np.array(p) for p in self.rt.path["pts"][::2]] + [np.array(self.rt.path["pts"][-1])]
             end = via[-1]
             dest, label = np.array([end[0], end[1], TABLE_TOP]), "the end of your route"
-        else:
+        if not (target and str(target).strip().lower() in ("path", "my path", "along my path", "the path", "route", "경로", "경로대로", "내 경로")):
             dest, label = self.resolve(target, target_uv, cam, aspect)
         if dest is None:
             self.set_task(tid, "pick_place", "failed", label[0].upper() + label[1:] + ".")
@@ -272,30 +338,33 @@ class Tasks:
         if not self.on_table(dest):
             self.set_task(tid, "pick_place", "failed", f"I can't place it there: {label} is not on the table.")
             return
-        held = next((h for h, o in self.holding.items() if o == "mug"), None)
+        held = next((h for h, o in self.holding.items() if o == name), None)
         c = self.mug_center()
         palm = held or ("right_palm" if c[1] <= 0 else "left_palm")
         d = self.rt.data
         cur = d.site_xpos[self.rt.palm_sid[palm]].copy()
-        off = np.array([-(self.mug_r + 0.015), 0.0, 0.01])
+        off = np.array([0.0, 0.0, self.mug_half_h + 0.035]) if grasp == "top" else np.array([-(self.mug_r + 0.015), 0.0, 0.01])
+        self.cur_off = off
         place_c = np.array([dest[0], dest[1], TABLE_TOP + self.mug_half_h])
         place_hand = place_c + off
         kps, ev = [cur], {}
         if held is None:
             grasp = c + off
-            kps += [grasp + np.array([-0.08, 0, 0.07]), grasp]
+            kps += [grasp + (np.array([0, 0, 0.09]) if np.array_equal(off[:2], [0, 0]) else np.array([-0.08, 0, 0.07])), grasp]
             ev[len(kps) - 1] = "grasp"
             kps += [grasp + np.array([0, 0, 0.12])]
         if via is not None:
             kps += [np.array(v) for v in via]
-            label = "the end of your route"
+            if via_pts is None:
+                label = "the end of your route"
         kps += [place_hand + np.array([0, 0, 0.12]), place_hand]
         ev[len(kps) - 1] = "release"
         kps += [place_hand + np.array([-0.10, 0, 0.07]), self.home_palm[palm]]
         side = "right" if palm.startswith("right") else "left"
-        self.done_msg = f"Placed the mug on {label}."
+        what = self.pretty(name)
+        self.done_msg = f"Placed {what} on {label}."
         ok = self._launch(tid, "pick_place", kps, palm, ev, "task",
-                          f"Every waypoint is reachable. Picking up the mug with my {side} hand and placing it on {label}.")
+                          f"Every waypoint is reachable. Picking up {what} with my {side} hand and placing it on {label}.")
         if not ok and getattr(self, "fail_reason", "reach") == "reach" and via is None:
             self.suggest(tid, dest, palm, off)
         self.fail_reason = "reach"
@@ -316,7 +385,7 @@ class Tasks:
             okp = self.rt.precheck(np.array([hand + np.array([0, 0, 0.12]), hand]), palm)
             if all(okp):
                 mid = self.add_marker(np.array([cand[0], cand[1], TABLE_TOP]))
-                self.task["message"] += f" The closest spot I can reach is marker {mid}, {4 * k} cm nearer. Say 'put the mug on {mid}'."
+                self.task["message"] += f" The closest spot I can reach is marker {mid}, {4 * k} cm nearer. Say 'put it on {mid}'."
                 return
 
     def reach(self, tid, target, target_uv, cam, aspect):
@@ -435,7 +504,8 @@ class Tasks:
         if reset_scene:
             self.holding = {h: None for h in self.holding}
             self.grasp_off = None
-            rt.data.mocap_pos[self.mug_mid] = self.mug_home
+            for o in self.objs.values():
+                rt.data.mocap_pos[o["mid"]] = o["home"]
             self.markers, self.next_marker = [], 0
         else:
             for palm, obj in self.holding.items():

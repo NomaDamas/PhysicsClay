@@ -39,6 +39,14 @@
       <geom name="vase_visual" type="cylinder" size="0.045 0.12" rgba="0.36 0.47 0.87 1" contype="0" conaffinity="0" group="2"/>
       <geom name="vase_collision" type="cylinder" size="0.045 0.12" rgba="0 0 0 0" contype="1" conaffinity="1" group="3"/>
     </body>
+    <body name="red_block" pos="0.29 -0.34 0.766" mocap="true">
+      <geom name="red_block_visual" type="box" size="0.026 0.026 0.026" rgba="0.92 0.36 0.33 1" contype="0" conaffinity="0" group="2"/>
+      <geom name="red_block_collision" type="box" size="0.026 0.026 0.026" rgba="0 0 0 0" contype="1" conaffinity="1" group="3"/>
+    </body>
+    <body name="blue_block" pos="0.44 0.24 0.766">
+      <geom name="blue_block_visual" type="box" size="0.03 0.03 0.026" rgba="0.24 0.55 0.93 1" contype="0" conaffinity="0" group="2"/>
+      <geom name="blue_block_collision" type="box" size="0.03 0.03 0.026" rgba="0 0 0 0" contype="1" conaffinity="1" group="3"/>
+    </body>
     <body name="com_target" pos="0.5 0 .5" mocap="true">
       <geom type="sphere" size=".06" contype="0" conaffinity="0" group="1" rgba=".6 .3 .3 0"/>
       <site type="sphere" size="0.01" rgba="0 0 1 1" group="1"/>
