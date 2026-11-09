@@ -191,5 +191,32 @@ A module that handles the utterance calls `preventDefault()`, and the normal int
   `messages`/`follow_path` name the zone; a task whose hand or carried object would enter a zone fails naming it; `pick_place`
   detours around (either side) or over zones, checked for reach, and says so ("…, going around keep-out zone A"); place spots
   inside a zone shift to a free spot. A drawn route is re-checked when zones change.
-- Web: `web/app.js` fires a cancelable `pc-text` window event `{detail:{text}}` for every final user utterance before the
+- Web: `web/app.js` fires a cancelable `pc-hear` window event `{detail:{text, phase}}` for every final user utterance before the
   rule parser; a module that handles it calls `preventDefault()`.
+
+### Goal: make it look like this (#E, `pps/features/goal.py`, `web/ui/goal.js`)
+Show the end state instead of the steps: arrange ghost copies of the movable objects in the 3D stage, or send a photo of
+the layout you want. The server orders the moves and runs them one by one.
+```
+{type:"goal", op:"set", targets:{<object>:[x, y]}, run?:bool, source?:"arrange"|"photo"}   plan (and run) a goal
+{type:"goal", op:"photo", jpg_b64, view?:"user"|"robot", offline?:bool, run?:bool}       read a photo (base64 JPEG, < 1.5 MB)
+{type:"goal", op:"run"}                                                                 re-plan from the current scene and run
+{type:"goal", op:"cancel"} | {type:"goal", op:"clear"}
+```
+- Object names are the keys of `tasks.objs` (`mug`, `red_block`, and any movable object added later); x, y are world
+  metres on the table top.
+- Planning: targets are clamped onto the table and moved clear of fixed obstacles and of each other; objects already
+  within 3 cm are skipped; a target still occupied by another object is freed first (that object moves first, or is set
+  aside when it is part of a swap or has no target); a carry whose straight line passes an obstacle goes over it.
+- Running: one `pick_place` per move (task ids `goal-<rev>-<i>`), dispatched from `@ext.tick` when the previous one
+  is done. A move that lands more than 3 cm off is redone once; the first failed move stops the sequence with its reason.
+  Any other task (stop, home, a new instruction) stops the goal.
+- Photo: Gemini Robotics-ER with the server key (falls back to Flash, then to an offline colour-blob reader on 429/503,
+  timeout or no key; `offline:true` forces it). `view:"user"` means the photo was taken from your side facing the robot
+  (robot at the top of the photo); `"robot"` means from the robot's side. Positions are taken relative to the table
+  (Gemini's table box, else the whole photo) and mapped onto the reachable front strip of the table, x 0.25..0.47, y -0.36..0.36.
+
+`state.goal = {status: idle|locating|ready|running|done|failed|stopped, message, targets:{name:[x,y]}, source,
+sequence:[{i, object, label, kind:"place"|"aside", to:[x,y], status: pending|running|done|failed, err_cm}], i, rev,
+photo:{source:"gemini"|"offline", view, summary, found:[{name,u,v}], box, ms, error}|null,
+objects:[{name, label, pos:[x,y,z], r, h, shape:"box"|"cyl"}], obstacles:[{name, pos:[x,y], r}], tolerance_cm, work_area}`.
