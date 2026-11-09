@@ -47,6 +47,7 @@
     if (yes && p.phase === "needs_you") { act("alt"); return true; }
     return false;
   };
+  window.addEventListener("pc-hear", (ev) => { if (P.hear(ev.detail && ev.detail.text)) ev.preventDefault(); });
 
   // ------------------------------------------------------------------ actions
   function run(action, args, label) {

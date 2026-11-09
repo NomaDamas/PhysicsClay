@@ -549,10 +549,10 @@
         }
         if (rec) {
           const prevStatus = rec.status;
-          rec.status = ["planning", "proposed", "running", "done", "failed"].includes(t.status) ? t.status : rec.status;
+          rec.status = ["planning", "proposed", "asking", "running", "done", "failed"].includes(t.status) ? t.status : rec.status;
           rec.message = t.message || rec.message || ""; rec.step = t.step || "";
           updateCard(rec);
-          if (!rec.settled && ["proposed", "running", "done", "failed"].includes(rec.status)) rec.finish({ ok: rec.status !== "failed", status: rec.status, message: rec.message });
+          if (!rec.settled && ["proposed", "asking", "running", "done", "failed"].includes(rec.status)) rec.finish({ ok: rec.status !== "failed", status: rec.status, message: rec.message });
           else if (rec.viaModel && prevStatus !== rec.status && (rec.status === "done" || rec.status === "failed")) {
             contextToModel(`[robot update] ${rec.action} ${rec.status}: ${rec.message || ""}`);
           }
@@ -589,7 +589,9 @@
   function teachHear(text) {
     const t = String(text).trim(), low = t.toLowerCase().replace(/[.!?。]+$/g, "").trim(), ph = teachPhase();
     if (!low) return false;
-    if (ph !== "recording" && window.PCUI && window.PCUI.hear && window.PCUI.hear(t)) return true; // UX2: "yes / go" confirms a proposed plan
+    // UX2 features hear every final utterance first (plan "yes/go", "which one?" answers, "stay away from X");
+    // a listener calls preventDefault() when it handled it. Not while a demonstration is being recorded.
+    if (ph !== "recording" && !window.dispatchEvent(new CustomEvent("pc-hear", { detail: { text: t, phase: ph }, cancelable: true }))) return true;
     if (ph === "recording") {
       if (TEACH_STOP.test(low)) { teachStop(); return true; }
       teachCmd("utterance", { text: t }); return true;
@@ -740,10 +742,10 @@
     m = raw.match(/["“']?(.+?)["”']?\s*(?:으로|로|라고)\s*(?:배워|기억해|저장해)/); if (m) return ["learn_skill", { name: m[1].trim() }];
     if (ALONG_RE.test(t) && (/\b(mug|cup|it|that|carry|move|bring|take|put)\b|\bmy\s+(path|route)\b|머그|컵|옮겨|내 경로|경로대로/.test(t))) return ["pick_place", { object: "mug", target: "along my path" }];
     if (/\b(follow|run|execute|go along|trace)\s+(the\s+)?(path|line|route)\b|경로/.test(t)) return ["follow_path", {}];
-    const hasObj = /\b(mug|cup)\b|머그|컵/.test(t);
+    const objM = t.match(/\b(?:(?:red|green|blue)\s+)?(?:mug|cup|block|cube)\b/) || t.match(/(?:(?:빨간|초록|파란)\s*)?(?:머그|컵|블록|큐브)/), hasObj = !!objM;
     const place = /\b(pick|put|move|place|bring|carry|set|drop|take)\b|옮겨|놓아|놔|올려|가져/.test(t);
     if (place && (hasObj || /\b(it|that)\b/.test(t) || /[가-힣]/.test(t))) {
-      const target = findTarget(t, raw); const a = { object: "mug" }; if (target) a.target = target; return ["pick_place", a];
+      const target = findTarget(t, raw); const a = { object: objM ? objM[0] : "mug" }; if (target) a.target = target; return ["pick_place", a];
     }
     if (/\b(reach|touch|point)\b|뻗어|가리켜/.test(t)) { const target = findTarget(t, raw); if (target) return ["reach", { target }]; }
     const kind = /\b(faster|quicker|speed up)\b|빠르게|빨리/.test(t) ? "faster" : /\b(slower|slow down)\b|천천히|느리게/.test(t) ? "slower"

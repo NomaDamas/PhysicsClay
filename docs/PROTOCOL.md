@@ -160,5 +160,18 @@ or what not to touch. Show it, say it, point at it: the robot understands, check
   A waiting or finished plan is dropped as soon as another task replaces `state.task`.
 - Browser (`web/ui/plan.js`): typed, voice, Gemini and example-chip motion commands carry `preview: true`
   (`PCUI.taskFilter`, called by app.js `runTask`; `?preview=0` turns it off); "yes / go / do it" confirms and
-  "no / cancel" cancels (`PCUI.hear`, called by app.js before the teach flow). The card lives in slot `plan`; the ghost
+  "no / cancel" cancels (a `pc-hear` listener; see "Hearing utterances" below). The card lives in slot `plan`; the ghost
   (path, numbered steps, target ring, carried object) in `PC3D.layer("plan")`.
+
+### C · Candidates: the robot asks which one
+- A `pick_place` task whose object words match several movable objects ("the block" with a red and a green block, or "thing") is not run. The task gets `status: "asking"` and the question as its message, and the state gets
+  `choices: {id, question, options: [{key: "1"|"2"|…, name, label, color, pos: [x,y,z], uv: [u,v]|null}]}`, numbered left to right as the robot sees them.
+- Optional on the task: `object_pos: [x,y,z]` or `object_uv: [u,v]` (where you pointed). One object within 10 cm is used directly; two or more ask.
+- Answer: `{type: "choose", id, key}`. `key` can be the number, an object name, free text ("the red one", "two", "2번", "left"), `"cancel"`, or `pos`/`uv` instead of `key`. The original request then resumes, going through the task pre-hooks again (so plan preview still applies).
+- A new marker near a candidate (a tap or pointing) also answers. A new task, or 120 s passing, clears the question.
+- Scene: `green_block` is a new movable object (a 2.6 cm cube).
+
+### Hearing utterances (all UX 2.0 modules)
+Every final typed or spoken utterance (text box, browser speech, Gemini Live transcript) first fires a cancelable
+`window` event `pc-hear` with `detail: {text, phase}` (teach phase), except while a demonstration is being recorded.
+A module that handles the utterance calls `preventDefault()`, and the normal intent parser is skipped.

@@ -35,7 +35,8 @@ class Tasks:
         self.rt = rt
         m, d = rt.model, rt.data
         self.objs = {}
-        for name, geom, kind in (("mug", "mug_collision", "cyl"), ("red_block", "red_block_collision", "box")):
+        for name, geom, kind in (("mug", "mug_collision", "cyl"), ("red_block", "red_block_collision", "box"),
+                                 ("green_block", "green_block_collision", "box")):
             try:
                 mid, g = m.body(name).mocapid[0], m.geom(geom).id
             except KeyError:
@@ -89,6 +90,8 @@ class Tasks:
         t = str(text or "").lower()
         if any(k in t for k in ("blue", "파란", "vase", "꽃병", "화병")):
             return None
+        if any(k in t for k in ("green", "초록", "녹색")):
+            return "green_block" if "green_block" in self.objs else None
         if any(k in t for k in ("block", "cube", "red", "블록", "빨간", "큐브")):
             return "red_block" if "red_block" in self.objs else None
         if any(k in t for k in ("mug", "cup", "컵", "머그")) or not t:
@@ -97,7 +100,8 @@ class Tasks:
 
     @staticmethod
     def pretty(name):
-        return {"mug": "the mug", "red_block": "the red block", "blue_block": "the blue block", "vase": "the vase"}.get(name, name)
+        return {"mug": "the mug", "red_block": "the red block", "green_block": "the green block", "blue_block": "the blue block",
+                "vase": "the vase"}.get(name, name)
 
     def raycast(self, cam, u, v, aspect):
         """cam = (pos, forward, up, fovy_deg). Returns world hit point or None (ignores the robot and ghosts)."""
@@ -173,7 +177,7 @@ class Tasks:
                     return np.array([x, y, TABLE_TOP]), f"the {name} of the table"
             near = any(k in t for k in ("next to", "beside", "near", "옆"))
             for oname in list(self.objs) + list(self.obstacles):
-                keys = {"mug": ("mug", "cup", "컵", "머그"), "red_block": ("red", "빨간"), "blue_block": ("blue", "파란"),
+                keys = {"mug": ("mug", "cup", "컵", "머그"), "red_block": ("red", "빨간"), "green_block": ("green", "초록", "녹색"), "blue_block": ("blue", "파란"),
                         "vase": ("vase", "꽃병", "화병")}[oname]
                 if any(k in t for k in keys):
                     c = self.mug_center(oname) if oname in self.objs else self.obstacles[oname]["pos"]
