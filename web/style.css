@@ -841,7 +841,6 @@ kbd { font-family: var(--sans); font-size: 11px; border-radius: 6px; padding: 0 
 .cam { flex: none; }
 .feed { flex: 1 1 0; min-height: 52px; }
 .says { flex: none; max-height: 22%; }
-.side:has(.teach:is([data-phase="confirm"], [data-phase="practice"], [data-phase="done"])) .cam-frame { display: none; }
 .t-btns, .t-correct, .t-save { position: sticky; bottom: -24px; z-index: 2; margin: 0 -8px -8px; padding: 8px 8px 8px; background: linear-gradient(rgba(255, 255, 255, 0), #fff 12px); }
 .t-correct, .t-save { position: static; margin: 0; padding: 0; background: none; }
 @media (max-height: 880px) { .cam-frame { aspect-ratio: auto; height: 156px; } }
