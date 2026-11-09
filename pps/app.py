@@ -807,7 +807,7 @@ def worker(args, shared):
         ext.run_ticks(ctx)
         brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None or bool(demo.steps)
                                           or source == "synthetic"))   # no camera: the synthetic dancer is not a person gesturing
-        if not demo.steps:
+        if not demo.steps and not ctx.store.get("llm_brain"):   # the real agent speaks for itself
             brain.narrate(tasks.task)
 
         # ---------------- robot view
