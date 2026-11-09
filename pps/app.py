@@ -630,6 +630,7 @@ def worker(args, shared):
         renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
         renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
         rt.paint_overlays(renderer.scene, reset=False)
+        ext.paint_overlays(ctx, renderer.scene)
         sim = renderer.render()
         sim_jpg = cv2.imencode(".jpg", cv2.cvtColor(sim, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82])[1].tobytes()
         sim_jpg_last[0] = sim_jpg
@@ -641,6 +642,7 @@ def worker(args, shared):
         pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
         pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
         rt.paint_overlays(pip_renderer.scene, reset=False)
+        ext.paint_overlays(ctx, pip_renderer.scene)
         shared.pip = cv2.imencode(".jpg", cv2.cvtColor(pip_renderer.render(), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 78])[1].tobytes()
         shown = cv2.resize(cv2.flip(frame, 1), (960, 540))
         cam_jpg = cv2.imencode(".jpg", shown, [cv2.IMWRITE_JPEG_QUALITY, 72])[1].tobytes()
