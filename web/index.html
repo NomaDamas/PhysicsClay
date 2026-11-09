@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/static/style.css">
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -48,6 +49,7 @@
       <span class="meter-track"><span id="feasFill" class="meter-fill"></span></span>
       <span id="feasTxt" class="meter-val mono">--</span>
     </div>
+    <span id="mockPill" class="chip mono mock-pill" title="Mock AI: offline gestures + scripted replies" hidden>MOCK AI</span>
     <span id="speed" class="chip mono" title="Speed scale">×1.0</span>
     <span id="stats" class="stats mono" data-conn="off"><i></i><span id="statsTxt">connecting</span></span>
     <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
@@ -62,6 +64,7 @@
         <button type="button" class="seg-btn" data-view="robot" aria-pressed="true">Robot eye</button>
         <button type="button" class="seg-btn" data-view="orbit" aria-pressed="false">Orbit</button>
         <button type="button" class="seg-btn" data-view="stage" aria-pressed="false">Stage</button>
+        <button type="button" class="seg-btn" data-view="3d" aria-pressed="false" title="Client-side 3D editor: place and lift waypoints">3D</button>
       </div>
       <span id="holding" class="chip mono subtle">hands empty</span>
       <span class="grow"></span>
@@ -74,6 +77,7 @@
       </button>
       <canvas id="robotOverlay" aria-label="Tap to place a marker, drag to draw a path"></canvas>
       <div id="robotEmpty" class="empty"><span class="spinner" aria-hidden="true"></span><span>Waiting for the robot view…</span></div>
+      <div id="view3d" class="view3d" hidden><div class="v3d-msg">Loading 3D engine…</div></div>
       <div id="taskHud" class="task-hud" hidden><span class="dot"></span><span id="taskHudTxt"></span></div>
       <div id="pathBar" class="path-bar" hidden>
         <span id="pathInfo" class="mono"></span>
@@ -82,7 +86,7 @@
       </div>
     </div>
     <div class="hint-row">
-      <span><b>Tap</b> to mark</span><span class="sep">·</span><span><b>Draw</b> a path</span><span class="sep">·</span><span>Say <q>put the mug on A</q></span>
+      <span>Say <q>let me show you</q></span><span class="sep">·</span><span><b>Point</b> and say <q>there</q></span><span class="sep">·</span><span><b>Tap</b> to mark · <b>Draw</b> a path</span>
       <span class="grow"></span>
       <span id="orbitHint" class="muted" hidden>right-drag / two fingers to orbit · wheel to zoom</span>
     </div>
@@ -94,21 +98,25 @@
     </button>
 
     <div class="actions" role="toolbar" aria-label="Quick actions">
-      <button type="button" class="btn" data-act="pick">Pick mug → right</button>
-      <button type="button" class="btn toggle" data-act="follow" aria-pressed="false">Follow me</button>
-      <button type="button" class="btn" data-act="learn">Learn skill</button>
-      <span class="split">
-        <select id="skillSel" aria-label="Learned skill" disabled><option value="">no skills yet</option></select>
-        <button type="button" class="btn" data-act="play" id="playBtn" disabled aria-label="Play selected skill"><svg aria-hidden="true"><use href="#i-play"/></svg>Play</button>
-      </span>
+      <span class="act-hint muted small">Teach the robot like a friend: <b>show</b> it on camera, <b>tell</b> it what matters.</span>
       <span class="grow"></span>
       <button type="button" class="btn danger" data-act="stop" title="Esc"><svg aria-hidden="true"><use href="#i-stop"/></svg>Stop</button>
-      <button type="button" class="btn" data-act="home"><svg aria-hidden="true"><use href="#i-home"/></svg>Home</button>
-      <button type="button" class="btn" data-act="reset">Reset scene</button>
-      <button type="button" class="btn" data-act="export">Export</button>
-      <button type="button" class="btn" data-act="compile" title="Check the last motion on a UR5e arm">Compile for UR5e</button>
+      <details class="more" id="moreMenu">
+        <summary class="btn" aria-label="More actions">⋯</summary>
+        <div class="more-menu" role="menu">
+          <button type="button" class="btn sm ghost" data-act="home" role="menuitem"><svg aria-hidden="true"><use href="#i-home"/></svg>Home</button>
+          <button type="button" class="btn sm ghost" data-act="reset" role="menuitem">Reset scene</button>
+          <button type="button" class="btn sm ghost" data-act="export" role="menuitem">Export</button>
+          <button type="button" class="btn sm ghost" data-act="compile" role="menuitem" title="Check the last motion on a UR5e arm">Compile for UR5e</button>
+        </div>
+      </details>
+      <span class="legacy" hidden>
+        <button type="button" class="btn toggle" data-act="follow" aria-pressed="false">Follow me</button>
+        <select id="skillSel" aria-label="Learned skill" disabled><option value="">no skills yet</option></select>
+        <button type="button" class="btn" data-act="play" id="playBtn" disabled>Play</button>
+      </span>
     </div>
-    <div id="skillEdit" class="skill-edit" hidden>
+    <div id="skillEdit" class="skill-edit legacy-edit" hidden>
       <div class="se-head">
         <span class="label mono">EDIT SKILL</span>
         <span id="seName" class="se-name"></span>
@@ -134,17 +142,64 @@
     </div>
     <form id="cmdForm" class="cmd" autocomplete="off">
       <span class="prompt mono" aria-hidden="true">›</span>
-      <input id="cmd" type="text" placeholder="Type an intent — “put the mug on the right”, “follow me”, “slower”" aria-label="Command">
+      <input id="cmd" type="text" placeholder="Explain or correct — “start teaching”, “don't touch the vase”, “put the mug there”" aria-label="Command">
       <button class="btn primary" type="submit">Send</button>
     </form>
   </section>
 
   <aside class="side">
+    <section class="panel teach" id="teachPanel" data-phase="idle" aria-label="Teach by showing">
+      <div class="panel-head">
+        <span class="label mono">TEACH BY SHOWING</span>
+        <span id="teachRec" class="badge rec" hidden>REC 0.0s</span>
+        <span class="grow"></span>
+        <span id="teachPhase" class="muted small mono">ready</span>
+        <button type="button" id="teachCancel" class="btn sm ghost" hidden>Start over</button>
+      </div>
+      <ol class="teach-strip" aria-label="How it works">
+        <li data-k="show"><b>1</b>Show · Tell</li><li data-k="understand"><b>2</b>Robot understands</li>
+        <li data-k="practice"><b>3</b>Practice in sim</li><li data-k="correct"><b>4</b>You correct</li>
+      </ol>
+      <div class="teach-body">
+        <div class="t-idle">
+          <button type="button" class="btn primary teach-go" id="teachStart"><svg aria-hidden="true"><use href="#i-play"/></svg>Start teaching</button>
+          <p class="muted small">Show the task on your camera and explain it out loud, like teaching a friend. The robot won't copy you live — it learns the task, asks, then practices.</p>
+        </div>
+        <div class="t-rec">
+          <div class="t-evidence mono small" id="teachEvidence"></div>
+          <ul class="t-utt" id="teachUtt"><li class="muted">Talk while you show: “pick up the mug, carry it over, don't touch the vase”.</li></ul>
+          <button type="button" class="btn danger teach-go" id="teachStop"><svg aria-hidden="true"><use href="#i-stop"/></svg>Done showing</button>
+        </div>
+        <div class="t-spec">
+          <div class="t-card">
+            <div class="t-card-head"><span class="label mono">ROBOT UNDERSTOOD</span><span class="grow"></span><span id="teachSummary" class="mono small muted"></span></div>
+            <div class="t-goal" id="teachGoal"></div>
+            <ol class="t-steps" id="teachSteps"></ol>
+            <div class="t-cons" id="teachCons"></div>
+          </div>
+          <div class="t-bubble" id="teachQ" hidden></div>
+          <div class="t-btns" id="teachConfirmBtns">
+            <button type="button" class="btn primary" id="teachYes">Yes, practice</button>
+            <button type="button" class="btn" id="teachCorrectBtn">Correct…</button>
+          </div>
+          <form class="t-correct" id="teachCorrectForm" hidden autocomplete="off">
+            <input id="teachCorrectIn" type="text" placeholder="e.g. “go around the vase on the left”, “slower”" aria-label="Correction">
+            <button type="submit" class="btn sm primary">Send</button>
+          </form>
+          <form class="t-save" id="teachSaveForm" hidden autocomplete="off">
+            <input id="teachName" type="text" placeholder="Skill name, e.g. mug over vase" aria-label="Skill name">
+            <button type="submit" class="btn sm primary">Save skill</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
     <section class="panel cam" aria-label="Your camera">
       <div class="panel-head">
         <span class="label mono">YOUR CAMERA</span>
         <span id="followBadge" class="badge follow" hidden>FOLLOWING YOU</span>
         <span id="recBadge" class="badge rec" hidden>REC 0.0s</span>
+        <span id="gestureChip" class="chip mono gesture-chip" hidden></span>
         <span class="grow"></span>
         <span id="source" class="muted small mono">—</span>
         <button type="button" id="videoBtn" class="btn sm">Show a video</button>
@@ -200,6 +255,7 @@
       <label class="field"><span>Robotics-ER model</span><input id="setEr" type="text" spellcheck="false"></label>
       <label class="check"><input id="setSendCam" type="checkbox" checked><span>Send my camera to Gemini</span></label>
       <label class="check"><input id="setSendRobot" type="checkbox"><span>Send robot view to Gemini</span></label>
+      <label class="check"><input id="setMock" type="checkbox"><span>Mock AI (offline demo: gestures + scripted replies)</span></label>
       <label class="field"><span>Speech language (no-key fallback)</span>
         <select id="setLang"><option value="en-US">English (en-US)</option><option value="ko-KR">한국어 (ko-KR)</option></select>
       </label>
@@ -214,5 +270,6 @@
 
 <script src="/static/gemini.js"></script>
 <script src="/static/app.js"></script>
+<script type="module" src="/static/view3d.js"></script>
 </body>
 </html>

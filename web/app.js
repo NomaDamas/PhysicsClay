@@ -17,6 +17,10 @@
     cmdForm: $("cmdForm"), cmd: $("cmd"), toast: $("toast"), dlg: $("settings"),
   };
   const camPanel = el.camFrame.closest(".panel");
+  let view3d = new URLSearchParams(location.search).get("view") === "3d";
+  const P3 = () => window.PC3D;
+  function mount3d() { const v = P3(); if (!v) return; v.mount($("view3d")); v.active(view3d); v.setState(state); }
+  window.addEventListener("pc3d-ready", mount3d);
   const SKELETON = [[11, 13], [13, 15], [12, 14], [14, 16], [11, 12], [11, 23], [12, 24], [23, 24], [0, 11], [0, 12]];
   const REGIONS = ["left", "right", "center", "front", "back"];
   const C = { ok: "#1f8f55", bad: "#d6453a", cyan: "#1da8e5", accent: "#5c77df", hot: "#f59145" };
@@ -37,6 +41,7 @@
     get sendCam() { return LS.get("pc.sendCam", "1") === "1"; },
     get sendRobot() { return LS.get("pc.sendRobot", "0") === "1"; },
     get lang() { return LS.get("pc.lang", "en-US"); },
+    get mock() { return LS.get("pc.mock", "0") === "1"; },
   };
   const geminiReady = () => !!(G() && typeof G().connectLive === "function" && settings.key);
 
@@ -49,11 +54,11 @@
     const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
     try { ws = new WebSocket(url); } catch (e) { setTimeout(connect, 1500); return; }
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => { connected = true; schedule(); };
+    ws.onopen = () => { connected = true; if (LS.get("pc.mock", null) !== null) send({ type: "mock", enabled: settings.mock }); schedule(); };
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") {
         let s; try { s = JSON.parse(ev.data); } catch (e) { return; }
-        if (s && typeof s === "object" && !s.type) { state = s; gotState = true; onState(); schedule(); }
+        if (s && typeof s === "object" && !s.type) { state = s; gotState = true; onState(); schedule(); if (P3()) P3().setState(s); }
         return;
       }
       const buf = ev.data; if (!(buf instanceof ArrayBuffer) || buf.byteLength < 2) return;
@@ -118,10 +123,18 @@
 
     const view = ["orbit", "stage"].includes(s.view) ? s.view : "robot";
     const pipLabel = document.getElementById("pipLabel"); if (pipLabel) pipLabel.textContent = view === "robot" ? "Full body" : "Robot eye";
-    if (changed("view", view)) {
-      document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === view)));
-      el.robotFrame.classList.toggle("orbit", view !== "robot"); el.orbitHint.hidden = view === "robot";
+    if (changed("view", view + view3d)) {
+      const shown = view3d ? "3d" : view;
+      document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === shown)));
+      el.robotFrame.classList.toggle("orbit", view !== "robot" && !view3d); el.orbitHint.hidden = view === "robot" || view3d;
+      el.robotFrame.classList.toggle("v3d", view3d); $("view3d").hidden = !view3d;
+      if (P3()) P3().active(view3d);
     }
+    const mockOn = typeof s.mock === "boolean" ? s.mock : settings.mock;
+    if (changed("mock", mockOn)) $("mockPill").hidden = !mockOn;
+    $("teachCancel").hidden = !gotState || !s.teach || !s.teach.phase || s.teach.phase === "idle";
+    const gname = s.gesture && typeof s.gesture === "object" && s.gesture.name ? String(s.gesture.name) : "";
+    if (changed("gesture", gname)) { const gc = $("gestureChip"); gc.hidden = !gname; gc.textContent = gname ? "gesture · " + gname : ""; }
     const h = s.holding && typeof s.holding === "object" ? s.holding : {};
     const hold = ["left", "right"].filter((k) => h[k]).map((k) => `${k[0].toUpperCase()} hand: ${h[k]}`).join(" · ");
     if (changed("hold", hold)) { el.holding.textContent = hold || "hands empty"; el.holding.classList.toggle("hot", !!hold); el.holding.classList.toggle("subtle", !hold); }
@@ -145,7 +158,7 @@
       el.taskHudTxt.textContent = `${actionTitle(t.action)} · ${t.step || t.message || t.status || ""}`;
     }
     const p = s.path && typeof s.path === "object" ? s.path : null, pn = p ? arr(p.uv).length : 0;
-    el.pathBar.hidden = !pn || stroke !== null || mode === "PATH";
+    el.pathBar.hidden = !pn || stroke !== null || mode === "PATH" || view3d;
     if (pn) {
       const bad = arr(p.ok).filter((x) => x === false).length;
       el.pathInfo.textContent = `${pn} waypoints · ${bad ? bad + " unreachable" : "all reachable"} · ${p.hand || "right"} hand`;
@@ -176,6 +189,7 @@
       el.videoName.textContent = String(vid.name || "video"); el.videoFill.style.width = (pr * 100).toFixed(1) + "%"; el.videoPct.textContent = Math.round(pr * 100) + "%";
     }
     renderSkillEdit();
+    renderTeach();
     drawRobot(); drawCam();
     if (tapFx.length || pendingTap) schedule(); // keep animating ripples
   }
@@ -278,6 +292,19 @@
       const t = `${lab} ${typeof sc === "number" ? sc.toFixed(2) : sc}`, tw = ctx.measureText(t).width + 8;
       ctx.fillStyle = "rgba(242,163,58,.92)"; ctx.fillRect(a[0], a[1] - 15, tw, 15); ctx.fillStyle = "#1a1204"; ctx.fillText(t, a[0] + 4, a[1] - 13);
     }
+    const tch = s.teach && typeof s.teach === "object" ? s.teach : null, ev = tch && tch.evidence && typeof tch.evidence === "object" ? tch.evidence : null;
+    const hp = ev && (tch.phase === "recording" || tch.phase === "confirm") ? arr(ev.hand_uv).filter(isUV) : [];
+    if (hp.length > 1) { // demonstrated hand path (teach evidence)
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(0,0,0,.35)"; ctx.lineWidth = 6; ctx.beginPath(); hp.forEach((q, i) => { const [x, y] = P(q); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+      for (let i = 1; i < hp.length; i++) {
+        const a = P(hp[i - 1]), b = P(hp[i]), k = i / (hp.length - 1);
+        ctx.strokeStyle = `hsla(${25 + k * 200}, 85%, 60%, ${0.45 + 0.55 * k})`; ctx.lineWidth = 3.5;
+        ctx.beginPath(); ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]); ctx.stroke();
+      }
+      const [ex, ey] = P(hp[hp.length - 1]); ctx.fillStyle = "#f59145"; ctx.beginPath(); ctx.arc(ex, ey, 6, 0, 7); ctx.fill();
+      ctx.strokeStyle = "#fff"; ctx.lineWidth = 2; ctx.stroke();
+    }
     const pose = arr(s.pose);
     if (pose.length >= 25) {
       const follow = s.mode === "FOLLOW", col = follow ? "rgba(79,209,232,.95)" : "rgba(228,228,231,.7)";
@@ -354,6 +381,8 @@
   new ResizeObserver(schedule).observe(el.robotFrame); new ResizeObserver(schedule).observe(el.camFrame);
 
   document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.view === "3d") { view3d = true; schedule(); return; } // client-side view: the server keeps rendering as is
+    view3d = false;
     send({ type: "view", name: b.dataset.view }); state = Object.assign({}, state, { view: b.dataset.view }); schedule();
   }));
   $("runPath").addEventListener("click", () => runTask("follow_path", {}, "button"));
@@ -365,7 +394,7 @@
   let seq = 0, lastTaskKey = "", lastTaskChange = 0, intentCount = 0;
   const tasks = new Map();
   const TITLES = { pick_place: "Pick & place", reach: "Reach", follow_path: "Follow path", follow_me: "Follow me", learn_skill: "Learn skill",
-    play_skill: "Play skill", set_speed: "Set speed", stop: "Stop", home: "Home", reset_scene: "Reset scene", export: "Export", point: "Point on robot view",
+    play_skill: "Play skill", propose_task: "Task understood", set_speed: "Set speed", stop: "Stop", home: "Home", reset_scene: "Reset scene", export: "Export", point: "Point on robot view",
     edit_skill: "Edit skill", compile_for: "Compile for robot", show_video: "Imitate a video" };
   function actionTitle(a) { return TITLES[a] || String(a || "Task").replace(/_/g, " "); }
   function argsSummary(action, a) {
@@ -472,8 +501,134 @@
       }
     }
     trackVideo();
+    onSay();
     // marker created after our tap
     if (pendingTap && arr(state.markers).length !== pendingTap.n) pendingTap = null;
+  }
+
+  // ------------------------------------------------------------------ teach by showing (Show & Tell)
+  const TEACH_START = /\b(start teaching|let me show you|i'?ll show you|watch me|let me teach you|i'?ll teach you|teach (you|it) (something|a task))\b|보여\s?줄게|가르쳐\s?줄게/;
+  const TEACH_STOP = /^(ok(ay)?[, ]+)?(done|that'?s it|that is it|finished|i'?m done|all done|done showing)\b|\bthat'?s all\b|^끝|끝났어|다\s?했어/;
+  const TEACH_YES = /^(yes|yeah|yep|yup|correct|right|exactly|sure|ok(ay)?|go ahead|do it|try it|practice|sounds good|perfect)\b|^(맞아|응|네|예|그래|좋아|해봐|연습해)/;
+  const TEACH_SAVE = /\b(?:save|remember|call|name)\s+(?:it|this|that)\s+(?:as\s+)?["“']?(.+?)["”']?$|["“']?(.+?)["”']?\s*(?:으로|로|라고)\s*저장/;
+  const teachPhase = () => (state.teach && typeof state.teach === "object" && state.teach.phase) || "idle";
+  const teachCmd = (cmd, extra) => send(Object.assign({ type: "teach", cmd }, extra || {}));
+  function teachStart() { if (teachCmd("start")) addLine("sys", "Teaching started — show the task on your camera and explain it out loud. Say “done” when finished."); else toast("Not connected to the robot."); }
+  function teachStop() { teachCmd("stop"); addLine("sys", "Got it — working out what you showed me…"); }
+  function teachPractice() { teachCmd("practice"); addLine("sys", "Practicing in simulation with my own body…"); }
+  function teachCorrect(text) { teachCmd("correct", { text }); }
+  function teachSave(name) { name = String(name || "").trim(); if (!name) return; teachCmd("save", { name }); addLine("sys", `Saving skill “${name}”…`); }
+  // returns true when the utterance was consumed by the teaching flow
+  function teachHear(text) {
+    const t = String(text).trim(), low = t.toLowerCase().replace(/[.!?。]+$/g, "").trim(), ph = teachPhase();
+    if (!low) return false;
+    if (ph === "recording") {
+      if (TEACH_STOP.test(low)) { teachStop(); return true; }
+      teachCmd("utterance", { text: t }); return true;
+    }
+    if (TEACH_START.test(low)) { teachStart(); return true; }
+    if (ph === "confirm" || ph === "done") {
+      const sv = t.match(TEACH_SAVE); if (sv && (sv[1] || sv[2])) { teachSave(sv[1] || sv[2]); return true; }
+      if (TEACH_YES.test(low)) { teachPractice(); return true; }
+      if (/^(stop|halt|멈춰|정지)\b/.test(low)) return false;
+      teachCorrect(t); return true;
+    }
+    if (ph === "practice") {
+      if (/\b(stop|halt|wait)\b|멈춰|정지|그만/.test(low)) return false;
+      teachCorrect(t); return true;
+    }
+    return false;
+  }
+  const PHASE_LABEL = { idle: "ready", recording: "watching you", confirm: "please confirm", practice: "practicing in sim", done: "done" };
+  const STRIP_ON = { idle: "show", recording: "show", confirm: "understand", practice: "practice", done: "correct" };
+  let lastQ = "";
+  function chip(text, cls) { const c = document.createElement("span"); c.className = "t-chip " + (cls || ""); c.textContent = text; return c; }
+  function renderTeach() {
+    const T = state.teach && typeof state.teach === "object" ? state.teach : {}, ph = ["idle", "recording", "confirm", "practice", "done"].includes(T.phase) ? T.phase : "idle";
+    const panel = $("teachPanel");
+    if (changed("tph", ph)) {
+      panel.dataset.phase = ph; $("teachPhase").textContent = PHASE_LABEL[ph];
+      panel.querySelectorAll(".teach-strip li").forEach((li) => li.classList.toggle("on", li.dataset.k === STRIP_ON[ph]));
+      $("teachCorrectForm").hidden = true;
+    }
+    $("teachRec").hidden = ph !== "recording";
+    if (ph === "recording") $("teachRec").textContent = `REC ${num(T.seconds).toFixed(1)}s`;
+    const evd = T.evidence && typeof T.evidence === "object" ? T.evidence : {};
+    const evTxt = [num(evd.grasps) ? `${num(evd.grasps)} grasp${num(evd.grasps) === 1 ? "" : "s"}` : "", evd.moved ? `moved ${evd.moved}` : "",
+      arr(evd.objects_seen).length ? "sees " + arr(evd.objects_seen).join(", ") : "", arr(evd.hand_uv).length ? `hand path ${arr(evd.hand_uv).length} pts` : ""].filter(Boolean);
+    if (changed("tev", evTxt)) { const e = $("teachEvidence"); e.innerHTML = ""; (evTxt.length ? evTxt : ["watching your hands…"]).forEach((x) => e.appendChild(chip(x, "ev"))); }
+    const utt = arr(T.utterances).map(String);
+    if (changed("tutt", utt)) {
+      const ul = $("teachUtt"); ul.innerHTML = "";
+      if (!utt.length) ul.innerHTML = '<li class="muted">Talk while you show: “pick up the mug, carry it over, don\'t touch the vase”.</li>';
+      for (const u of utt.slice(-6)) { const li = document.createElement("li"); li.textContent = u; ul.appendChild(li); }
+    }
+    const spec = T.spec && typeof T.spec === "object" ? T.spec : {};
+    if (changed("tspec", spec)) {
+      $("teachGoal").textContent = spec.goal ? String(spec.goal) : "";
+      const ol = $("teachSteps"); ol.innerHTML = "";
+      const steps = arr(spec.steps);
+      steps.forEach((st, i) => {
+        if (!st || typeof st !== "object") return;
+        const li = document.createElement("li"); li.dataset.status = st.status || "pending";
+        const n = document.createElement("b"); n.textContent = String(i + 1);
+        const body = document.createElement("div"); body.className = "t-step-body";
+        const row = document.createElement("div"); row.className = "t-step-row";
+        row.append(chip(String(st.action || "step").replace(/_/g, " "), "act"));
+        if (st.object) row.append(chip(String(st.object), "obj"));
+        if (st.target) { row.append(Object.assign(document.createElement("span"), { className: "t-arrow", textContent: "→" }), chip(String(st.target), "tgt")); }
+        const stx = document.createElement("span"); stx.className = "t-status mono"; stx.textContent = st.status || "pending"; row.append(stx);
+        body.append(row);
+        if (st.message) { const m = document.createElement("div"); m.className = "t-msg"; m.textContent = String(st.message); body.append(m); }
+        li.append(n, body); ol.appendChild(li);
+      });
+      const cons = $("teachCons"); cons.innerHTML = "";
+      for (const c of arr(spec.constraints)) {
+        if (!c) continue;
+        const txt = c.text || [String(c.type || "").replace(/_/g, " "), c.object].filter(Boolean).join(" ");
+        cons.appendChild(chip(txt, "con " + String(c.type || "")));
+      }
+      const done = steps.filter((x) => x && x.status === "done").length, bad = steps.filter((x) => x && x.status === "failed").length;
+      $("teachSummary").textContent = steps.length ? `${steps.length} step${steps.length === 1 ? "" : "s"}${done ? ` · ${done} done` : ""}${bad ? ` · ${bad} failed` : ""}` : "";
+    }
+    const q = T.question ? String(T.question) : "";
+    if (changed("tq", q)) {
+      $("teachQ").hidden = !q; $("teachQ").textContent = q;
+      if (q && q !== lastQ && ph !== "idle") { addLine("robot", q); if (!live.session) speak(q, "en-US"); }
+      lastQ = q;
+    }
+    $("teachConfirmBtns").hidden = !(ph === "confirm" || ph === "done");
+    $("teachYes").textContent = ph === "done" ? "Practice again" : "Yes, practice";
+    $("teachSaveForm").hidden = ph !== "done";
+  }
+  $("teachStart").addEventListener("click", teachStart);
+  $("teachCancel").addEventListener("click", () => { teachCmd("cancel"); addLine("sys", "Teaching cancelled."); });
+  const more = $("moreMenu");
+  more.addEventListener("click", (ev) => { if (ev.target.closest(".more-menu .btn")) more.open = false; });
+  document.addEventListener("pointerdown", (ev) => { if (more.open && !more.contains(ev.target)) more.open = false; });
+  $("teachStop").addEventListener("click", teachStop);
+  $("teachYes").addEventListener("click", teachPractice);
+  $("teachCorrectBtn").addEventListener("click", () => { const f = $("teachCorrectForm"); f.hidden = !f.hidden; if (!f.hidden) $("teachCorrectIn").focus(); });
+  $("teachCorrectForm").addEventListener("submit", (ev) => {
+    ev.preventDefault(); const v = $("teachCorrectIn").value.trim(); if (!v) return; $("teachCorrectIn").value = "";
+    addLine("user", v); teachCorrect(v); if (live.session) contextToModel(`The user corrected the taught task: "${v}"`);
+  });
+  $("teachSaveForm").addEventListener("submit", (ev) => { ev.preventDefault(); teachSave($("teachName").value); $("teachName").value = ""; });
+
+  // mock / scripted brain utterances: state.say = {id, text, kind: "robot"|"user"|"vision"}
+  let lastSayId = null;
+  function onSay() {
+    const sy = state.say; if (!sy || typeof sy !== "object" || sy.id == null || !sy.text) return;
+    const id = String(sy.id); if (id === lastSayId) return;
+    const first = lastSayId === null; lastSayId = id;
+    if (first && !state.mock && !settings.mock) return; // stale line from before this page loaded
+    const kind = sy.kind === "user" ? "user" : "robot";
+    const d = addLine(kind, String(sy.text));
+    if (sy.kind === "vision") {
+      d.classList.add("vision"); const tag = document.createElement("span"); tag.className = "vtag"; tag.textContent = "VISION";
+      d.querySelector(".txt").prepend(tag);
+    }
+    if (kind === "robot" && !first) speak(String(sy.text), "en-US");
   }
 
   // ------------------------------------------------------------------ text intents (rule parser, no key needed)
@@ -484,10 +639,14 @@
     if (m) return normRegion(m[1]);
     m = t.match(/\b(?:marker|point|spot)\s+([a-f])\b/); if (m) return m[1].toUpperCase();
     m = raw.match(/(?:^|[^A-Za-z])([A-F])(?:[^A-Za-z]|$)/); if (m && /[가-힣]/.test(raw)) return m[1];
+    if (ALONG_RE.test(t)) return "along my path";
+    if (DEICTIC_RE.test(t)) return "there";
     for (const [k, v] of KO_REGION) if (t.includes(k)) return v;
     m = t.match(/\b(left|right|center|centre|middle|front|back)\b/); if (m) return normRegion(m[1]);
     return null;
   }
+  const ALONG_RE = /\b(along|follow(?:ing)?|via|using|by)\s+(?:my|the|this|that)\s+(path|route|line|trajectory)\b|경로대로|내 경로|경로로|경로 따라/;
+  const DEICTIC_RE = /\b(over there|there|here|where i'?m pointing|where i point(?:ed)?|that spot|this spot)\b|저기|여기|거기|저쪽|이쪽/;
   function normRegion(x) { x = x.toLowerCase(); if (x === "centre" || x === "middle") return "center"; return x.length === 1 ? x.toUpperCase() : x; }
   const norm = (x) => String(x).toLowerCase().replace(/[^a-z0-9가-힣]+/g, " ").trim();
   function findSkill(name) { const n = norm(name); return arr(state.skills).map(String).find((k) => norm(k) === n) || null; }
@@ -500,6 +659,7 @@
     let m = t.match(/\b(?:learn|remember|save|call)\s+(?:this|it|that)\s+(?:as\s+)?["“']?(.+?)["”']?$/) || t.match(/\b(?:learn|remember) as ["“']?(.+?)["”']?$/);
     if (m) return ["learn_skill", { name: m[1].trim() }];
     m = raw.match(/["“']?(.+?)["”']?\s*(?:으로|로|라고)\s*(?:배워|기억해|저장해)/); if (m) return ["learn_skill", { name: m[1].trim() }];
+    if (ALONG_RE.test(t) && (/\b(mug|cup|it|that|carry|move|bring|take|put)\b|\bmy\s+(path|route)\b|머그|컵|옮겨|내 경로|경로대로/.test(t))) return ["pick_place", { object: "mug", target: "along my path" }];
     if (/\b(follow|run|execute|go along|trace)\s+(the\s+)?(path|line|route)\b|경로/.test(t)) return ["follow_path", {}];
     const hasObj = /\b(mug|cup)\b|머그|컵/.test(t);
     const place = /\b(pick|put|move|place|bring|carry|set|drop|take)\b|옮겨|놓아|놔|올려|가져/.test(t);
@@ -537,8 +697,9 @@
 
   async function handleText(text, source = "typed") {
     text = String(text || "").trim(); if (!text) return;
-    if (live.session) { live.session.sendText(text); return; } // gemini.js echoes it into the transcript
+    if (live.session) { live.session.sendText(text); return; } // gemini.js echoes it as a final user transcript -> teachHear there
     addLine("user", text);
+    if (teachHear(text)) return;
     const it = parseIntent(text);
     if (!it) { const msg = "I didn't catch an action. Try “put the mug on the right”, “follow me”, or tap the table."; addLine("robot", msg); speak(msg); return; }
     if (it[0] === "clear") { clearAll(); speak("Cleared."); return; }
@@ -547,12 +708,12 @@
   }
   el.cmdForm.addEventListener("submit", (ev) => { ev.preventDefault(); const v = el.cmd.value; el.cmd.value = ""; handleText(v, "typed"); });
 
-  function speak(msg) {
+  function speak(msg, lang) {
     if (live.session || !("speechSynthesis" in window) || !msg) return;
     try {
       speechSynthesis.cancel();
       const short = String(msg).split(/(?<=[.!?])\s/).slice(0, 2).join(" ");
-      const u = new SpeechSynthesisUtterance(short); u.lang = settings.lang; u.rate = 1.05;
+      const u = new SpeechSynthesisUtterance(short); u.lang = lang || settings.lang; u.rate = 1.05;
       if (rec.on) { rec.paused = true; try { rec.r.stop(); } catch (e) { /* noop */ } }
       u.onend = u.onerror = () => { if (rec.on && rec.paused) { rec.paused = false; startRecognizer(); } };
       speechSynthesis.speak(u);
@@ -697,13 +858,17 @@
     "Following the user's body is a mode: only call follow_me(enabled=true) when they ask you to follow, copy or mirror them; turn it off when they say stop. After following, they may say 'learn this as <name>' -> learn_skill, and later 'do <name>' -> play_skill.",
     "Messages starting with [context] or [robot update] are from the app, not the user: use them silently; speak only if a robot update reports a failure or completion the user is waiting for.",
     "Skills can be edited by body part and time range: 'only this part faster', 'left arm bigger', 'make 2 to 4 seconds slower' -> edit_skill (omit t0/t1 when they mean the range selected on screen). 'Would it work on a UR5e / an arm?' -> compile_for(robot='ur5e').",
+    "When the user says 'there' / 'here' / 'over there' while pointing (camera gesture), call pick_place (or reach) with target 'there' — the server knows where they point (marker P). When they say 'carry it along my path' / 'follow my route', call pick_place with target 'along my path' (the route they built in the 3D editor or drew on the view).",
+    "If the user asks to wipe or trace a shape, ask them to draw it on the robot view or place waypoints in the 3D view, then run it with follow_path.",
+    "TEACH BY SHOWING is the core experience: the user teaches you a task like teaching a friend — they show it on camera and explain it out loud. You do NOT copy their motion live. The app handles 'start teaching' / 'done' / 'yes' phrases itself.",
+    "During teaching, watch the demonstration frames and listen; when they finish (or when you understand), call propose_task with the goal, steps (pick_place object -> target) and constraints (avoid the vase, keep something still, keep upright, slow, grasp side/top), then ask them to confirm in ONE sentence. If they correct you, call propose_task again with the fix.",
     "Speak in short, warm sentences — one or two at a time. Reply in the user's language.",
   ].join("\n");
   const S = (d) => ({ type: "STRING", description: d });
   const TOOLS = [{ functionDeclarations: [
     { name: "pick_place", description: "Pick up an object and place it at a target on the table.", parameters: { type: "OBJECT", properties: {
-      object: S("Object to pick, e.g. 'mug'."), target: S("Where to place it: region (left/right/center/front/back), marker letter (A-F), or a short visual description.") }, required: ["object"] } },
-    { name: "reach", description: "Move a hand to hover over a target on the table.", parameters: { type: "OBJECT", properties: { target: S("Region, marker letter, or visual description.") }, required: ["target"] } },
+      object: S("Object to pick, e.g. 'mug'."), target: S("Where to place it: region (left/right/center/front/back), marker letter (A-F or P), 'there' when the user points and says there/here, 'along my path' to carry it along the user's drawn/3D route, or a short visual description.") }, required: ["object"] } },
+    { name: "reach", description: "Move a hand to hover over a target on the table.", parameters: { type: "OBJECT", properties: { target: S("Region, marker letter, 'there' (where the user points), or visual description.") }, required: ["target"] } },
     { name: "follow_path", description: "Execute the path the user drew on the robot view." },
     { name: "follow_me", description: "Turn imitation (follow the user's body) on or off. Auto-records while on.", parameters: { type: "OBJECT", properties: { enabled: { type: "BOOLEAN", description: "true to start following, false to stop." } }, required: ["enabled"] } },
     { name: "learn_skill", description: "Save the last follow-me recording as a named skill.", parameters: { type: "OBJECT", properties: { name: S("Skill name, e.g. 'wave'.") }, required: ["name"] } },
@@ -718,6 +883,10 @@
       part: { type: "STRING", enum: ["left_arm", "right_arm", "arms", "legs", "body"], description: "Body part to edit." },
       speed: { type: "NUMBER", description: "Time scale: 1.5 = faster, 0.7 = slower." }, amplitude: { type: "NUMBER", description: "Motion size: 1.3 = bigger, 0.75 = smaller." } }, required: ["part"] } },
     { name: "compile_for", description: "Check the last recorded/approved motion or task path on a different robot and report what transfers.", parameters: { type: "OBJECT", properties: { robot: S("Target robot, e.g. 'ur5e'.") }, required: ["robot"] } },
+    { name: "propose_task", description: "During teaching (Teach by Showing): propose the task you understood from the user's demonstration frames + speech. Shown to the user as a card to confirm.", parameters: { type: "OBJECT", properties: {
+      goal: S("One-sentence goal, e.g. 'Move the mug to the right side without touching the vase'."),
+      steps: { type: "ARRAY", items: { type: "OBJECT", properties: { action: { type: "STRING", enum: ["pick_place"] }, object: S("Object, e.g. 'mug'."), target: S("Region, marker letter, 'there', or 'along my path'.") }, required: ["action", "object"] } },
+      constraints: { type: "ARRAY", items: { type: "OBJECT", properties: { type: { type: "STRING", enum: ["avoid", "keep_still", "upright", "slow", "grasp_side", "grasp_top"] }, object: S("Object the constraint is about, if any.") }, required: ["type"] } } }, required: ["goal", "steps"] } },
     { name: "point_on_robot_view", description: "Find something in the robot's camera view and drop a marker on it. Returns the marker letter.", parameters: { type: "OBJECT", properties: { query: S("What to find, e.g. 'the empty spot near the edge'.") }, required: ["query"] } },
   ] }];
 
@@ -759,6 +928,8 @@
     if (!tgt || args.target_uv) return args;
     const low = tgt.toLowerCase().replace(/^the\s+/, "").replace(/\s+(side|of the table)$/, "");
     if (REGIONS.includes(low)) return Object.assign({}, args, { target: low });
+    if (ALONG_RE.test(low) || /^along\b/.test(low)) return Object.assign({}, args, { target: "along my path" });
+    if (/^(there|here|over there|that spot|this spot)$/.test(low) || /where (i'?m|i am|they'?re|the user is) pointing|where i point/.test(low)) return Object.assign({}, args, { target: "there" });
     const mk = tgt.match(/^(?:marker\s+|point\s+)?([a-z])$/i);
     if (mk) return Object.assign({}, args, { target: mk[1].toUpperCase() });
     if (!G() || typeof G().point !== "function" || !settings.key) return args; // let the server try
@@ -771,6 +942,11 @@
     const name = call && call.name, args = (call && call.args) || {};
     try {
       if (name === "point_on_robot_view") return await pointOnRobotView(String(args.query || ""), "gemini");
+      if (name === "propose_task") {
+        const spec = { goal: String(args.goal || ""), steps: arr(args.steps).map((x) => Object.assign({ action: "pick_place" }, x || {})), constraints: arr(args.constraints) };
+        if (!send({ type: "teach", cmd: "set_spec", spec })) return { ok: false, message: "Not connected to the robot." };
+        return { ok: true, message: "The task card is shown to the user. Ask them to confirm in one short sentence (yes = practice, or they correct you)." };
+      }
       if (!TITLES[name]) return { ok: false, message: `unknown tool ${name}` };
       let a = Object.assign({}, args);
       if (name === "pick_place" || name === "reach") a = await resolveTarget(a, "gemini");
@@ -800,7 +976,7 @@
     if (!line) { line = addLine(role === "user" ? "user" : "robot", text); live.lines[role] = line; }
     line.querySelector(".txt").textContent = text;
     line.classList.toggle("interim", !tr.final);
-    if (tr.final) live.lines[role] = null;
+    if (tr.final) { live.lines[role] = null; if (role === "user") teachHear(text); }
     const f = el.feed; if (f.scrollHeight - f.scrollTop - f.clientHeight < 120) f.scrollTop = f.scrollHeight;
   }
   function contextToModel(text) { if (live.session && live.session.isOpen !== false) { try { live.session.sendText("[context] " + text); } catch (e) { /* noop */ } } }
@@ -881,6 +1057,7 @@
   function openSettings() {
     $("setKey").value = settings.key; $("setLive").value = settings.liveModel; $("setEr").value = settings.erModel;
     $("setLive").placeholder = (G() && G().DEFAULT_LIVE_MODEL) || "live model"; $("setEr").placeholder = (G() && G().DEFAULT_ER_MODEL) || "ER model";
+    $("setMock").checked = typeof state.mock === "boolean" ? state.mock : settings.mock;
     $("setSendCam").checked = settings.sendCam; $("setSendRobot").checked = settings.sendRobot; $("setLang").value = settings.lang;
     $("geminiStatus").textContent = G() ? "gemini.js loaded · " + (settings.key ? "key set → Talk uses Gemini Live" : "no key → Talk uses browser speech") : "gemini.js not loaded → Talk uses browser speech";
     if (typeof el.dlg.showModal === "function") el.dlg.showModal(); else el.dlg.setAttribute("open", "");
@@ -896,6 +1073,10 @@
     if (rec.r) rec.r.lang = settings.lang;
     if (live.state === "off" || live.state === "error") setTalk("off");
     toast("Settings saved.");
+  });
+  $("setMock").addEventListener("change", () => {
+    const on = $("setMock").checked; LS.set("pc.mock", on ? "1" : "0"); send({ type: "mock", enabled: on }); schedule();
+    addLine("sys", on ? "Mock AI on: offline gestures + scripted replies." : "Mock AI off.");
   });
   $("settingsBtn").addEventListener("click", openSettings); $("settingsBtnM").addEventListener("click", openSettings);
 
@@ -925,7 +1106,8 @@
     ev.stopPropagation(); send({ type: "view", name: state.view === "robot" ? "stage" : "robot" });
   });
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => document.getElementById("pip").addEventListener(t, (ev) => ev.stopPropagation()));
-  window.PC = { ingest(s) { state = s || {}; gotState = true; onState(); schedule(); }, runTask, parseIntent, get state() { return state; } };
+  window.PC = { ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, get state() { return state; } };
+  if (P3()) mount3d();
 
   setTalk("off");
   schedule();

@@ -484,3 +484,111 @@ dialog::backdrop { background: rgba(251, 251, 253, .6); -webkit-backdrop-filter:
 .talk-big { background: var(--ink) !important; color: #fff !important; }
 .badge.follow { color: #fff; background: var(--rb-blue); box-shadow: 0 0 12px rgba(29, 168, 229, .35); }
 .se-ticks i { background: rgba(29, 29, 31, .08); }
+
+/* ---------------------------------------------------------------- 3D spatial editor (web/view3d.js) */
+.view3d { position: absolute; inset: 0; z-index: 4; background: #f5f5f7; overflow: hidden; }
+.view3d[hidden] { display: none; }
+.view3d canvas.v3d-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: crosshair; touch-action: none; }
+.robot-frame.v3d #robotImg, .robot-frame.v3d #robotOverlay, .robot-frame.v3d .pip, .robot-frame.v3d #robotEmpty, .robot-frame.v3d #pathBar { display: none !important; }
+.v3d-panel {
+  position: absolute; left: 12px; top: 12px; z-index: 6; width: min(340px, calc(100% - 24px)); display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 12px; border-radius: 18px; background: rgba(255, 255, 255, .8); border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); box-shadow: var(--shadow); font-size: 12px; color: var(--t1);
+}
+.v3d-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.v3d-row .grow { flex: 1; }
+.v3d-row .label { font-size: 10px; letter-spacing: .12em; color: var(--t2); }
+.v3d-sum { font-size: 11px; color: var(--t2); }
+.v3d-sum[data-v="ok"] { color: var(--ok); }
+.v3d-sum[data-v="bad"] { color: var(--bad); }
+.v3d-list { list-style: none; margin: 0; padding: 0; max-height: 150px; overflow: auto; display: flex; flex-direction: column; gap: 2px; }
+.v3d-list li { display: flex; align-items: center; gap: 8px; padding: 3px 8px; border-radius: 999px; cursor: pointer; font-size: 11px; }
+.v3d-list li:hover { background: var(--active); }
+.v3d-list li.sel { background: rgba(245, 145, 69, .14); }
+.v3d-list li b { width: 16px; height: 16px; border-radius: 50%; background: var(--rb-indigo); color: #fff; font-size: 10px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.v3d-list li.sel b { background: var(--rb-orange); }
+.v3d-list li .mono { color: var(--t2); }
+.v3d-list li .h { margin-left: auto; color: var(--t1); font-weight: 500; }
+.v3d-hint { font-size: 10.5px; line-height: 1.35; color: var(--t3); }
+.v3d-views { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); z-index: 6; }
+.v3d-msg { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 5; padding: 8px 16px; border-radius: 999px;
+  background: rgba(255, 255, 255, .88); border: 1px solid var(--line); box-shadow: var(--shadow); font-size: 12.5px; color: var(--t2); pointer-events: none; }
+.v3d-msg[hidden] { display: none; }
+.v3d-msg.warn { color: var(--hot); }
+@media (max-width: 760px) { .v3d-panel { width: calc(100% - 20px); left: 10px; top: 10px; padding: 8px 10px; } .v3d-list { max-height: 72px; } .v3d-hint { display: none; } }
+
+/* mock AI pill, gesture chip, vision tag */
+.mock-pill { color: #fff; background: var(--ink); border-color: var(--ink); font-size: 10px; letter-spacing: .1em; }
+.mock-pill[hidden], .gesture-chip[hidden] { display: none; }
+.gesture-chip { color: var(--rb-indigo); border-color: rgba(92, 119, 223, .35); background: var(--accent-tint); font-size: 10.5px; }
+.line .vtag { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 999px; background: var(--rb-violet); color: #fff; font-family: var(--mono); font-size: 9px; letter-spacing: .1em; vertical-align: 1px; }
+.line.vision .who { color: var(--rb-violet); }
+
+/* ---------------------------------------------------------------- Teach by Showing (hero panel) */
+.legacy, .legacy-edit { display: none !important; }
+.act-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.act-hint b { color: var(--t1); font-weight: 600; }
+.more { position: relative; }
+.more > summary { list-style: none; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; min-width: 40px; font-size: 16px; letter-spacing: .05em; }
+.more > summary::-webkit-details-marker { display: none; }
+.more-menu { position: absolute; right: 0; bottom: calc(100% + 8px); z-index: 30; display: flex; flex-direction: column; align-items: stretch; gap: 2px; padding: 6px;
+  min-width: 190px; background: rgba(255, 255, 255, .96); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-lg); }
+.more-menu .btn { justify-content: flex-start; width: 100%; display: inline-flex; align-items: center; gap: 6px; }
+
+.teach { flex: none; display: flex; flex-direction: column; max-height: 58%; min-height: 0; }
+.teach .panel-head { flex: none; }
+.teach-strip { flex: none; list-style: none; margin: 0; padding: 8px 12px 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; }
+.teach-strip li { display: flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 999px; font-size: 10.5px; line-height: 1.15; color: var(--t3); background: rgba(29, 29, 31, .035); }
+.teach-strip li b { flex: none; width: 15px; height: 15px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 9px; background: rgba(29, 29, 31, .1); color: var(--t2); }
+.teach-strip li.on { color: var(--ink); background: #fff; box-shadow: 0 0 0 1.5px rgba(92, 119, 223, .45); font-weight: 600; }
+.teach-strip li.on b { background: var(--ink); color: #fff; }
+.teach-body { min-height: 0; overflow-y: auto; padding: 10px 12px 12px; }
+.teach .t-idle, .teach .t-rec, .teach .t-spec { display: none; flex-direction: column; gap: 9px; }
+.teach[data-phase="idle"] .t-idle { display: flex; }
+.teach[data-phase="recording"] .t-rec { display: flex; }
+.teach[data-phase="confirm"] .t-spec, .teach[data-phase="practice"] .t-spec, .teach[data-phase="done"] .t-spec { display: flex; }
+.teach-go { height: 46px; font-size: 14.5px; width: 100%; display: inline-flex; align-items: center; justify-content: center; gap: 8px; }
+.teach-go svg { width: 16px; height: 16px; }
+.teach .t-idle p { margin: 0; line-height: 1.45; }
+.teach[data-phase="recording"] { box-shadow: 0 0 0 2px rgba(214, 69, 58, .35), var(--shadow); }
+.t-evidence { display: flex; flex-wrap: wrap; gap: 4px; }
+.t-utt { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; max-height: 120px; overflow-y: auto; }
+.t-utt li { font-size: 12.5px; padding: 5px 10px; border-radius: 12px; background: rgba(92, 119, 223, .08); color: var(--t1); }
+.t-utt li.muted { background: transparent; padding: 0; color: var(--t3); font-size: 11.5px; }
+.t-card { border-radius: 16px; background: #fff; border: 1px solid var(--line); padding: 10px 11px; display: flex; flex-direction: column; gap: 7px; box-shadow: 0 1px 2px rgba(0, 0, 0, .03); }
+.t-card-head { display: flex; align-items: center; gap: 6px; }
+.t-card-head .label { font-size: 10px; letter-spacing: .12em; color: var(--rb-indigo); }
+.t-goal { font-size: 13px; font-weight: 600; line-height: 1.35; }
+.t-goal:empty { display: none; }
+.t-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; }
+.t-steps li { display: flex; gap: 8px; align-items: flex-start; }
+.t-steps li > b { flex: none; width: 19px; height: 19px; border-radius: 50%; background: var(--ink); color: #fff; font-size: 10.5px; display: inline-flex; align-items: center; justify-content: center; margin-top: 1px; }
+.t-steps li[data-status="running"] > b { background: var(--cyan); animation: pulse 1s infinite; }
+.t-steps li[data-status="done"] > b { background: var(--ok); }
+.t-steps li[data-status="failed"] > b { background: var(--bad); }
+.t-step-body { min-width: 0; flex: 1; }
+.t-step-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.t-arrow { color: var(--t3); font-size: 12px; }
+.t-status { margin-left: auto; font-size: 10px; color: var(--t3); text-transform: uppercase; letter-spacing: .06em; }
+.t-steps li[data-status="running"] .t-status { color: var(--cyan); }
+.t-steps li[data-status="done"] .t-status { color: var(--ok); }
+.t-steps li[data-status="failed"] .t-status { color: var(--bad); }
+.t-msg { font-size: 11.5px; color: var(--t2); margin-top: 3px; line-height: 1.35; }
+.t-steps li[data-status="failed"] .t-msg { color: var(--bad); }
+.t-chip { display: inline-flex; align-items: center; height: 21px; padding: 0 8px; border-radius: 999px; font-size: 11px; border: 1px solid var(--line); background: var(--field); color: var(--t1); white-space: nowrap; }
+.t-chip.act { background: var(--ink); color: #fff; border-color: var(--ink); text-transform: lowercase; }
+.t-chip.obj { background: rgba(245, 145, 69, .12); border-color: rgba(245, 145, 69, .35); color: #9a4d12; }
+.t-chip.tgt { background: rgba(92, 119, 223, .1); border-color: rgba(92, 119, 223, .35); color: var(--rb-indigo); }
+.t-chip.ev { font-family: var(--mono); font-size: 10px; background: rgba(214, 69, 58, .06); border-color: rgba(214, 69, 58, .2); color: var(--t2); }
+.t-cons { display: flex; flex-wrap: wrap; gap: 4px; }
+.t-cons:empty { display: none; }
+.t-chip.con { background: rgba(214, 69, 58, .07); border-color: rgba(214, 69, 58, .3); color: #a3342b; }
+.t-chip.con.slow, .t-chip.con.upright, .t-chip.con.grasp_side, .t-chip.con.grasp_top { background: rgba(29, 168, 229, .08); border-color: rgba(29, 168, 229, .3); color: #146f99; }
+.t-bubble { position: relative; align-self: flex-start; max-width: 95%; padding: 8px 12px; border-radius: 16px 16px 16px 4px; background: var(--ink); color: #fff; font-size: 13px; line-height: 1.4; }
+.t-bubble[hidden], .t-correct[hidden], .t-save[hidden], .t-btns[hidden] { display: none; }
+.t-btns { display: flex; gap: 6px; }
+.t-btns .btn { flex: 1; }
+.t-correct, .t-save { display: flex; gap: 6px; }
+.t-correct input, .t-save input { flex: 1; min-width: 0; height: 30px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line2); background: #fff; font-size: 12.5px; }
+.badge.rec[hidden] { display: none; }
+@media (max-width: 760px) { .teach { max-height: none; } .act-hint { display: none; } }
