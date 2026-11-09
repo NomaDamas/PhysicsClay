@@ -23,12 +23,14 @@ COLLISION_CHECKS = [
     ("left_hand_collision", "pelvis_collision"), ("right_hand_collision", "pelvis_collision"),
     ("left_hand_collision", "right_hand_collision"),
     ("left_hand_collision", "left_thigh_collision"), ("right_hand_collision", "right_thigh_collision"),
+    ("left_hand_collision", "table"), ("right_hand_collision", "table"),
+    ("left_hand_collision", "mug_collision"), ("right_hand_collision", "mug_collision"),
 ]
 PENETRATION_ONLY = {"left_elbow_yaw_collision", "right_elbow_yaw_collision"}
 
 
 def pretty(name):
-    return name.replace("_joint", "").replace("_collision", "").replace("_", " ")
+    return name.replace("_joint", "").replace("_collision", "").replace("_", " ").replace("mug", "the mug").replace("table", "the table")
 
 
 class Validator:

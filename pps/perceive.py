@@ -20,7 +20,7 @@ SKELETON = [(11, 13), (13, 15), (12, 14), (14, 16), (11, 12), (11, 23), (12, 24)
             (15, 19), (15, 21), (15, 17), (16, 20), (16, 22), (16, 18), (0, 11), (0, 12)]
 W, H, TOP, BOT = 1280, 720, 56, 170
 FONT = cv2.FONT_HERSHEY_SIMPLEX
-MODE_COLOR = {"MIRROR": (160, 160, 160), "REC": (60, 60, 230), "PREVIEW": (230, 160, 40), "SAVED": (80, 200, 80)}
+MODE_COLOR = {"MIRROR": (160, 160, 160), "REC": (60, 60, 230), "PREVIEW": (230, 160, 40), "FOLLOW": (80, 230, 255), "SAVED": (80, 200, 80)}
 
 
 class Pose:
@@ -106,6 +106,57 @@ def holding(objects, pts):
     return out
 
 
+class Sketch:
+    """Mouse-drawn trajectory on the camera view (canvas pixel coords)."""
+
+    def __init__(self):
+        self.points, self.drawing, self.finished = [], False, False
+
+    def on_mouse(self, event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.points, self.drawing, self.finished = [(x, y)], True, False
+        elif event == cv2.EVENT_MOUSEMOVE and self.drawing:
+            if not self.points or (abs(x - self.points[-1][0]) + abs(y - self.points[-1][1])) > 6:
+                self.points.append((x, y))
+        elif event == cv2.EVENT_LBUTTONUP and self.drawing:
+            self.drawing = False
+            self.finished = len(self.points) >= 2
+
+
+def resample(points, n):
+    pts = np.asarray(points, dtype=float)
+    seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    if cum[-1] < 1e-6:
+        return pts[:1].tolist()
+    n = max(2, min(n, len(pts)))
+    out = [[float(np.interp(t, cum, pts[:, k])) for k in range(pts.shape[1])] for t in np.linspace(0, cum[-1], n)]
+    return out
+
+
+def lift_path(px_raw, pts2d, lm):
+    """2D sketch (raw video px) -> 3D human-world points in the person's frontal plane (shoulder depth)."""
+    try:
+        ls, rs = np.array(pts2d[11]), np.array(pts2d[12])
+        lsw, rsw = np.array(lm["l_shoulder"]), np.array(lm["r_shoulder"])
+    except (KeyError, TypeError, IndexError):
+        return None
+    px_w, m_w = np.linalg.norm(ls - rs), np.linalg.norm((lsw - rsw)[:2])
+    if px_w < 20 or m_w < 0.1:
+        return None
+    sc = m_w / px_w
+    c_px, c_w = (ls + rs) / 2, (lsw + rsw) / 2
+    return [[float(c_w[0] + (p[0] - c_px[0]) * sc), float(c_w[1] + (p[1] - c_px[1]) * sc), float(c_w[2])] for p in px_raw]
+
+
+def nearest_hand(px_first, pts2d):
+    if not pts2d:
+        return "r"
+    dl = np.hypot(px_first[0] - pts2d[15][0], px_first[1] - pts2d[15][1])
+    dr = np.hypot(px_first[0] - pts2d[16][0], px_first[1] - pts2d[16][1])
+    return "l" if dl < dr else "r"
+
+
 def grip_state(lm, side):
     try:
         wr, idx, el = (np.array(lm[f"{side}_{k}"]) for k in ("wrist", "index", "elbow"))
@@ -144,13 +195,15 @@ def draw_hud(canvas, rb, engaged, grip, hold, scene, fps, cmd_mode, cmd_buf, pos
         put(canvas, f"PREVIEW {rb.get('preview_t', 0):.1f}s / {rb.get('rec_duration', 0):.1f}s", (640, y0 + 28), 0.6, (230, 160, 40))
     cv2.rectangle(canvas, (0, y0), (W, y0 + BOT), (22, 22, 22), -1)
     put(canvas, "ROBOT SAYS", (16, y0 + 28), 0.6, (120, 200, 255), 2)
-    msgs = rb.get("messages", [])
+    msgs = list(rb.get("messages", []))
+    if rb.get("path_msg"):
+        msgs = [rb["path_msg"]] + msgs
     if not pose_ok:
         msgs = ["No person detected"]
     elif not msgs:
         msgs = ["OK. Following your intent." if engaged else "Paused. Drag the ghost targets in the sim to shape the pose."]
     for i, mtxt in enumerate(msgs[:3]):
-        col = (90, 210, 90) if mtxt.startswith(("OK", "Paused")) else (80, 120, 255)
+        col = (90, 210, 90) if mtxt.startswith(("OK", "Paused")) or "all reachable" in mtxt else (80, 120, 255)
         put(canvas, "- " + mtxt, (16, y0 + 58 + 26 * i), 0.62, col, 1)
     put(canvas, "CONTEXT", (900, y0 + 28), 0.6, (120, 200, 255), 2)
     hands = []
@@ -162,7 +215,7 @@ def draw_hud(canvas, rb, engaged, grip, hold, scene, fps, cmd_mode, cmd_buf, pos
     if rb.get("saved"):
         put(canvas, f"saved: {rb['saved'].split('/')[-1]}", (900, y0 + 110), 0.45, (80, 200, 80))
     prompt = "> " + cmd_buf + ("_" if cmd_mode else "")
-    put(canvas, prompt if cmd_mode else "/ command   space clutch   R rec   P preview   A approve   M mirror   H home   Q quit",
+    put(canvas, prompt if cmd_mode else "draw a path with the mouse, F follow, C clear   |   space clutch   R rec   P preview   A approve   M mirror   H home   / cmd",
         (16, y0 + BOT - 16), 0.55, (200, 200, 200) if cmd_mode else (130, 130, 130))
 
 
@@ -194,6 +247,11 @@ def main():
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, H)
         source = "webcam"
 
+    sketch = Sketch()
+    if not args.no_window:
+        cv2.namedWindow("PhysicsClay")
+        cv2.setMouseCallback("PhysicsClay", sketch.on_mouse)
+    path_px, pending_path, last_pts, last_lm = [], None, None, None
     engaged, cmd_mode, cmd_buf = args.video is not None, False, ""   # a video file starts engaged
     key_to_send, cmd_to_send = None, None
     rb, grip_hist = {}, {"l": [], "r": []}
@@ -221,6 +279,17 @@ def main():
         else:
             frame = np.full((H, W, 3), 40, np.uint8)
             lm, pts = fake_landmarks(time.time() - t0), None
+        if lm:
+            last_pts, last_lm = pts, lm
+        if sketch.finished:
+            sketch.finished = False
+            raw = resample([(W - x, y - TOP) for x, y in sketch.points], 24)
+            lifted = lift_path(raw, last_pts, last_lm) if last_lm else None
+            if lifted:
+                pending_path = {"points": lifted, "hand": nearest_hand(raw[0], last_pts)}
+                path_px = [(int(W - p[0]), int(p[1])) for p in raw]   # flipped display coords
+            else:
+                path_px = []
         scene = objects(frame) if objects is not None else []
         hold = holding(scene, pts)
         grip = {}
@@ -236,8 +305,9 @@ def main():
             saved_seen = rb["saved"]
             rb["_saved_flash"] = time.time() + 3.0
         send({"t": time.time(), "engaged": engaged, "lm": lm, "grip": grip, "holding": hold,
-              "scene": sorted({o[0] for o in scene}), "source": source, "key": key_to_send, "cmd": cmd_to_send})
-        key_to_send = cmd_to_send = None
+              "scene": sorted({o[0] for o in scene}), "source": source, "key": key_to_send, "cmd": cmd_to_send,
+              "path": pending_path})
+        key_to_send = cmd_to_send = pending_path = None
 
         n += 1
         if n % 15 == 0:
@@ -259,6 +329,20 @@ def main():
                 cv2.line(shown, flip(pts[a]), flip(pts[b]), (90, 230, 120) if engaged else (160, 160, 160), 2, cv2.LINE_AA)
             for i in (11, 12, 13, 14, 15, 16):
                 cv2.circle(shown, flip(pts[i]), 6, (255, 255, 255), -1, cv2.LINE_AA)
+        if sketch.drawing and len(sketch.points) > 1:
+            cv2.polylines(shown, [np.array([(x, y - TOP) for x, y in sketch.points], np.int32)], False, (255, 220, 80), 3, cv2.LINE_AA)
+        if path_px:
+            ok = rb.get("path_ok") or []
+            cur = rb.get("path_i", -1)
+            cv2.polylines(shown, [np.array(path_px, np.int32)], False, (255, 220, 80), 2, cv2.LINE_AA)
+            for i, (x, y) in enumerate(path_px):
+                good = ok[i] if i < len(ok) else True
+                col = (90, 210, 90) if good else (80, 80, 255)
+                if i == cur and rb.get("mode") == "FOLLOW":
+                    col, r = (80, 230, 255), 9
+                else:
+                    r = 5
+                cv2.circle(shown, (x, y), r, col, -1, cv2.LINE_AA)
         if engaged:
             cv2.rectangle(shown, (0, 0), (W - 1, H - 1), (90, 210, 90), 6)
         canvas = np.zeros((TOP + H + BOT, W, 3), np.uint8)
@@ -280,8 +364,10 @@ def main():
             continue
         if k == ord(" "):
             engaged = not engaged
-        elif k in (ord("r"), ord("p"), ord("a"), ord("m"), ord("h")):
+        elif k in (ord("r"), ord("p"), ord("a"), ord("m"), ord("h"), ord("f")):
             key_to_send = chr(k).upper()
+        elif k == ord("c"):
+            key_to_send, path_px = "C", []
         elif k == ord("/"):
             cmd_mode, cmd_buf = True, ""
         elif k in (ord("q"), 27):

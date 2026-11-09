@@ -34,6 +34,25 @@ class Retargeter:
         self._arm_len_ema = cur if self._arm_len_ema is None else 0.9 * self._arm_len_ema + 0.1 * cur
         return self._arm_len_ema
 
+    def palm_for(self, human_side):
+        if self.mirror:
+            return "left_palm" if human_side == "r" else "right_palm"
+        return "right_palm" if human_side == "r" else "left_palm"
+
+    def _map(self, h, s):
+        y_sign = -1.0 if self.mirror else 1.0
+        return np.array([-h[2], y_sign * h[0], -h[1]]) * s
+
+    def map_point(self, p_human, human_side, lm):
+        """Absolute human-world point -> (palm, robot-frame point), anchored at that side's shoulder."""
+        arm_len = self.human_arm_len(lm)
+        if arm_len is None or arm_len < 0.15:
+            return None, None
+        s = self.robot_arm_len / arm_len
+        palm = self.palm_for(human_side)
+        sh = self._v(lm, f"{human_side}_shoulder")
+        return palm, self.robot_shoulders[palm] + self._map(np.asarray(p_human, dtype=float) - sh, s)
+
     def targets(self, lm):
         """Return {"left_palm": xyz, "right_palm": xyz} in robot frame, or {} if landmarks missing."""
         arm_len = self.human_arm_len(lm)
@@ -42,17 +61,14 @@ class Retargeter:
         s = self.robot_arm_len / arm_len
         # Mirror: user's right hand (image-left, -x) appears screen-right after display flip,
         # which is the robot's left side (+y) because the robot faces the viewer.
-        pairs = (("r", "left_palm"), ("l", "right_palm")) if self.mirror else (("r", "right_palm"), ("l", "left_palm"))
-        y_sign = -1.0 if self.mirror else 1.0
         out = {}
-        for hs, palm in pairs:
+        for hs in ("r", "l"):
+            palm = self.palm_for(hs)
             try:
                 sh, wr = self._v(lm, f"{hs}_shoulder"), self._v(lm, f"{hs}_wrist")
             except KeyError:
                 continue
-            h = wr - sh
-            r = np.array([-h[2], y_sign * h[0], -h[1]]) * s
-            tgt = self.robot_shoulders[palm] + r
+            tgt = self.robot_shoulders[palm] + self._map(wr - sh, s)
             prev = self._ema.get(palm)
             tgt = tgt if prev is None else (1 - self.alpha) * prev + self.alpha * tgt
             self._ema[palm] = tgt

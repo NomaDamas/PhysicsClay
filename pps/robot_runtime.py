@@ -23,7 +23,7 @@ from .retarget import Retargeter
 from .validate import ARM_JOINTS, Validator
 
 ROOT = Path(__file__).resolve().parents[1]
-XML = ROOT / "vendor" / "mink" / "examples" / "unitree_g1" / "scene.xml"
+XML = ROOT / "assets" / "unitree_g1" / "scene_pc.xml"
 
 COLLISION_PAIRS = [
     (["left_hand_collision", "right_hand_collision", "left_wrist_collision", "right_wrist_collision"],
@@ -31,6 +31,8 @@ COLLISION_PAIRS = [
     (["left_hand_collision", "left_wrist_collision"], ["left_thigh_collision"]),
     (["right_hand_collision", "right_wrist_collision"], ["right_thigh_collision"]),
     (["left_hand_collision"], ["right_hand_collision"]),
+    (["left_hand_collision", "right_hand_collision", "left_wrist_collision", "right_wrist_collision",
+      "left_elbow_yaw_collision", "right_elbow_yaw_collision"], ["table", "mug_collision"]),
 ]
 FEET = ["right_foot", "left_foot"]
 HANDS = ["right_palm", "left_palm"]
@@ -83,6 +85,10 @@ class Runtime:
         self.saved = None
         self.preview_t = 0.0
         self.preview_idx = 0
+        self.path = None          # {"pts": (N,3) robot frame, "ok": [bool], "palm": str, "cum": (N,), "i": int}
+        self.follow_s = 0.0
+        self.follow_speed = 0.3   # m/s along the drawn path
+        self.path_msg = None
         self.last_result = {"flags": {}, "messages": [], "feasibility": 1.0, "speed_scale": 1.0, "residuals": {}}
 
         self.default_rgba = m.geom_rgba.copy()
@@ -111,6 +117,8 @@ class Runtime:
         if msg.get("grip"):
             self.last_grip = msg["grip"]
         self.last_context = {"holding": msg.get("holding") or {}, "scene": msg.get("scene") or [], "source": msg.get("source")}
+        if msg.get("path"):
+            self.set_path(msg["path"])
         key = msg.get("key")
         if key:
             self.handle_key(key.upper())
@@ -118,7 +126,59 @@ class Runtime:
         if cmd:
             self.apply_cmd(cmd.strip().lower().lstrip("/"))
 
+    # ------------------------------------------------------------- spatial path
+    def set_path(self, path):
+        """A trajectory drawn by the user (human-world points) -> robot frame + per-waypoint reachability."""
+        if self.last_lm is None:
+            self.path_msg = "Stand in view first: the path is placed in your body plane"
+            return
+        pts, palm = [], None
+        for pt in path.get("points", []):
+            palm, rp = self.retargeter.map_point(pt, path.get("hand", "r"), self.last_lm)
+            if rp is not None:
+                pts.append(rp)
+        if len(pts) < 2 or palm is None:
+            return
+        pts = np.asarray(pts)
+        ok = self.precheck(pts, palm)
+        seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+        cum = np.concatenate([[0.0], np.cumsum(seg)])
+        self.path = {"pts": pts, "ok": ok, "palm": palm, "cum": cum, "i": 0}
+        bad = int(sum(1 for o in ok if not o))
+        side = "Left" if palm.startswith("left") else "Right"
+        self.path_msg = (f"{side} hand path: {len(pts)} waypoints, all reachable. Press F to follow."
+                         if bad == 0 else f"{side} hand path: {bad}/{len(pts)} waypoints out of reach (red). Redraw or press F.")
+
+    def precheck(self, pts, palm, iters=10, dt=0.03):
+        """Trace the path with IK on a scratch configuration; a waypoint is ok if the hand gets within reach_tol."""
+        cfg = mink.Configuration(self.model)
+        cfg.update(self.configuration.q.copy())
+        task = self.hand_tasks[HANDS.index(palm)]
+        saved = task.transform_target_to_world
+        mid = self.hands_mid[palm]
+        quat = self.data.mocap_quat[mid].copy()
+        ok = []
+        for p in pts:
+            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat), p))
+            for _ in range(iters):
+                v = mink.solve_ik(cfg, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
+                cfg.integrate_inplace(v, dt)
+            ok.append(bool(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p) < self.validator.reach_tol))
+        if saved is not None:
+            task.set_target(saved)
+        return ok
+
     def handle_key(self, key):
+        if key == "F":
+            if self.path is not None:
+                self.mode, self.follow_s, self.path["i"] = "FOLLOW", 0.0, 0
+                self.recorder.start()
+            return
+        if key == "C":
+            self.path, self.path_msg = None, None
+            if self.mode == "FOLLOW":
+                self.mode = "MIRROR"
+            return
         if key == "R":
             if self.mode == "REC":
                 self.mode = "MIRROR"
@@ -172,6 +232,18 @@ class Runtime:
                 for palm, tgt in self.retargeter.targets(self.last_lm).items():
                     d.mocap_pos[self.hands_mid[palm]] = tgt
             # else: leave mocap where it is -> user may drag the ghosts in the viewer.
+        elif self.mode == "FOLLOW" and self.path is not None:
+            pts, cum = self.path["pts"], self.path["cum"]
+            self.follow_s += dt * self.follow_speed * self.speed_scale
+            i = int(np.searchsorted(cum, self.follow_s, side="right")) - 1
+            i = max(0, min(i, len(pts) - 2))
+            seg = cum[i + 1] - cum[i]
+            a = 0.0 if seg < 1e-9 else min(1.0, (self.follow_s - cum[i]) / seg)
+            d.mocap_pos[self.hands_mid[self.path["palm"]]] = (1 - a) * pts[i] + a * pts[i + 1]
+            self.path["i"] = i if a < 1.0 else i + 1
+            if self.follow_s >= cum[-1]:
+                self.path["i"] = len(pts) - 1
+                self.mode = "MIRROR"
         elif self.mode == "PREVIEW":
             frames = self.recorder.frames
             self.preview_t += dt * self.speed_scale
@@ -195,6 +267,8 @@ class Runtime:
         mujoco.mj_camlight(self.model, d)
         targets = {h: d.mocap_pos[self.hands_mid[h]].copy() for h in HANDS}
         res = self.validator.evaluate(targets, vel)
+        if self.mode == "FOLLOW":
+            self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"], {"source": "drawn_path"})
         if self.mode == "REC" and self.new_pose:
             self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"], self.last_context)
         self.new_pose = False
@@ -207,7 +281,11 @@ class Runtime:
                 "feasibility": round(r["feasibility"], 3), "messages": r["messages"], "flags": r["flags"],
                 "speed_scale": round(self.speed_scale, 2), "rec_frames": len(self.recorder.frames),
                 "rec_duration": round(self.recorder.duration, 2), "preview_t": round(self.preview_t, 2),
-                "saved": self.saved, "ik_hz": round(ik_hz, 1)}
+                "saved": self.saved, "ik_hz": round(ik_hz, 1),
+                "path_n": 0 if self.path is None else len(self.path["pts"]),
+                "path_ok": [] if self.path is None else self.path["ok"],
+                "path_i": -1 if self.path is None else self.path["i"],
+                "path_msg": self.path_msg}
 
     # ------------------------------------------------------------------ paint
     def paint(self, viewer):
@@ -227,15 +305,38 @@ class Runtime:
                 m.geom_rgba[self.body_geoms[bid]] = (1.0, 0.6, 0.1, 1.0)
         scn = viewer.user_scn
         scn.ngeom = 0
-        for h in HANDS:
-            if res["flags"].get(h) != "unreachable" or scn.ngeom >= scn.maxgeom:
-                continue
+
+        def add_capsule(a, b, width, rgba):
+            if scn.ngeom >= scn.maxgeom:
+                return
             g = scn.geoms[scn.ngeom]
             mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_CAPSULE, np.zeros(3), np.zeros(3), np.zeros(9),
-                                np.array([1.0, 0.2, 0.2, 0.9], dtype=np.float32))
-            mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, 0.006,
-                                 d.site_xpos[self.palm_sid[h]], d.mocap_pos[self.hands_mid[h]])
+                                np.array(rgba, dtype=np.float32))
+            mujoco.mjv_connector(g, mujoco.mjtGeom.mjGEOM_CAPSULE, width, a, b)
             scn.ngeom += 1
+
+        def add_sphere(p, r, rgba):
+            if scn.ngeom >= scn.maxgeom:
+                return
+            g = scn.geoms[scn.ngeom]
+            mujoco.mjv_initGeom(g, mujoco.mjtGeom.mjGEOM_SPHERE, np.array([r, 0, 0]), np.asarray(p, dtype=np.float64),
+                                np.eye(3).flatten(), np.array(rgba, dtype=np.float32))
+            scn.ngeom += 1
+
+        for h in HANDS:
+            if res["flags"].get(h) == "unreachable":
+                add_capsule(d.site_xpos[self.palm_sid[h]], d.mocap_pos[self.hands_mid[h]], 0.006, (1.0, 0.2, 0.2, 0.9))
+        if self.path is not None:
+            pts, ok, cur = self.path["pts"], self.path["ok"], self.path["i"]
+            for k in range(len(pts)):
+                good = ok[k]
+                rgba = (0.3, 0.9, 0.4, 0.9) if good else (1.0, 0.25, 0.25, 0.9)
+                if k == cur and self.mode == "FOLLOW":
+                    rgba = (1.0, 0.85, 0.2, 1.0)
+                add_sphere(pts[k], 0.014 if k != cur else 0.02, rgba)
+                if k + 1 < len(pts):
+                    seg_rgba = (0.3, 0.9, 0.4, 0.7) if (ok[k] and ok[k + 1]) else (1.0, 0.25, 0.25, 0.7)
+                    add_capsule(pts[k], pts[k + 1], 0.004, seg_rgba)
 
 
 def main():
@@ -253,6 +354,7 @@ def main():
     rate = RateLimiter(frequency=args.hz, warn=False)
     t_start = time.time()
     last_send, n_steps, hz_t0, ik_hz = 0.0, 0, time.time(), 0.0
+    n_steps_total = [0]
 
     def tick(viewer):
         nonlocal last_send, n_steps, hz_t0, ik_hz
@@ -260,6 +362,13 @@ def main():
         if args.fake_input:
             t = time.time() - t_start
             msgs.append({"engaged": True, "lm": fake_landmarks(t), "grip": {"l": 0, "r": 0}})
+            if n_steps_total[0] == 150:   # user draws a path: a line in front of the right shoulder, ending too far
+                xs = np.linspace(-0.15, 0.95, 16)
+                pts = [[-0.18 + x * 0.3, -0.45 - 0.25 * np.sin(x * 3.0), -0.35 - x * 0.6] for x in xs]
+                msgs.append({"engaged": False, "path": {"points": pts, "hand": "r"}})
+            if n_steps_total[0] == 200:
+                msgs.append({"engaged": False, "key": "F"})
+            n_steps_total[0] += 1
         for msg in msgs:
             rt.handle_message(msg)
         rt.step(rate.dt)
@@ -282,12 +391,14 @@ def main():
                 r = rt.last_result
                 print(f"[{i:4d}] mode={rt.mode} feas={r['feasibility']:.2f} ik_hz={ik_hz:.0f} "
                       f"res={ {k: round(v, 3) for k, v in r['residuals'].items()} } flags={r['flags']} msgs={r['messages']}")
+                if rt.path is not None:
+                    print(f"       path ok={''.join('o' if o else 'x' for o in rt.path['ok'])} i={rt.path['i']} msg={rt.path_msg}")
         return
 
     import mujoco.viewer  # noqa: E402  (needs mjpython on macOS)
     with mujoco.viewer.launch_passive(model=rt.model, data=rt.data, show_left_ui=False, show_right_ui=False) as viewer:
         mujoco.mjv_defaultFreeCamera(rt.model, viewer.cam)
-        viewer.cam.azimuth, viewer.cam.elevation, viewer.cam.distance = 180, -12, 2.4
+        viewer.cam.azimuth, viewer.cam.elevation, viewer.cam.distance = 150, -15, 2.6
         viewer.cam.lookat[:] = (0.0, 0.0, 0.8)
         while viewer.is_running():
             tick(viewer)
