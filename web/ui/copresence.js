@@ -172,7 +172,7 @@ body.pc-shared #camPanel { width: 78%; align-self: flex-start; transition: width
   }
   function draw(c) {
     if (!P) return;
-    const J = c && c.on ? c.joints : null;
+    const J = c && c.on && c.visible !== false ? c.joints : null;   // no person drawn for the synthetic no-camera dancer
     if (!J) { hideAll(); V.redraw(); return; }
     for (const b of P.bones) { if (J[b.a] && J[b.b]) seg(b.m, J[b.a], J[b.b], b.r); else b.m.visible = false; }
     for (const k in P.balls) { const m = P.balls[k]; if (J[k]) { m.position.set(J[k][0], J[k][1], J[k][2]); m.visible = true; } else m.visible = false; }

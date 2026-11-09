@@ -124,6 +124,7 @@ async function loadScene() {
     scene.add(g);
     sceneState = "ready"; say(""); needs = true; console.info("[3d] scene ready:", geomObjs.size, "geoms", Math.round(performance.now()) + " ms");
     applyPoses();
+    if (loadGen > 0) frameScene(g);   // another robot / scene: frame it instead of the default table preset
   } catch (e) {
     if (gen !== loadGen) return;
     console.warn("[3d] scene load failed:", e && e.message || e);
@@ -132,6 +133,18 @@ async function loadScene() {
   }
 }
 let loadGen = 0;
+// Fit the camera to the robot + work surface after a world change (ignore huge things like the floor plane).
+function frameScene(g) {
+  if (!camera || !g) return;
+  const box = new THREE.Box3(), b = new THREE.Box3(), size = new THREE.Vector3();
+  g.traverse((o) => { if (!o.isMesh) return; b.setFromObject(o); b.getSize(size); if (size.x < 4 && size.y < 4 && size.z < 4) box.union(b); });
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3()), r = Math.max(0.6, box.getSize(size).length() * 0.5);
+  const dir = new THREE.Vector3(1.0, -0.75, 0.55).normalize();
+  CAMS.reset = [[c.x + dir.x * r * 2.4, c.y + dir.y * r * 2.4, c.z + dir.z * r * 2.4], [c.x, c.y, c.z]];
+  CAMS.stage = CAMS.reset;
+  camPreset("reset");
+}
 function reload() { // robot body switched: /scene.json changed
   loadGen++; clearTimeout(retryTimer);
   if (scene) { const old = scene.getObjectByName("geoms"); if (old) { scene.remove(old); old.traverse((o) => { if (o.material) o.material.dispose(); if (o.geometry) o.geometry.dispose(); }); } }

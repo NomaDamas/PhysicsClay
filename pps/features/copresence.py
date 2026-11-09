@@ -966,7 +966,7 @@ def copresence_state(ctx):
     ho = st["handover"]
     paths = {sd: [_r(p) for t, p in list(st["paths"][sd])[::3]] for sd in ("l", "r")}
     return {"copresence": {
-        "on": st["on"], "view": st["view"], "source": st["src"], "anchor": list(st["anchor"]),
+        "on": st["on"], "view": st["view"], "source": st["src"], "anchor": list(st["anchor"]), "visible": _person_visible(st),
         "joints": None if J is None else {k: _r(v) for k, v in J.items()},
         "pointing": pointing, "recent_point": bool(_recent(st, now)) or bool(pointing and pointing["armed"]),
         "hand_open": st["hand_open"], "offer": st["offer"], "attention": st["attention"],
@@ -1002,11 +1002,17 @@ def _ring(scn, c, r, rgba, width=0.004, n=20):
         _capsule(scn, a, b, width, rgba)
 
 
+def _person_visible(st):
+    """Draw the person only when there is one: a real camera / phone, a played demo person, or the Shared space view.
+    The synthetic no-camera dancer is not a person across the table."""
+    return bool(st.get("view")) or st.get("src") in ("feed", "webcam", "phone")
+
+
 @ext.overlay
 def paint_copresence(ctx, scn):
     st = _st(ctx)
     J = st["J"]
-    if J is None:
+    if J is None or not _person_visible(st):
         return
     for a, b, w in BONES:
         if a in J and b in J:

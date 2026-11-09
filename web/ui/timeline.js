@@ -393,7 +393,10 @@
   let playing = "", playT = 0, skKey = "";
   function skillModel(s) {
     const meta = new Map(arr(s.skills_meta).filter((x) => x && x.name).map((x) => [String(x.name), num(+x.duration, 0)]));
-    return arr(s.skills).map(String).map((name) => ({ name, motion: meta.has(name), dur: meta.get(name) || 0 }));
+    // whole-body motion skills (dance, video imitation) only play on bodies that can imitate; taught tasks work everywhere
+    const w = s.world && s.world.robot, caps = w && Array.isArray(w.capabilities) ? w.capabilities : null;
+    const canMotion = !caps || caps.includes("imitate_video");
+    return arr(s.skills).map(String).map((name) => ({ name, motion: meta.has(name), dur: meta.get(name) || 0 })).filter((k) => canMotion || !k.motion);
   }
   function playState(s) {
     const t = s.task || {}, ph = (s.teach || {}).phase;
