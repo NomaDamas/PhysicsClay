@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PhysicsClay · browser physics lab (MuJoCo WASM + React)</title>
+<script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "htm": "https://esm.sh/htm@3.1.1",
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
+    "mujoco": "https://cdn.jsdelivr.net/npm/@mujoco/mujoco@3.17.0/mujoco.js"
+  }
+}
+</script>
+<style>
+  :root { --bg:#fbfbfd; --ink:#1d1d1f; --muted:#6e6e73; --line:#e5e5ea; --card:#ffffff; --accent:#0071e3; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--ink);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif; }
+  header { padding:18px 24px 8px; }
+  header h1 { margin:0; font-size:22px; font-weight:650; letter-spacing:-0.02em; }
+  header p { margin:4px 0 0; color:var(--muted); }
+  .wrap { display:grid; grid-template-columns: 1fr 320px; gap:16px; padding:12px 24px 24px; height: calc(100% - 78px); }
+  @media (max-width: 860px) { .wrap { grid-template-columns: 1fr; height:auto; padding:12px 16px; } #view { height:60vh; } }
+  #view { position:relative; border-radius:18px; overflow:hidden; background:#f2f2f6; border:1px solid var(--line); min-height:360px; }
+  #view canvas { display:block; width:100%; height:100%; }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:18px; padding:18px; overflow:auto; }
+  .panel h2 { font-size:13px; text-transform:uppercase; letter-spacing:.06em; color:var(--muted); margin:0 0 10px; font-weight:600; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px; }
+  button.pill { border:1px solid var(--line); background:#f5f5f7; color:var(--ink); border-radius:999px; padding:8px 16px;
+    font:inherit; font-weight:550; cursor:pointer; }
+  button.pill:hover { background:#ebebf0; }
+  button.pill.primary { background:var(--ink); color:#fff; border-color:var(--ink); }
+  button.pill:disabled { opacity:.45; cursor:default; }
+  .stat { display:flex; justify-content:space-between; padding:6px 0; border-bottom:1px solid var(--line); font-variant-numeric: tabular-nums; }
+  .stat:last-child { border-bottom:0; }
+  .stat b { font-weight:600; }
+  input[type=range] { width:100%; accent-color: var(--ink); }
+  .badge { display:inline-block; border-radius:999px; padding:3px 10px; font-size:12px; font-weight:600; }
+  .ok { background:#e8f6ec; color:#1b7f3b; } .err { background:#fdecec; color:#b3261e; } .wait { background:#f0f0f5; color:var(--muted); }
+  .note { color:var(--muted); font-size:12px; margin-top:10px; }
+  code { font-family: ui-monospace, Menlo, monospace; font-size:12px; }
+  .overlay { position:absolute; left:12px; top:12px; background:rgba(255,255,255,.85); border-radius:999px; padding:4px 12px; font-size:12px; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>PhysicsClay · browser physics lab (MuJoCo WASM + React)</h1>
+  <p>MuJoCo compiled to WebAssembly, stepping in this tab — no Python server involved. Rendered with three.js, controlled by React.</p>
+</header>
+<div class="wrap">
+  <div id="view"><div class="overlay" id="overlay">loading MuJoCo WASM…</div></div>
+  <div id="root" class="panel"></div>
+</div>
+<script type="module" src="./lab.js"></script>
+</body>
+</html>
