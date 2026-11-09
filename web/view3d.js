@@ -96,6 +96,7 @@ async function loadScene() {
   clearTimeout(retryTimer);
   if (sceneState === "loading" || sceneState === "ready") return;
   sceneState = "loading"; say("Loading 3D scene…");
+  const gen = loadGen;
   try {
     const r = await fetch("/scene.json", { cache: "no-store" }); if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const sj = await r.json(), meshes = sj.meshes || {};
@@ -115,16 +116,25 @@ async function loadScene() {
       setPose(m, arr(gm.pos).length >= 3 ? gm.pos : [0, 0, 0], gm.mat);
       return [String(gm.id), m];
     }));
+    if (gen !== loadGen) return; // superseded by reload()
     const g = new THREE.Group(); g.name = "geoms";
     for (const b of built) { if (!b) continue; if (Array.isArray(b)) { geomObjs.set(b[0], b[1]); g.add(b[1]); } else g.add(b); }
     scene.add(g);
     sceneState = "ready"; say(""); needs = true; console.info("[3d] scene ready:", geomObjs.size, "geoms", Math.round(performance.now()) + " ms");
     applyPoses();
   } catch (e) {
+    if (gen !== loadGen) return;
     console.warn("[3d] scene load failed:", e && e.message || e);
     sceneState = "error"; say("Loading 3D scene… (server scene not ready, retrying)", "warn");
     retryTimer = setTimeout(loadScene, 3000);
   }
+}
+let loadGen = 0;
+function reload() { // robot body switched: /scene.json changed
+  loadGen++; clearTimeout(retryTimer);
+  if (scene) { const old = scene.getObjectByName("geoms"); if (old) { scene.remove(old); old.traverse((o) => { if (o.material) o.material.dispose(); if (o.geometry) o.geometry.dispose(); }); } }
+  geomObjs.clear(); meshCache.clear(); sceneState = "idle"; needs = true;
+  if (root && isActive) loadScene();
 }
 function floor(gm) {
   const g = new THREE.Group(), z = isXYZ(gm.pos) ? gm.pos[2] : 0;
@@ -324,6 +334,7 @@ function buildUi(container) {
       <div class="v3d-sum mono"></div>
       <ol class="v3d-list"></ol>
       <details class="v3d-hint muted small"><summary>How to</summary>Click the table to add a waypoint · click one to move it (Z = height) · Del removes · Esc deselects · drag to orbit, right-drag to pan</details>
+      <div class="v3d-tip muted small"></div>
     </div>
     <div class="v3d-views seg" role="group" aria-label="Camera presets">
       <button type="button" class="seg-btn" data-cam="stage">Stage</button>
@@ -334,7 +345,7 @@ function buildUi(container) {
     </div>
     <div class="v3d-msg" hidden></div>`;
   msgEl = container.querySelector(".v3d-msg"); listEl = container.querySelector(".v3d-list");
-  sumEl = container.querySelector(".v3d-sum"); hintEl = container.querySelector(".v3d-hint");
+  sumEl = container.querySelector(".v3d-sum"); hintEl = container.querySelector(".v3d-tip");
   const panel = container.querySelector(".v3d-panel");
   const tog = container.querySelector(".v3d-toggle");
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => tog.addEventListener(t, (e) => e.stopPropagation()));
@@ -427,5 +438,5 @@ function project(x, y, z) { // world -> client px (debug / tests)
   const v = new THREE.Vector3(x, y, z).project(camera), r = renderer.domElement.getBoundingClientRect();
   return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
 }
-window.PC3D = { mount, setState, active, project, get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); } };
+window.PC3D = { mount, setState, active, reload, project, get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); } };
 window.dispatchEvent(new Event("pc3d-ready"));

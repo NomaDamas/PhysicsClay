@@ -127,7 +127,7 @@
     const view = ["orbit", "stage"].includes(s.view) ? s.view : "robot";
     const pipLabel = document.getElementById("pipLabel"); if (pipLabel) pipLabel.textContent = view === "robot" ? "Full body" : "Robot eye";
     if (changed("view", view + view3d)) {
-      const shown = view3d ? "3d" : view;
+      const shown = view3d ? "3d" : "robot"; // only Robot eye | 3D buttons; server view may be stage/orbit
       document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === shown)));
       el.robotFrame.classList.toggle("orbit", view !== "robot" && !view3d); el.orbitHint.hidden = view === "robot" || view3d;
       el.robotFrame.classList.toggle("v3d", view3d); $("view3d").hidden = !view3d;
@@ -787,9 +787,16 @@
     const item = ttsQ.shift(); ttsBusy = true;
     const text = item.text;
     const a = new Audio("/tts?voice=" + item.voice + "&text=" + encodeURIComponent(text));
-    const done = () => { ttsBusy = false; ttsNext(); };
-    a.onended = done; a.onerror = () => { ttsOK = false; ttsBusy = false; speakBrowser(text); ttsNext(); };
-    a.play().catch(() => { ttsBusy = false; speakBrowser(text); ttsNext(); });
+    let settled = false, guard = 0;
+    const settle = (fallback, bad) => {
+      if (settled) return; settled = true; clearTimeout(guard);
+      if (bad) ttsOK = false;
+      if (fallback) { try { a.pause(); } catch (e) { /* noop */ } speakBrowser(text); }
+      ttsBusy = false; ttsNext();
+    };
+    guard = setTimeout(() => settle(false), 30000); // a stalled stream must not block the queue
+    a.onended = () => settle(false); a.onerror = () => settle(true, true);
+    a.play().catch(() => settle(true));
   }
   function speak(msg, lang, voice) {
     if (live.session || !msg) return;
@@ -927,7 +934,7 @@
   }
 
   // ------------------------------------------------------------------ talk: Gemini Live or Web Speech fallback
-  const live = { session: null, state: "off", level: 0, frameTimer: 0, tick: 0, lines: { user: null, model: null } };
+  const live = { session: null, state: "off", level: 0, frameTimer: 0, tick: 0, gen: 0, lines: { user: null, model: null } };
   const rec = { on: false, r: null, paused: false, line: null };
 
   function setTalk(st, sub) {
@@ -1075,6 +1082,7 @@
 
   async function startGemini() {
     setTalk("connecting");
+    const gen = ++live.gen;
     try {
       const session = await G().connectLive({
         ...aiOpts(), model: settings.liveModel, systemInstruction: SYSTEM, tools: TOOLS,
@@ -1086,12 +1094,14 @@
         },
         onTranscript, onToolCall, onAudioLevel: (v) => setLevel(Math.max(0, Math.min(1, num(v)))),
       });
+      if (gen !== live.gen) { try { session.close(); } catch (e) { /* noop */ } return; } // cancelled while connecting
       live.session = session;
       try { await session.startMic(); } catch (e) { toast("Microphone blocked — type below, the robot still listens."); }
       if (live.state === "connecting") setTalk(session.isMicOn === false ? "live" : "listening");
       addLine("sys", "Gemini Live connected. Talk naturally — gestures in your camera count too.");
       live.frameTimer = setInterval(pushFrames, 1050);
     } catch (e) {
+      if (gen !== live.gen) return;
       live.session = null; setTalk("error", "connect failed");
       toast("Couldn't connect to Gemini Live: " + (e && e.message || e) + " — using browser speech instead.");
       startRecognizer(true);
@@ -1132,7 +1142,7 @@
   function stopRecognizer() { rec.on = false; rec.paused = false; if (rec.line) { rec.line.remove(); rec.line = null; } try { rec.r && rec.r.stop(); } catch (e) { /* noop */ } }
 
   function stopTalk(final = "off") {
-    clearInterval(live.frameTimer); live.frameTimer = 0;
+    live.gen++; clearInterval(live.frameTimer); live.frameTimer = 0;
     const s = live.session; live.session = null;
     if (s) { try { s.stopMic(); } catch (e) { /* noop */ } try { s.close(); } catch (e) { /* noop */ } addLine("sys", "Conversation ended."); }
     for (const k of ["user", "model"]) { if (live.lines[k]) live.lines[k].classList.remove("interim"); live.lines[k] = null; }
@@ -1214,25 +1224,26 @@
   const phoneCam = {
     get want() { return LS.get("pc.phoneCam", LOCAL ? "0" : "1") === "1"; },
     facing: LS.get("pc.facing", IS_PHONE ? "environment" : "user"),
-    stream: null, video: null, canvas: null, timer: 0, busy: false, status: "off", sent: 0,
+    stream: null, video: null, canvas: null, timer: 0, busy: false, status: "off", sent: 0, gen: 0,
   };
   async function camStart() {
-    camStop();
+    camStop(); const gen = phoneCam.gen;
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phoneCam.status = "camera not available (needs https)"; schedule(); return; }
     phoneCam.status = "starting…"; schedule();
     try {
       const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: phoneCam.facing, width: 640 }, audio: false });
-      if (!phoneCam.want) { st.getTracks().forEach((t) => t.stop()); return; }
+      if (!phoneCam.want || gen !== phoneCam.gen) { st.getTracks().forEach((t) => t.stop()); return; }
       phoneCam.stream = st;
       const v = phoneCam.video || (phoneCam.video = Object.assign(document.createElement("video"), { muted: true, playsInline: true, autoplay: true }));
       v.setAttribute("playsinline", ""); v.srcObject = st; try { await v.play(); } catch (e) { /* autoplay */ }
+      if (gen !== phoneCam.gen) return; // stopped / restarted while starting (camStop already stopped the tracks)
       phoneCam.canvas = phoneCam.canvas || document.createElement("canvas");
       phoneCam.timer = setInterval(camTick, 100);
       phoneCam.status = `streaming · ${phoneCam.facing === "user" ? "front" : "back"}`; schedule();
-    } catch (e) { phoneCam.status = "camera blocked: " + (e && e.name || e); schedule(); }
+    } catch (e) { if (gen === phoneCam.gen) { phoneCam.status = "camera blocked: " + (e && e.name || e); schedule(); } }
   }
   function camStop() {
-    clearInterval(phoneCam.timer); phoneCam.timer = 0;
+    phoneCam.gen++; clearInterval(phoneCam.timer); phoneCam.timer = 0;
     if (phoneCam.stream) phoneCam.stream.getTracks().forEach((t) => t.stop());
     phoneCam.stream = null; phoneCam.status = "off"; schedule();
   }
@@ -1276,7 +1287,7 @@
   document.addEventListener("keydown", (ev) => {
     const tg = ev.target, typing = tg && (tg.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(tg.tagName));
     if (typing) { if (ev.key === "Escape" && tg === el.cmd) tg.blur(); return; }
-    if (el.dlg.open || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (el.dlg.open || ev.metaKey || ev.ctrlKey || ev.altKey || ev.repeat) return;
     if (ev.key === " ") { if (tg && tg.tagName === "BUTTON" && tg !== el.talk) return; ev.preventDefault(); toggleTalk(); }
     else if (ev.key === "Escape") { runTask("stop", {}, "key"); }
     else if (ev.key === "f" || ev.key === "F") { runTask("follow_path", {}, "key"); }

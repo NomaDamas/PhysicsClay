@@ -171,6 +171,8 @@
     paused = !paused;
     pausedEl.classList.toggle('on', paused);
     if (!silent) { try { paused ? speechSynthesis.pause() : speechSynthesis.resume(); } catch (e) {} }
+    const pa = window.__pa; // server /tts narration is an <audio>, not speechSynthesis
+    if (pa && !silent) { try { if (paused) pa.pause(); else if (!pa.ended && pa.currentTime > 0) pa.play().catch(() => {}); } catch (e) {} }
   }
 
   overlay.addEventListener('click', start);

@@ -312,7 +312,6 @@ dialog[open] { animation: rise var(--med) var(--ease); }
   .actions .btn { height: 40px; font-size: 13px; }
   .actions .split { grid-column: 1 / -1; }
   .split select { flex: 1; max-width: none; height: 40px; }
-  .cam { display: none; }
   .side { gap: 8px; }
   .feed { flex: none; min-height: 0; }
   .feed-list { max-height: 46vh; }
