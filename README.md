@@ -6,6 +6,13 @@ Some tasks are nearly impossible to give a robot in text alone. You can't put ev
 where exactly, which path, how high, what not to touch. And some motions you can't describe at all — a Taekwondo kick,
 a sprinter's stride, a fighter's stance: showing beats describing. Physical AI needs its own prompt, a spatial one.
 
+**Three key features of the new physical prompt**
+1. **Video → Physical AI action**: show a video (a dance, a reaction, a kick); the robot learns the motion, seated or as a duet.
+2. **Real-time trajectory lining and pointing destinations, with real-time voice**: draw the route in 3D, point and say “there”.
+3. **Real-time video understanding**: Gemini Live + YOLO segmentation + Gemini Robotics-ER read your camera as part of the prompt.
+
+**Demo video:** `recordings/video/physicsclay_demo.mp4` (built by `scripts/make_video.py`, 1:51, OpenAI TTS narration)
+
 **Live:** https://physicsclay.jinminseong.com (phone camera + mic work over HTTPS) · pitch: `/static/present.html` ·
 browser physics lab: `/static/lab.html` · before/after samples: `web/samples/`
 
