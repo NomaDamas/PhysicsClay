@@ -231,6 +231,10 @@ def apply(ctx, c):
     if not c.get("params"):
         _fail(ctx, c, "Nothing fitted yet: run the probes and the fit first.")
         return
+    w = c.get("world")
+    if w is not None and w.profile.id != ctx.world.profile.id:
+        _fail(ctx, c, f"That fit is for the {w.profile.label}; probe this robot first.")
+        return
     got = P.apply(ctx.rt.plant, c["params"])
     c["applied"], c["status"], c["auto"] = True, "applied", False
     shown = ", ".join(f"{k} {got[k]:.3g}" for k in c["params"])
@@ -257,6 +261,9 @@ def calib_tick(ctx):
     c = ctx.store.get("calib")
     if not c:
         return
+    if c.get("rt") is not None and ctx.rt is not c["rt"] and c.get("runner") is None and c.get("job") is None:
+        c.update(status="idle", message="", summary="", probes=[], progress=None, params=None, fit=None, per_param=[],
+                 applied=False, logs=[], rt=None, world=None)   # a new world: its own calibration
     if c.get("runner") is not None:
         _probe_tick(ctx, c)
     if c.get("job") is not None:
