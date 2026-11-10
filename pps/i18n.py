@@ -191,15 +191,16 @@ _NOSTOP = r"(?:(?![.!?]\s)[\s\S])"         # a placeholder never runs over a sen
 
 
 class _Tpl:
-    __slots__ = ("key", "en", "rx", "rx_head", "lit", "first", "frag")
+    __slots__ = ("key", "en", "rx", "rx_head", "lit", "first", "frag", "needles")
 
     def __init__(self, key, en):
         self.key, self.en = key, en
-        parts, seen, lit = [], set(), 0
+        parts, seen, lit, needles = [], set(), 0, []
         for literal, f, _, _ in string.Formatter().parse(en):
             if literal:
                 parts.append(re.escape(literal))
                 lit += len(literal)
+                needles.append(literal.replace("{{", "{").replace("}}", "}"))
             if f is not None:
                 name = f.split("|")[0]
                 if name in seen:
@@ -211,6 +212,7 @@ class _Tpl:
         self.rx = re.compile(body + r"\Z", re.S)
         self.rx_head = re.compile(body, re.S) if not en.rstrip().endswith("}") else None
         self.lit = lit
+        self.needles = sorted(needles, key=len, reverse=True)[:2]     # a cheap substring test before the regex
         first = next(iter(string.Formatter().parse(en)), ("", None, None, None))[0]
         self.first = first[:1] if first else ""
         self.frag = bool(re.match(r"[\s,;:(—–-]", en))
@@ -232,8 +234,17 @@ _BY_FIRST, _WILD = _index()
 _EXACT = {en: k for k, (en, _ko) in CATALOG.items() if not fields(en)}
 
 
+_CAND = {}
+
+
 def _candidates(s):
-    return sorted(_BY_FIRST.get(s[:1], []) + _WILD, key=lambda tp: -tp.lit)
+    """Templates that could match `s` (same first literal character, or starting with a placeholder), most specific
+    first; one sorted list per first character, built once."""
+    c = s[:1]
+    out = _CAND.get(c)
+    if out is None:
+        out = _CAND[c] = sorted(_BY_FIRST.get(c, []) + _WILD, key=lambda tp: -tp.lit)
+    return out
 
 
 def _render(key, lang, values):
@@ -257,18 +268,19 @@ def _render(key, lang, values):
 
 def _translate_sentence(s, lang, fragment=False):
     """One sentence (or a fragment) -> `lang`, or None when no template matches."""
-    for tp in _candidates(s):
+    cands = [tp for tp in _candidates(s) if all(n in s for n in tp.needles)]
+    for tp in cands:
         m = tp.rx.match(s)
         if m:
             return _render(tp.key, lang, m.groupdict())
-    for tp in _candidates(s):                                # a head template + a known trailing fragment
+    for tp in cands:                                         # a head template + a known trailing fragment
         if tp.rx_head is None or tp.frag:
             continue
         m = tp.rx_head.match(s)
         if m and m.end() < len(s):
             tail = s[m.end():]
             for ft in _candidates(tail):
-                if ft.frag:
+                if ft.frag and all(n in tail for n in ft.needles):
                     fm = ft.rx.match(tail)
                     if fm:
                         return _render(tp.key, lang, m.groupdict()) + _render(ft.key, lang, fm.groupdict())
