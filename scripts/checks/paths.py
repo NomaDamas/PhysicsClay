@@ -59,3 +59,22 @@ async def run(t):
             r.get("message", "")[:100])
     await t.send(type="clear"); await t.pump(0.3)
     await t.task("reset_scene", 1)
+
+    # P2 trajectories (pps/features/traj.py, where present): the gripper's own size counts, not only its TCP point. The
+    # TCP passes 2 cm over the mug's top, so the hand-point check alone is happy; the fingers below it are not.
+    if not isinstance(st().get("traj"), dict):
+        return
+    top = next((o["pos"][2] for o in st().get("scene_objects") or [] if o["name"] == "mug"), 0.811) + 0.071
+    spec = {"label": "skim the mug", "keypoints": [{"xyz": [0.24, -0.18, top + 0.02]}, {"xyz": [0.42, -0.18, top + 0.02]}]}
+    await t.send(type="traj", id="p0c-skim", op="propose", spec=spec, task_id="p0c-skim-plan")
+    tj = {}
+    for _ in range(40):
+        await t.pump(0.25)
+        tj = st().get("traj") or {}
+        if (tj.get("reply") or {}).get("id") == "p0c-skim":
+            break
+    ghost = tj.get("ghost") or {}
+    t.check("paths: a trajectory whose gripper skims the mug is blocked, saying so (P2)",
+            ghost.get("ok") and not all(ghost["ok"]) and "would hit the mug" in (tj.get("why") or ""), (tj.get("why") or str(tj.get("reply")))[:100])
+    await t.send(type="traj", op="clear"); await t.pump(0.4)
+    await t.task("reset_scene", 1)
