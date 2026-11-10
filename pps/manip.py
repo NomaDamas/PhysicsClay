@@ -689,6 +689,13 @@ class FixtureTasks:
             return
         rt, fx, p = self.rt, self.fx, op["part"]
         tcp = rt.data.site_xpos[rt.palm_sid[op["palm"]]].copy()
+        if fx.locked.get(p["name"]):              # jammed (the lock probe): the hand pulls, the part doesn't follow
+            if float(np.linalg.norm(tcp - op["tcp0"])) > 0.02:
+                lab = p["label"]
+                self._fail_phys(op["palm"], f"{lab[:1].upper() + lab[1:]} won't {op['action']}: it's stuck at "
+                                            f"{fx.frac(p) * 100:.0f}% open (it didn't move when I pulled). I let go of the handle.",
+                                let_go=False)
+            return
         pos0, quat0 = fx.pose_at(p, op["qa"])
         R0 = np.zeros(9)
         mujoco.mju_quat2Mat(R0, p["home_quat"])
