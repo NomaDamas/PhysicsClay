@@ -179,7 +179,7 @@ async def run(t):
     specs = {s["name"]: s for s in tool_specs({"robot": "g1"})}
     mk = specs.get("make_trajectory") or {}
     kp = (((mk.get("parameters") or {}).get("properties") or {}).get("keypoints") or {}).get("items") or {}
-    have = set((kp.get("properties") or {}))
+    have = set(kp.get("properties") or {})
     t.check("traj: agent tools make/edit/run_trajectory exist", {"make_trajectory", "edit_trajectory", "run_trajectory"} <= set(specs)
             and {"of", "rel", "via", "xyz", "dz", "speed", "force", "grip", "yaw", "tilt", "tol", "pattern"} <= have,
             ", ".join(sorted(have))[:90])

@@ -135,7 +135,7 @@ def _checkers(ctx, palm, tr_world, dense, world):
 
     # objects: the hand must not go into them (except what it grasps along the way); a carried object must clear them
     grasped, drop_planned = set(), 0.06
-    for t_ev, kind, val, pi in dense["events"]:
+    for _t_ev, kind, val, pi in dense["events"]:
         if kind == "grip" and val >= 0.5:
             p = np.asarray(tr_world["points"][pi]["p"], float)
             for n, o in world["objects"].items():

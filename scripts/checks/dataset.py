@@ -45,6 +45,7 @@ async def wait_for(t, pred, limit=10.0, step=0.2):
 
 async def run(t):
     import numpy as np
+
     from pps.data import lerobot as L
 
     st = t.state()
@@ -192,7 +193,7 @@ async def run(t):
 
         # ---- optional: LeRobot itself (only if it is already installed; it is never installed for this)
         try:
-            from lerobot.datasets.lerobot_dataset import LeRobotDataset   # noqa: F401
+            from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: F401
         except Exception:
             LeRobotDataset = None
         if LeRobotDataset is not None:

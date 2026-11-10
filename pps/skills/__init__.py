@@ -14,9 +14,25 @@ which comes from the scene when the skill is applied. "Geometry gives precision,
 Kinds: weave_seam, wipe, stir, press (trajectories), spot (a watch `assist` behaviour), mirror_motion (the humanoid
 video -> motion skill path, replayed with play_skill). Pure Python + numpy; the server side is pps/features/skills.py.
 """
-from .compile import COMPILE, compile_skill as compile  # noqa: F401
-from .core import (KINDS, SkillError, delete, describe, edit, is_trajectory, listing, load, make, needs,  # noqa: F401
-                   normalize, safe_name, save, skill_dir, summary)
+from .compile import COMPILE  # noqa: F401
+from .compile import compile_skill as compile  # noqa: F401
+from .core import (  # noqa: F401
+    KINDS,
+    SkillError,
+    delete,
+    describe,
+    edit,
+    is_trajectory,
+    listing,
+    load,
+    make,
+    needs,
+    normalize,
+    safe_name,
+    save,
+    skill_dir,
+    summary,
+)
 from .extract import ambiguous, extract, rank  # noqa: F401
 from .phrases import changes_from_text
 

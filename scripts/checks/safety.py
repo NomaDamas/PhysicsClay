@@ -81,6 +81,9 @@ async def run(t):
     t.check("safety: the arm starts its path with nobody near (speed x1)", task.get("status") == "running" and _sf(t).get("speed_scale") == 1.0,
             f"{task.get('status')} {task.get('message')} scale={_sf(t).get('speed_scale')}")
 
+    # paths start with a slow approach to their first point (P2): let the hand get onto the path before anyone leans in
+    await wait_for(t, lambda s: ((s.get("path") or {}).get("i") or 0) >= 1, 8.0)
+
     # a person leans in: slower, not stopped
     await feed(t, SLOW)
     ok = await wait_for(t, lambda s: 0.0 < (s.get("safety") or {}).get("speed_scale", 1) < 0.95 and not (s.get("safety") or {}).get("stop"), 4.0)

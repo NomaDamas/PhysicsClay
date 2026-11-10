@@ -12,11 +12,12 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pps import skills as SK, traj as T  # noqa: E402
+from pps import skills as SK  # noqa: E402
+from pps import traj as T
+from pps.features.copresence import to_world  # noqa: E402
 from pps.human import periodic, synth  # noqa: E402
 from pps.human.activity import ActivityTracker  # noqa: E402
 from pps.human.model import ground  # noqa: E402
-from pps.features.copresence import to_world  # noqa: E402
 from pps.skills import geom  # noqa: E402
 from pps.skills.extract import tool_angles  # noqa: E402
 

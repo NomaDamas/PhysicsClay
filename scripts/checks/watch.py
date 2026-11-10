@@ -7,7 +7,6 @@ Standalone (starts its own --fake server on PC_WATCH_PORT, default 8915):
 """
 import asyncio
 import json
-import math
 import os
 import subprocess
 import sys
@@ -20,7 +19,7 @@ if str(ROOT) not in sys.path:
 
 from pps.features.copresence import to_world  # noqa: E402
 from pps.human import coach, synth  # noqa: E402
-from pps.human.demo import DemoRecorder, place, to_trajectory  # noqa: E402
+from pps.human.demo import DemoRecorder, place  # noqa: E402
 from pps.human.model import HumanModel  # noqa: E402
 from pps.human.rules import Predicate, RuleError, compile_do, compile_when, split_rule  # noqa: E402
 

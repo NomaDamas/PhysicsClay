@@ -242,11 +242,12 @@ def test_describe_lines():
 def test_robot_capsules_every_profile():
     """Every robot profile yields capsules with end-effector links, and the distance query is cheap."""
     import time
-    from pps.world import profiles, scene
-    from pps.world.runtime import make_runtime
+
     from pps.features.copresence import to_world
     from pps.human import synth
     from pps.human.model import ground, pose33
+    from pps.world import profiles, scene
+    from pps.world.runtime import make_runtime
     pose, _ = pose33(ground(to_world(synth.frame_at("rest", 0.0))))
     hum = S.human_capsules(pose)
     for pid in profiles.PROFILES:

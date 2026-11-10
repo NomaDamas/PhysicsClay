@@ -165,14 +165,7 @@ def test_positions_are_clamped_onto_the_surface_with_a_note():
     assert notes == ["far moved onto the table"]
 
 
-OVERLAP_BUG = pytest.mark.xfail(
-    reason="normalize() keeps an overlapping explicit position when _free_xy finds no "
-    "free spot (stacks objects silently, no 'no room' note)",
-    strict=False,
-)
-
-
-@pytest.mark.parametrize("tpl", [t if t != "shelf" else pytest.param(t, marks=OVERLAP_BUG) for t in scene.TEMPLATES])
+@pytest.mark.parametrize("tpl", list(scene.TEMPLATES))
 def test_objects_are_spread_without_overlap(tpl):
     objs = [{"name": f"o{i}", "kind": "bowl", "pos": "center"} for i in range(5)]
     spec, _ = scene.normalize({"template": tpl, "objects": objs})

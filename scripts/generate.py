@@ -44,7 +44,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from pps.world import profiles, scene as world_scene  # noqa: E402
+from pps.world import profiles  # noqa: E402
+from pps.world import scene as world_scene
 
 DISTRACTORS = ("block", "can", "fruit", "box", "bottle")
 COLORS = ("red", "green", "blue", "yellow", "orange", "purple", "white", "pink")

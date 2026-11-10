@@ -220,7 +220,10 @@ def normalize(spec, profile=None):
                 notes.append(f"{name} moved onto the {s['template']}")
             xy = [cx, cy]
             if any(np.hypot(xy[0] - p[0], xy[1] - p[1]) < r + q + 0.01 for p, q in taken):
-                xy = _free_xy(s, r, taken, prefer=xy) or xy
+                xy = _free_xy(s, r, taken, prefer=xy)
+                if xy is None:                          # never stack objects silently
+                    notes.append(f"no room for {name}")
+                    continue
         else:
             xy = _free_xy(s, r, taken)
             if xy is None:
@@ -259,8 +262,16 @@ def _free_xy(s, r, taken, prefer=None):
             if all(np.hypot(x - p[0], y - p[1]) > r + q + 0.03 for p, q in taken):
                 score = 0.0 if prefer is None else np.hypot(x - prefer[0], y - prefer[1])
                 cands.append((score, len(cands), [x, y]))
-    if not cands:
-        return None
+    if not cands:                                       # small or off-centre surfaces: a fine grid over the whole top
+        cy = (s["y"][0] + s["y"][1]) / 2
+        for x in np.arange(s["x"][0] + r + 0.035, s["x"][1] - r - 0.03, 0.02):
+            for y in np.arange(s["y"][0] + r + 0.035, s["y"][1] - r - 0.03, 0.02):
+                if all(np.hypot(x - p[0], y - p[1]) > r + q + 0.03 for p, q in taken):
+                    ref = prefer if prefer is not None else (near + 0.10, cy)
+                    cands.append((float(np.hypot(x - ref[0], y - ref[1])), len(cands), [float(x), float(y)]))
+        if not cands:
+            return None
+        return min(cands)[2]
     return min(cands)[2] if prefer is not None else cands[0][2]
 
 
