@@ -1,5 +1,8 @@
 """Scenes built on the fly: scene spec + robot profile -> compiled MuJoCo model (docs/WORLD.md §1).
 
+Generated worlds (issue #48, docs/worlds.md): `{"template": "kitchen_full" | "warehouse" | ..., "seed": n}` is expanded
+by pps/world/rooms.py into a surface, fixtures (pps/world/fixtures.py) and objects with exact 3D poses.
+
     {"template": "table" | "kitchen" | "shelf" | "floor" | "gym",
      "objects": [{"name": "mug", "kind": "mug|block|bowl|cup|bottle|can|box|plate|fruit|vase|steel_plate|bench|barbell|
                                           wrench|screwdriver|brush", "color": "red",
@@ -98,8 +101,11 @@ def surface(template, spec=None):
     """The main work surface: a template's, or a generated world's (spec["surface"], issue #48)."""
     if template in ROOMS.ROOMS and isinstance((spec or {}).get("surface"), dict):
         sf = spec["surface"]
-        return {"template": template, "top": float(sf["top"]), "x": tuple(float(v) for v in sf["x"]),
-                "y": tuple(float(v) for v in sf["y"]), "label": sf.get("label") or ROOMS.ROOMS[template]["label"]}
+        out = {"template": template, "top": float(sf["top"]), "x": tuple(float(v) for v in sf["x"]),
+               "y": tuple(float(v) for v in sf["y"]), "label": sf.get("label") or ROOMS.ROOMS[template]["label"]}
+        if sf.get("floor_dx"):                    # closed cabinet fronts: bodies on the floor stand a little further back
+            out["floor_dx"] = float(np.clip(float(sf["floor_dx"]), -0.3, 0.0))
+        return out
     t = TEMPLATES.get(template) or TEMPLATES["table"]
     return {"template": template if template in TEMPLATES else "table", "top": t["top"], "x": tuple(t["x"]), "y": tuple(t["y"])}
 
@@ -310,7 +316,7 @@ def normalize(spec, profile=None):
     spec_out = {"template": tpl, "objects": out}
     if room is not None:
         spec_out = {"template": tpl, "seed": room["seed"], "surface": {"top": s["top"], "x": list(s["x"]), "y": list(s["y"]),
-                                                                     "label": s.get("label")},
+                                                                     "label": s.get("label"), **({"floor_dx": s["floor_dx"]} if s.get("floor_dx") else {})},
                     "fixtures": FX.normalize(room["fixtures"]), "objects": out,
                     "room": {"label": ROOMS.ROOMS[tpl]["label"], "group": ROOMS.ROOMS[tpl]["group"]}}
     if spec.get("pack"):
@@ -684,6 +690,8 @@ def build(robot_id=None, spec=None, physics=None):
     mnt = profile.mount
     mz = s["top"] if mnt.get("on") == "surface" else 0.0
     mpos = np.array([mnt.get("x", 0.0), mnt.get("y", 0.0), mz])
+    if mnt.get("on") == "floor" and profile.id != DEFAULT_ROBOT:   # generated worlds: room for feet / wheels at a cabinet front
+        mpos[0] += s.get("floor_dx", 0.0)
     yaw = float(mnt.get("yaw", 0.0))
     free = [j for j in child.joints if j.type == mujoco.mjtJoint.mjJNT_FREE]
     if free and profile.planar_base:              # e.g. Stretch: the free joint becomes a driven slide (+ yaw)

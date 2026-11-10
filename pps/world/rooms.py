@@ -120,9 +120,16 @@ def settle(static_xml, bodies_xml, placed, seconds=1.2, walls=None):
         if i > 250 and i % 50 == 0 and float(np.max(np.abs(d.qvel))) < 0.01:
             break
     out = []
+    deep = {}                                                 # the deepest penetration of each body (wedged: it didn't fit)
+    for i in range(d.ncon):
+        c = d.contact[i]
+        for g in (c.geom1, c.geom2):
+            b = int(m.geom_bodyid[g])
+            deep[b] = min(deep.get(b, 0.0), float(c.dist))
     for o, _, _ in placed:
         b = m.body(f"o_{o['name']}").id
-        out.append((d.xpos[b].copy(), d.xquat[b].copy(), float(np.linalg.norm(d.cvel[b][3:]))))
+        v = float(np.linalg.norm(d.cvel[b][3:]))
+        out.append((d.xpos[b].copy(), d.xquat[b].copy(), v if deep.get(b, 0.0) > -0.004 else 9.0))
     return out
 
 
@@ -282,7 +289,7 @@ def kitchen_full(g):
         g.fixture("microwave", "microwave", (back - 0.21, s * 1.13, top), (0.48, 0.36, 0.28), color=r.pick(("charcoal", "white", "steel")))
     g.fixture("floor", "floor_tiles", (0.6, 0.0, 0.0), (4.4, 2.6, 0), color=r.pick(("0.86 0.84 0.80 1", "0.72 0.66 0.58 1", "0.80 0.80 0.82 1")))
     g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-round(min(0.60, edge - 0.03), 3), round(min(0.60, edge - 0.03), 3)],
-                 "label": "Kitchen counter"}
+                 "label": "Kitchen counter", "floor_dx": -0.12}
     # what is where: utensils in the top drawer near its front (spaced so a gripper fits between them, handles toward
     # the robot), cooking tools in the second
     fr = -((d - 0.06) / 2 - 0.012)                          # the drawer interior's front, local to its centre
@@ -390,12 +397,12 @@ def laundry(g):
               label="the laundry basket", ckind="basket")
     g.fixture("bin", "floor_basket", (-0.05, s * 0.85, 0.0), (0.45, 0.35, 0.30), color="0.85 0.80 0.70 1", label="the basket on the floor", ckind="basket")
     g.fixture("floor", "floor_tiles", (0.5, 0.0, 0.0), (3.6, 3.0, 0), color="0.82 0.82 0.84 1")
-    g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-0.6, 0.6], "label": "Laundry counter"}
+    g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-0.6, 0.6], "label": "Laundry counter", "floor_dx": -0.12}
     cols = ["blue", "white", "red", "yellow", "green", "purple"]
     r.r.shuffle(cols)
     g.drop("basket", [("towel", f"towel_{i + 1}", cols[i]) for i in range(3)], yaw=[0.0, 0.3, -0.2])
     g.drop("washer", [("towel", "wet_towel", cols[3])])
-    g.drop("floor_basket", [("towel", "towel_4", cols[4]), ("cushion", "pillowcase", "white")])
+    g.drop("floor_basket", [("towel", "towel_4", cols[4]), ("towel", "pillowcase", "white")])
     g.drop("wall_shelf_1", [("detergent", None, r.pick(("blue", "orange"))), ("detergent", "softener", "pink"), ("bottle", "stain_remover", "white")],
            slots=[(0.0, -0.35), (0.0, 0.0), (0.0, 0.35)], yaw=[0.0, 0.0, 0.0])
     g.obj("towel", (x0 + 0.16, s * 0.25, top + 0.012), yaw=0.0, color=cols[5], name="folded_towel")
@@ -413,13 +420,13 @@ def assembly_line(g):
     g.fixture("conveyor", "conveyor", (x0 + 0.02 + W / 2, 0.0, 0.0), (L, W, 0), top=top, speed=sp, stop_at=eye, main="table",
               frame=r.pick(("grey", "0.25 0.45 0.65 1", "0.35 0.55 0.35 1")), label="the conveyor")
     s = r.pick((-1, 1))
-    g.fixture("box", "bin_stand", (0.12, s * 0.38, 0.0), (0.26, 0.20, top - 0.12), color="grey", part="stand", collide=True)
-    g.fixture("bin", "out_bin", (0.12, s * 0.38, top - 0.12), (0.26, 0.20, 0.10), color=r.pick(("blue", "orange", "green")),
+    g.fixture("box", "bin_stand", (0.13, s * 0.62, 0.0), (0.26, 0.20, top - 0.12), color="grey", part="stand", collide=True)
+    g.fixture("bin", "out_bin", (0.13, s * 0.62, top - 0.12), (0.26, 0.20, 0.10), color=r.pick(("blue", "orange", "green")),
               label="the finished-parts bin", ckind="bin")
     g.fixture("table", "assembly_bench", (x0 + 0.40, -s * 1.15, 0.0), (0.9, 0.6, 0.9), top=0.9, color="0.75 0.77 0.80 1", legs="grey", mat="esd")
     g.fixture("parts_tray", "bench_tray", (x0 + 0.40, -s * 1.15, 0.9), (0.30, 0.20, 0.04), nx=2, ny=3)
     g.fixture("box", "guard", (x0 + 0.95, 0.0, 0.0), (2.4, 0.04, 1.2), color="0.95 0.80 0.10 0.45", part="fence", collide=False)
-    g.fixture("box", "control_box", (x0 + 0.02 + W + 0.12, -math.copysign(1.0, sp) * 0.95, top - 0.2), (0.25, 0.15, 0.35), color="0.85 0.86 0.88 1", part="panel")
+    g.fixture("box", "control_box", (x0 + 0.02 + W + 0.12, s * 0.95, top - 0.2), (0.25, 0.15, 0.35), color="0.85 0.86 0.88 1", part="panel")
     g.fixture("floor", "floor_lines", (0.4, 0.0, 0.0), (2.8, 1.1, 0), color="0.98 0.82 0.12 1")
     g.fixture("floor", "floor_grey", (0.4, 0.0, 0.0), (4.4, 3.6, 0), color="0.55 0.57 0.58 1")
     g.surface = {"top": top, "x": [x0, round(x0 + 0.02 + W + 0.02, 3)], "y": [-0.55, 0.55], "label": "Conveyor station"}
@@ -476,7 +483,7 @@ def machine_tending(g):
     d = 0.66
     s = r.pick((-1, 1))
     g.fixture("table", "station", (x0 + d / 2, 0.0, 0.0), (1.4, d, top), top=top, color="0.62 0.64 0.68 1", legs="grey", main="table")
-    g.fixture("cnc", "cnc", (x0 + 0.36, s * 0.38, top), (0.46, 0.40, 0.58), color=r.pick(("0.30 0.34 0.38 1", "0.85 0.86 0.88 1")),
+    g.fixture("cnc", "cnc", (x0 + 0.36, s * 0.45, top), (0.46, 0.40, 0.58), color=r.pick(("0.30 0.34 0.38 1", "0.85 0.86 0.88 1")),
               slide=s)
     g.fixture("bin", "raw_tray", (x0 + 0.20, -s * 0.18, top), (0.26, 0.20, 0.05), color="steel", label="the raw blanks tray", ckind="tray")
     g.fixture("bin", "done_tray", (x0 + 0.20, -s * 0.44, top), (0.26, 0.20, 0.05), color="green", label="the finished parts tray", ckind="tray")
@@ -485,7 +492,7 @@ def machine_tending(g):
     g.fixture("floor", "floor_lines", (0.4, 0.0, 0.0), (2.4, 1.6, 0), color="0.98 0.82 0.12 1")
     g.fixture("floor", "concrete", (0.5, 0.0, 0.0), (4.4, 4.0, 0), color="0.58 0.60 0.60 1")
     g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-0.6, 0.6], "label": "Machine-tending station"}
-    vise_c = np.array([x0 + 0.36 + 0.04, s * 0.38, top + 0.10 + 0.03 + 0.02])
+    vise_c = np.array([x0 + 0.36 + 0.04, s * 0.45, top + 0.10 + 0.03 + 0.02])
     g.obj("blank", tuple(vise_c), yaw=math.pi / 2, name="part_in_vise", color="steel", size=[0.07, 0.05, 0.04])
     g.drop("raw_tray", [("blank", None, None), ("blank", "blank_2", None)], slots=[(0.0, -0.05), (0.0, 0.05)], yaw=[0.0, 0.0])
 
@@ -525,7 +532,7 @@ def lab(g):
     g.fixture("tube_rack", "source_rack", (x0 + 0.22, -s * 0.22, top), (0.3, 0.07, 0.06), n=6, label="the yellow source rack", color="0.95 0.75 0.20 1")
     g.fixture("centrifuge", "centrifuge", (x0 + 0.50, -s * 0.57, top), (0.3, 0.3, 0.2))
     g.fixture("shelving", "reagent_shelf", (x0 + d - 0.10, 0.0, top + 0.20), (1.3, 0.22, 0.6), levels=3, color="labwhite", back=True)
-    g.fixture("box", "fume_hood", (x0 + 0.40, s * 1.2, 0.0), (0.9, 0.7, 2.0), color="0.85 0.87 0.9 1", part="hood")
+    g.fixture("box", "fume_hood", (x0 + 0.40, s * 1.40, 0.0), (0.9, 0.7, 2.0), color="0.85 0.87 0.9 1", part="hood")
     g.fixture("floor", "floor", (0.5, 0.0, 0.0), (3.8, 3.2, 0), color="0.86 0.88 0.90 1")
     g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-0.65, 0.65], "label": "Lab bench"}
     caps = ["0.85 0.25 0.25 1", "0.25 0.45 0.85 1", "0.3 0.7 0.35 1", "0.95 0.75 0.2 1"]
@@ -578,15 +585,15 @@ ROOMS = {
                 "summary": "Washer and dryer with doors under a counter, laundry baskets with towels, detergent on a shelf."},
     "assembly_line": {"label": "Assembly line", "group": INDUSTRIAL, "gen": assembly_line, "robots": NO_RIG,
                       "summary": "A running belt conveyor that stops parts at the photo-eye, a parts bin and an assembly bench."},
-    "warehouse": {"label": "Warehouse", "group": INDUSTRIAL, "gen": warehouse, "robots": TABLETOP,
+    "warehouse": {"label": "Warehouse", "group": INDUSTRIAL, "gen": warehouse, "robots": NO_RIG,
                   "summary": "Bin picking from a tote at a pick table, racks with bays, a pallet of stacked cases."},
     "machine_tending": {"label": "Machine tending", "group": INDUSTRIAL, "gen": machine_tending, "robots": NO_RIG,
                         "summary": "A CNC enclosure with a sliding door and a part in the vise, raw and finished trays."},
-    "electronics_bench": {"label": "Electronics bench", "group": INDUSTRIAL, "gen": electronics_bench, "robots": TABLETOP,
+    "electronics_bench": {"label": "Electronics bench", "group": INDUSTRIAL, "gen": electronics_bench, "robots": NO_RIG,
                           "summary": "An ESD bench with PCBs, a parts tray of screws and nuts, a screwdriver and pliers."},
     "lab": {"label": "Lab bench", "group": INDUSTRIAL, "gen": lab, "robots": TABLETOP,
             "summary": "Test-tube racks with tubes, a centrifuge with a hinged lid, a pipette and sample plates."},
-    "packing": {"label": "Packing station", "group": INDUSTRIAL, "gen": packing, "robots": TABLETOP,
+    "packing": {"label": "Packing station", "group": INDUSTRIAL, "gen": packing, "robots": NO_RIG,
                 "summary": "An open carton, a tote of products, a scale and a roller conveyor bringing boxes."},
 }
 

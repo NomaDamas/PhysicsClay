@@ -223,8 +223,25 @@ def _objects(st):
     out = []
     for o in st.get("scene_objects") or []:
         key = str(o.get("name", "")).replace(" ", "_")
-        out.append({"name": o.get("name"), "pos": _r(o.get("pos")), "movable": key in movable or not movable})
+        e = {"name": o.get("name"), "pos": _r(o.get("pos")), "movable": key in movable or not movable}
+        if o.get("in"):                          # issue #48: in a drawer, the sink, a tote...
+            e["in"] = o["in"]
+        out.append(e)
     return out
+
+
+def world_summary(st):
+    """Generated worlds (issue #48): what opens (and how far) and what holds things, compact for the model."""
+    w = st.get("world") if isinstance(st.get("world"), dict) else None
+    if not w or not w.get("fixtures"):
+        return None
+    fx = [{"name": f.get("name"), "label": f.get("label"), **({"open": f["open"]} if "open" in f else {}),
+           **({"running": f["running"], "holding": f.get("holding")} if "running" in f else {}), **({"locked": True} if f.get("locked") else {})}
+          for f in w.get("fixtures") or []]
+    cs = [{"name": c.get("name"), "label": c.get("label"), "objects": c.get("objects") or [],
+           **({"behind": c["behind"], "open": c.get("open")} if c.get("behind") else {})}
+          for c in w.get("containers") or [] if c.get("objects") or c.get("kind") in ("sink", "drawer", "tote", "bin", "carton", "basket")]
+    return {"seed": w.get("seed"), "fixtures": fx[:40], "containers": cs[:40]}
 
 
 def context(st, confirm=True):
@@ -239,6 +256,12 @@ def context(st, confirm=True):
            "robot_mode": st.get("mode"), "speed": st.get("speed_scale")}
     if w and w.get("scene"):
         ctx["scene_template"] = (w.get("scene") or {}).get("template")
+    ws = world_summary(st)
+    if ws:
+        ctx["world"] = ws
+    sq = st.get("sequence")
+    if sq and sq.get("status") == "running":
+        ctx["running_plan"] = {"step": sq.get("i", 0) + 1, "of": sq.get("n"), "steps": [s.get("text") for s in sq.get("steps") or []]}
     p = st.get("plan")
     if p:
         ctx["plan_card"] = {"id": p.get("id"), "phase": p.get("phase"), "intent": p.get("intent"), "verdict": p.get("verdict")}
@@ -366,6 +389,16 @@ CHANGES = {"type": "object", "additionalProperties": False, "description": "What
                           "yaw": _N("Wrist turn about the vertical, degrees (absolute)."), "tilt": _N("Tool lean along the path, degrees."),
                           "hold": _N("Pause here, seconds."), "note": {"type": "string"},
                           "remove": {"type": "boolean", "description": "Delete the chosen points."}}}
+
+
+WORLDS = ("kitchen_full", "dining", "living_room", "laundry", "assembly_line", "warehouse", "machine_tending",
+          "electronics_bench", "lab", "packing")
+STEP = {"type": "object", "additionalProperties": False, "required": ["action"],
+        "description": "One step. open/close: fixture (+ amount); pick_from: container (+ object); place_in: object + container; "
+                       "pick_place: object + target; drive: dx/dy/dyaw; home. Leave out the fields a step doesn't use.",
+        "properties": {"action": {"type": "string", "enum": ["open", "close", "pick_from", "place_in", "pick_place", "drive", "home"]},
+                       "fixture": {"type": "string"}, "amount": _N("open: 0..1"), "container": {"type": "string"},
+                       "object": {"type": "string"}, "target": {"type": "string"}, "dx": _N("m"), "dy": _N("m"), "dyaw": _N("deg")}}
 
 
 def tool_specs(st, confirm=True):
@@ -508,8 +541,36 @@ def tool_specs(st, confirm=True):
     if has_world:
         T.append(_fn("load_pack", "Set up a demo pack scene: weld_cell (steel plates with a straight and an L seam, a welding torch on "
                                   "the arm), gym (bench, 20 kg barbell; coach squats, spot lifts), workshop (wrench, screwdriver, brush; "
-                                  "'when I put my hand out, give me the wrench' is on). 'Set up a weld cell' -> weld_cell.",
-                     {"name": {"type": "string", "enum": ["weld_cell", "gym", "workshop"]}}, ["name"]))
+                                  "'when I put my hand out, give me the wrench' is on), or a generated world: " + ", ".join(WORLDS) +
+                                  " ('a messy kitchen' -> kitchen_full, 'a warehouse' -> warehouse). 'Set up a weld cell' -> weld_cell.",
+                     {"name": {"type": "string", "enum": ["weld_cell", "gym", "workshop"] + list(WORLDS)},
+                      "seed": {"type": "integer", "description": "Generated worlds: which variation (another number = a different layout)."}},
+                     ["name"]))
+    fx_world = bool(world_summary(st))
+    if "pick_place" in caps and fx_world:          # issue #48: drawers, doors, containers, conveyors, multi-step plans
+        FX = {"type": "string", "description": "A drawer / door / lid by name or label from the context's world.fixtures "
+                                               "('drawer_1', 'the top drawer', 'the fridge door', 'the CNC door')."}
+        CT = {"type": "string", "description": "A container by name or label from world.containers ('sink', 'tote_out', 'the "
+                                               "tube rack', 'drawer_1', 'out_bin')."}
+        T += [
+            _fn("open_fixture", "Open a drawer, door or lid by its handle (the robot grasps the knob and pulls it along its slide or "
+                                "hinge, compliantly). amount 0..1 (default 0.8). Fails honestly when out of reach, stuck or "
+                                "the grip slips." + moving, {"fixture": FX, "amount": _N("How far open, 0..1 (0.8 default).")}, ["fixture"]),
+            _fn("close_fixture", "Close a drawer, door or lid (push it shut by its handle)." + moving, {"fixture": FX}, ["fixture"]),
+            _fn("pick_from", "Take an object out of a container (drawer, sink, tote, shelf, rack slot) and hold it lifted clear. The "
+                             "drawer or door in front of it must be open first (open_fixture)." + moving,
+                {"container": CT, "object": {"type": "string", "description": "Object name; omit for the topmost one."}}, ["container"]),
+            _fn("place_in", "Put an object into a container: the one in hand, or pick it first. A free spot inside is chosen; a rack "
+                            "picks a free slot." + moving, {"object": {"type": "string"}, "container": CT}, ["container"]),
+            _fn("plan_steps", "Several steps in one plan the person approves once ('open the top drawer, take the spoon, put it in the "
+                              "sink, close the drawer'). Steps run in order and stop at the first that fails (it says which). Use it "
+                              "for any multi-step request instead of calling the step tools one by one." + moving,
+                {"description": {"type": "string", "description": "The request in a few words (shown on the plan card)."},
+                 "steps": {"type": "array", "minItems": 1, "maxItems": 12, "items": STEP}}, ["description", "steps"]),
+        ]
+        if any("running" in f for f in (world_summary(st) or {}).get("fixtures") or []):
+            T.append(_fn("conveyor", "Start or stop the conveyor (it also stops by itself while a part sits at the photo-eye).",
+                         {"run": {"type": "boolean"}}, ["run"]))
     if "follow_me" in caps:
         T.append(_fn("follow_me", "Start or stop copying the user's body from their camera.", {"enabled": {"type": "boolean"}}, ["enabled"]))
     if "teach_by_showing" in caps:
@@ -524,9 +585,13 @@ def tool_specs(st, confirm=True):
     T += [
         _fn("set_robot", "Switch to another robot body." + ("" if has_world else " (Not available in this build yet.)"),
             {"id": {"type": "string", "enum": list((r.get("id") for r in (st.get("world") or {}).get("robots") or []) if has_world else ROBOT_IDS) or list(ROBOT_IDS)}}, ["id"]),
-        _fn("build_scene", "Rebuild the scene from a spec: template + objects.",
-            {"spec": {"type": "object", "description": '{"template": "table|kitchen|shelf|floor", "objects": [{"name", "kind": '
-                      '"mug|block|bowl|cup|bottle|can|box|plate|fruit", "color", "pos": [x, y] or "left|center|...", "movable": true}]}'}},
+        _fn("build_scene", "Rebuild the scene from a spec: a surface template + objects, or a generated world + seed (homes: "
+                           "kitchen_full, dining, living_room, laundry; industrial: assembly_line, warehouse, machine_tending, "
+                           "electronics_bench, lab, packing; every seed is a different layout with drawers, doors, containers and "
+                           "clutter).",
+            {"spec": {"type": "object", "description": '{"template": "table|kitchen|shelf|floor|' + "|".join(WORLDS) + '", "seed": 0, '
+                      '"objects": [{"name", "kind": "mug|block|bowl|cup|bottle|can|box|plate|fruit|spoon|fork|knife|towel|book|'
+                      'tube|bolt|gear|...", "color", "pos": [x, y] or "left|center|...", "movable": true}]}'}},
             ["spec"]),
         _fn("add_object", "Add one object to the scene.", {"object": {"type": "object", "description": '{"name", "kind", "color", "pos", "movable"}'}}, ["object"]),
         _fn("remove_object", "Remove an object from the scene by name.", {"name": {"type": "string"}}, ["name"]),
@@ -1275,7 +1340,61 @@ class Agent:
         return self._skill(msg, 10)[2]
 
     def t_load_pack(self, a, confirm):
-        return self._world({"op": "pack", "name": str(a.get("name") or "")})
+        msg = {"op": "pack", "name": str(a.get("name") or "")}
+        if a.get("seed") not in (None, ""):
+            msg["seed"] = a.get("seed")
+        return self._world(msg)
+
+    # ---- issue #48: fixtures, containers, multi-step plans (pps/manip.py, pps/features/fixtures.py)
+    def t_open_fixture(self, a, confirm):
+        if not str(a.get("fixture") or "").strip():
+            return {"ok": False, "error": "which drawer or door?"}
+        msg = {"fixture": str(a["fixture"])}
+        if a.get("amount") not in (None, "", 0):
+            msg["amount"] = a["amount"]
+        return self._motion("open", msg, confirm)
+
+    def t_close_fixture(self, a, confirm):
+        if not str(a.get("fixture") or "").strip():
+            return {"ok": False, "error": "which drawer or door?"}
+        return self._motion("close", {"fixture": str(a["fixture"])}, confirm)
+
+    def t_pick_from(self, a, confirm):
+        msg = {"container": str(a.get("container") or "")}
+        if str(a.get("object") or "").strip():
+            msg["object"] = str(a["object"])
+        return self._motion("pick_from", msg, confirm)
+
+    def t_place_in(self, a, confirm):
+        msg = {"container": str(a.get("container") or "")}
+        if str(a.get("object") or "").strip():
+            msg["object"] = str(a["object"])
+        return self._motion("place_in", msg, confirm)
+
+    def t_plan_steps(self, a, confirm):
+        steps = [{k: v for k, v in s.items() if v not in (None, "")} for s in a.get("steps") or [] if isinstance(s, dict) and s.get("action")]
+        if not steps:
+            return {"ok": False, "error": "give at least one step"}
+        if confirm:
+            return self._motion("sequence", {"steps": steps, "text": str(a.get("description") or "")}, confirm)
+        if self._proposed:
+            return {"ok": False, "error": f"Plan {self._proposed} is already waiting for the user."}
+        tid = self._tid("sequence")
+        self._mine(tid)
+        self.push({"type": "task", "action": "sequence", "id": tid, "steps": steps, "text": str(a.get("description") or "")})
+        sq, st = self._wait(lambda s: s.get("sequence") if (s.get("sequence") or {}).get("id") == tid and
+                            (s.get("sequence") or {}).get("status") in ("done", "failed") else None, 300)
+        if sq is None:
+            return {"ok": True, "status": "running", "note": "Still running; I'll report when it ends."}
+        self.mine[tid] = sq.get("status")
+        return {"ok": sq.get("status") == "done", "status": sq.get("status"), "message": sq.get("message"),
+                "steps": [{"step": s.get("text"), "result": s.get("result")} for s in sq.get("steps") or []]}
+
+    def t_conveyor(self, a, confirm):
+        tid = self._tid("fixture")
+        self.push({"type": "fixture", "op": "run" if a.get("run") else "stop", "id": tid})
+        t, _ = self._wait(lambda s: (s.get("task") or {}) if (s.get("task") or {}).get("id") == tid else None, 4)
+        return {"ok": bool(t) and t.get("status") == "done", "message": (t or {}).get("message")}
 
     # ---- world (World workstream: {type:"world", ...}; state.world)
     def _world(self, msg, timeout=40):

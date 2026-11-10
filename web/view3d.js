@@ -137,8 +137,9 @@ let loadGen = 0;
 // Fit the camera to the robot + work surface after a world change (ignore huge things like the floor plane).
 function frameScene(g) {
   if (!camera || !g) return;
-  const box = new THREE.Box3(), b = new THREE.Box3(), size = new THREE.Vector3();
-  g.traverse((o) => { if (!o.isMesh) return; b.setFromObject(o); b.getSize(size); if (size.x < 4 && size.y < 4 && size.z < 4) box.union(b); });
+  const box = new THREE.Box3(), b = new THREE.Box3(), size = new THREE.Vector3(), mid = new THREE.Vector3();
+  // big rooms (issue #48): frame the station around the robot, not the far racks and walls
+  g.traverse((o) => { if (!o.isMesh) return; b.setFromObject(o); b.getSize(size); b.getCenter(mid); if (size.x < 4 && size.y < 4 && size.z < 4 && Math.hypot(mid.x - 0.3, mid.y) < 1.3) box.union(b); });
   if (box.isEmpty()) return;
   const c = box.getCenter(new THREE.Vector3()), r = Math.max(0.6, box.getSize(size).length() * 0.5);
   const dir = new THREE.Vector3(0.25, -1.0, 0.8).normalize();   // from the side and above: back walls (kitchen backsplash, shelf) never block the view

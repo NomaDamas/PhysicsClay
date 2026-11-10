@@ -236,6 +236,11 @@ class FixtureTasks:
                           + (f" ({fx.frac(p) * 100:.0f}%)." if act == "open" else "."))
             return
         h0, out0 = fx.handle_now(p) if self.plant is not None else fx.handle_at(p, q0)
+        above = self._over_knob(p, h0)
+        if above:                                 # the hand comes from above: a knob right under another one is out
+            self.set_task(tid, act, "failed", f"I can't get my fingers around the handle of {p['label']}: {above} is right above it "
+                          "and my gripper only grasps handles from above (a robot that reaches in from the front could).")
+            return
         palm = self.hand_for(h0)
         role = self.role(palm)
         g = self.plant.grip.get(role) if self.plant is not None else None
@@ -297,6 +302,22 @@ class FixtureTasks:
             self.fxop = None
             if self.task and self.task.get("status") == "failed" and "reach" in self.task.get("message", ""):
                 self.task["message"] = self.task["message"].rstrip(".") + f" ({lab} is out of reach for this robot)."
+
+    def _over_knob(self, p, h):
+        """What sits right above a knob (another drawer's knob, a shelf) within a hand's height: its label, or None."""
+        m, d = self.rt.model, self.rt.data
+        gid = np.zeros(1, np.int32)
+        for dx, dy in ((0.0, 0.0), (0.012, 0.0), (-0.012, 0.0)):
+            start = np.array([h[0] + dx, h[1] + dy, h[2] + 0.025])
+            dist = mujoco.mj_ray(m, d, start, np.array([0.0, 0.0, 1.0]), np.array([1, 0, 0, 0, 0, 0], np.uint8), 1, p["bid"], gid)
+            if 0 <= dist < 0.16:
+                b = m.geom_bodyid[gid[0]]
+                q = next((x for x in self.fx.by_name.values() if x["bid"] == b), None)
+                if q is not None:
+                    return q["label"]
+                if b == 0 or (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or "").startswith("fx_"):
+                    return "the " + (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, gid[0]) or "furniture").replace("fx_", "").split("_")[0]
+        return None
 
     def _part_R(self, p, qv):
         _, quat = self.fx.pose_at(p, qv)
