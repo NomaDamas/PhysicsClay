@@ -803,6 +803,10 @@ class Tasks:
             return
         if self.kind and not active:
             rt.orient(False)                      # the next reach / mirroring moves the hand freely again
+            if self.plant is not None:            # a gripper left part-open by a release opens fully now the hand is
+                for r, g in self.plant.grip.items():   # away (teleop, mirroring and the next pick expect it open)
+                    if g["cmd"] == "hold":
+                        self.plant.grip_cmd(r, "open")
             if self.task and self.task["status"] == "running":
                 bad = self._placed_badly() if self.task.get("action") in ("pick_place", "handover") else None
                 if bad:
