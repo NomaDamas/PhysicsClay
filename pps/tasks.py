@@ -8,7 +8,7 @@ import time
 import mujoco
 import numpy as np
 
-from .robot_runtime import HANDS, ROOT
+from .robot_runtime import HANDS, ROOT, slerp
 
 TABLE_TOP = 0.74
 TABLE_X = (0.22, 0.82)
@@ -18,6 +18,8 @@ REGIONS = {  # robot frame: x forward, y left
     "front": (0.27, 0.0), "back": (0.66, 0.0),
 }
 HOVER = 0.08
+# physics side grasps (humanoid palms, Stretch): (heading: from the shoulder / straight ahead / in between, pitch down)
+SIDE_WAYS = ((0, 0.0), (1, 0.0), (2, 0.0), (1, 0.6), (0, 0.6), (1, 1.0))
 SURFACE = "table"        # what the work surface is called (pps.world templates: counter, shelf, floor mat)
 SKILL_DIR = ROOT / "recordings" / "skills"
 ROBOT_BODIES_ROOT = "pelvis"
@@ -67,17 +69,17 @@ class Tasks:
         m, d = rt.model, rt.data
         self.hands = list(getattr(rt, "hands", HANDS))
         self.kinds = dict(kinds or {})
+        self.plant = getattr(rt, "plant", None)        # physics (pps/physics.py): objects are free bodies, grasps by contact
         self.objs = {}
         self.legacy = False
         for name, geom, kind in LEGACY_OBJS:          # the UX 2.0 scene (scene_pc.xml)
             try:
-                mid, g = m.body(name).mocapid[0], m.geom(geom).id
+                b, g = m.body(name).id, m.geom(geom).id
             except KeyError:
                 continue
             self.legacy = True
             size = m.geom_size[g]
-            self.objs[name] = {"mid": mid, "home": d.mocap_pos[mid].copy(), "off": m.geom_pos[g].copy(),
-                               "r": float(size[0]), "half_h": float(size[1] if kind == "cyl" else size[2])}
+            self.objs[name] = self._obj(b, g, float(size[0]), float(size[1] if kind == "cyl" else size[2]))
         self.obstacles = {}
         for name, geom in LEGACY_OBSTACLES:
             try:
@@ -99,13 +101,13 @@ class Tasks:
             sz = m.geom_size[g]
             box = m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
             r, hh = float(max(sz[0], sz[1]) if box else sz[0]), float(sz[2] if box else sz[1])
-            if bname.startswith("obj_") and m.body_mocapid[b] >= 0:
-                mid = m.body_mocapid[b]
-                self.objs[bname[4:]] = {"mid": mid, "home": d.mocap_pos[mid].copy(), "off": m.geom_pos[g].copy(), "r": r, "half_h": hh}
+            if bname.startswith("obj_"):
+                self.objs[bname[4:]] = self._obj(b, g, r, hh)
             else:
                 self.obstacles[bname[4:]] = {"pos": d.geom_xpos[g].copy(), "r": r, "h": hh}
         self.cur = "mug" if ("mug" in self.objs or not self.objs) else next(iter(self.objs))
         self.home_palm = {h: d.site_xpos[rt.palm_sid[h]].copy() for h in self.hands}
+        self.home_quat = {h: d.mocap_quat[rt.hands_mid[h]].copy() for h in self.hands}
         self.vase = self.obstacles.get("vase") or (next(iter(self.obstacles.values())) if self.obstacles else None)
         self.keepout = None      # keep-out zones hook (pps/features/zones.py): .at(p, r), .along(pts, events, palm), .route(kps, ev, palm)
         roots = getattr(rt, "robot_roots", None)
@@ -115,6 +117,9 @@ class Tasks:
         self.next_marker = 0
         self.holding = {h: None for h in reversed(self.hands)}
         self.grasp_off = None
+        self.ph = None           # physics grasp/release in progress: {"phase", "palm", "obj", "t0"}
+        self.held = {}           # physics: palm -> what the slip monitor knows about the object in that hand
+        self.place_at = None     # physics: where the current pick & place should leave the object (checked at the end)
         self.task = None         # {"id","action","status","message","step"}
         self.events = {}         # waypoint index -> event name
         self.fired = set()
@@ -135,9 +140,39 @@ class Tasks:
     @property
     def mug_r(self): return self.objs[self.cur]["r"]
 
+    def _obj(self, b, g, r, half_h):
+        """A movable object: a mocap body (kinematic) or a free body (physics); its pose always goes through obj_pos."""
+        m, d = self.rt.model, self.rt.data
+        mid = int(m.body_mocapid[b])
+        pos, quat = (d.mocap_pos[mid], d.mocap_quat[mid]) if mid >= 0 else (d.xpos[b], d.xquat[b])
+        return {"bid": int(b), "mid": mid, "geom": int(g), "home": pos.copy(), "home_q": quat.copy(), "off": m.geom_pos[g].copy(), "r": r, "half_h": half_h}
+
+    def obj_pos(self, name):
+        """World position of a movable object's body (the one helper every reader uses)."""
+        o, d = self.objs[name], self.rt.data
+        return d.mocap_pos[o["mid"]].copy() if o["mid"] >= 0 else d.xpos[o["bid"]].copy()
+
+    def obj_mat(self, name):
+        o, d = self.objs[name], self.rt.data
+        if o["mid"] >= 0:
+            R = np.zeros(9)
+            mujoco.mju_quat2Mat(R, d.mocap_quat[o["mid"]])
+            return R.reshape(3, 3)
+        return d.xmat[o["bid"]].reshape(3, 3).copy()
+
+    def set_obj_pose(self, name, pos, quat=None):
+        """Teleport an object (scene reset, the person holding it): mocap, or the free joint at rest (physics)."""
+        o, d = self.objs[name], self.rt.data
+        if o["mid"] >= 0:
+            d.mocap_pos[o["mid"]] = pos
+            if quat is not None:
+                d.mocap_quat[o["mid"]] = quat
+        elif self.plant is not None:
+            self.plant.set_object(name, pos, quat)
+
     def mug_center(self, name=None):
-        o = self.objs[name or self.cur]
-        return self.rt.data.mocap_pos[o["mid"]] + o["off"]
+        name = name or self.cur
+        return self.obj_pos(name) + self.obj_mat(name) @ self.objs[name]["off"]
 
     def limb(self, side, what="hand"):
         """'right hand' / 'left arm' on two-armed bodies, 'gripper' / 'arm' on single arms."""
@@ -337,21 +372,38 @@ class Tasks:
     def set_task(self, tid, action, status, message, step=""):
         self.task = {"id": tid, "action": action, "status": status, "message": message, "step": step}
 
-    def _launch(self, tid, action, keypoints, palm, events, kind, ok_msg):
-        """Densify, pre-check, then start following. events: {keypoint_index: name}."""
+    def _launch(self, tid, action, keypoints, palm, events, kind, ok_msg, quats=None, loose=None):
+        """Densify, pre-check, then start following. events: {keypoint_index: name}. quats: a hand orientation per keypoint.
+        loose: keypoint index ranges (k0, k1) whose inner waypoints are transit (a looser reach check)."""
         rt = self.rt
-        idx_map, pts = [], []
-        for k, kp in enumerate(keypoints):
-            if k == 0:
-                pts.append(np.asarray(kp, float)); idx_map.append(0); continue
-            seg = densify([pts[-1], kp])[1:]
-            pts.extend(seg)
-            idx_map.append(len(pts) - 1)
-        pts = np.array(pts)
+        if quats is not None and len(quats) != len(keypoints):
+            quats = None                          # a feature changed the keypoints (detours): keep the orientation
+        pts, qs, idx_map = self._dense(keypoints, quats)
         self.set_task(tid, action, "planning", "Checking reach for every waypoint.")
-        ok = rt.precheck(pts, palm)
-        dists = rt.last_precheck_dists
         side = "right" if palm.startswith("right") else "left"
+
+        def hits(ok, hit):
+            ok = [o and not (lo <= j <= hi) for j, o in enumerate(ok) for lo, hi in [hit[1]]]
+            seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+            rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
+            self.kind = None
+            self.fail_reason = "vase"
+            over = "the vase" if self.legacy else self.pretty(self.hit_obstacle)
+            self.set_task(tid, action, "failed",
+                          f"I can't carry it that way: {self.pretty(self.cur)} would hit {self.pretty(self.hit_obstacle)} ({hit[0]:.0f} cm too low). "
+                          f"Draw a route over {over} in 3D, then say 'carry it along my path'.")
+            return False
+
+        if self.plant is not None:                # physics: the planner keeps clear of obstacles, so say what's in the way first
+            hit = self.carry_hits_vase(pts, {idx_map[k]: n for k, n in events.items()}, palm)
+            if hit is not None:
+                return hits([True] * len(pts), hit)
+        rt.orient(qs is not None)                 # physics: grasp paths hold the hand orientation firmly
+        ok = rt.precheck(pts, palm, quats=qs)
+        dists = rt.last_precheck_dists
+        for k0, k1 in loose or ():                # transit segments only need passing near (2x the reach tolerance)
+            for j in range(idx_map[k0] + 1, idx_map[k1]):
+                ok[j] = dists[j] < 2 * rt.validator.reach_tol
         if not all(ok):
             worst = int(np.argmax(dists))
             short = (dists[worst] - rt.validator.reach_tol) * 100 + rt.validator.reach_tol * 100
@@ -365,15 +417,7 @@ class Tasks:
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         hit = self.carry_hits_vase(pts, {idx_map[k]: n for k, n in events.items()}, palm)
         if hit is not None:
-            ok = [o and not (lo <= j <= hi) for j, o in enumerate(ok) for lo, hi in [hit[1]]]
-            rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
-            self.kind = None
-            self.fail_reason = "vase"
-            over = "the vase" if self.legacy else self.pretty(self.hit_obstacle)
-            self.set_task(tid, action, "failed",
-                          f"I can't carry it that way: {self.pretty(self.cur)} would hit {self.pretty(self.hit_obstacle)} ({hit[0]:.0f} cm too low). "
-                          f"Draw a route over {over} in 3D, then say 'carry it along my path'.")
-            return False
+            return hits(ok, hit)
         zs = self.keepout.along(pts, {idx_map[k]: n for k, n in events.items()}, palm) if self.keepout else None
         if zs and any(zs):
             zone, who = next(z for z in zs if z)
@@ -384,12 +428,16 @@ class Tasks:
                           f"I can't carry it that way: {who} would pass through {zone}.") + " Draw a route around it in 3D, or remove the zone.")
             return False
         rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
+        if self.plant is not None:                # physics: the last segment into a grasp / a release is slow
+            rt.path["slow"] = [(idx_map[k - 1], idx_map[k]) for k, nm in events.items() if nm in ("grasp", "release", "press") and k > 0]
+        if qs is not None:
+            rt.path["q"] = qs
         rt.path_msg = None
         self.events = {idx_map[k]: name for k, name in events.items()}
         self.fired = set()
         self.kind = kind
         rt.engaged = False
-        rt.mode, rt.follow_s = "FOLLOW", 0.0
+        rt.mode, rt.follow_s, rt.follow_hold, self.ph = "FOLLOW", 0.0, False, None
         rt.recorder.start()
         self.set_task(tid, action, "running", ok_msg)
         return True
@@ -428,21 +476,243 @@ class Tasks:
                 if idx <= i and idx not in self.fired:
                     self.fired.add(idx)
                     self._event(name, rt.path["palm"])
-        for palm, obj in self.holding.items():
-            if obj in self.objs and self.grasp_off is not None:
-                d.mocap_pos[self.objs[obj]["mid"]] = d.site_xpos[rt.palm_sid[palm]] + self.grasp_off
-        active = (self.kind in ("task", "path") and rt.mode == "FOLLOW") or (self.kind == "skill" and rt.mode == "PREVIEW") \
-            or (self.kind == "drive" and getattr(rt, "driving", False))
+        if self.plant is not None:
+            self._phys_tick()
+        else:
+            for palm, obj in self.holding.items():
+                if obj in self.objs and self.grasp_off is not None:
+                    self.set_obj_pose(obj, d.site_xpos[rt.palm_sid[palm]] + self.grasp_off)
+        active = (self.kind in ("task", "path") and (rt.mode == "FOLLOW" or (self.ph or {}).get("phase") == "press")) \
+            or (self.kind == "skill" and rt.mode == "PREVIEW") or (self.kind == "drive" and getattr(rt, "driving", False))
         if self.kind and not active:
             if self.task and self.task["status"] == "running":
-                self.set_task(self.task["id"], self.task["action"], "done", self.done_msg or "Done.")
+                bad = self._placed_badly() if self.task.get("action") == "pick_place" else None
+                if bad:
+                    self.set_task(self.task["id"], self.task["action"], "failed", bad)
+                else:
+                    self.set_task(self.task["id"], self.task["action"], "done", self.done_msg or "Done.")
             self.kind = None
+
+    # ------------------------------------------------------------------ physics: grasp by contact, slip, weight
+    @staticmethod
+    def role(palm):
+        return palm[:-5] if palm.endswith("_palm") else palm
+
+    def _hold_path(self, on):
+        self.rt.follow_hold = bool(on)
+
+    def _fail_phys(self, palm, msg, let_go=True):
+        """The physical world said no: stop where we are, report honestly."""
+        rt, pl = self.rt, self.plant
+        obj = self.holding.get(palm) or (self.ph or {}).get("obj")
+        if let_go:
+            if palm in self.holding:
+                self.holding[palm] = None
+            self.held.pop(palm, None)
+            pl.grip_cmd(self.role(palm), "open")
+        self.ph, self.place_at = None, None
+        self._hold_path(False)
+        rt.mode = "MIRROR"
+        rt.hold_here()
+        self.kind = None
+        if obj in self.objs:
+            self.cur = obj
+        if self.task:
+            self.set_task(self.task["id"], self.task["action"], "failed", msg)
+
+    def _phys_tick(self):
+        rt, pl = self.rt, self.plant
+        now = float(pl.d.time)
+        ph = self.ph
+        if ph is not None and ph["phase"] in ("settle", "close", "arrive", "open"):
+            palm, obj, role = ph["palm"], ph["obj"], self.role(ph["palm"])
+            tcp = rt.data.site_xpos[rt.palm_sid[palm]]
+            if ph["phase"] == "arrive":            # at the drop point? (the plant lags the plan; it may be stuck)
+                off = float(np.linalg.norm(tcp - rt.data.mocap_pos[rt.hands_mid[palm]]))
+                if off < 0.015 or (now - ph["t0"] > 1.5 and off < 0.06):    # close enough: the placement check judges
+                    pl.grip_cmd(role, "open")
+                    self.held.pop(palm, None)       # letting go on purpose: no more slip watch
+                    ph["phase"], ph["t0"] = "open", now
+                elif now - ph["t0"] > 1.5:
+                    kg = pl.grip_load(role, obj) / 9.81
+                    pay = float((rt.profile.physics or {}).get("payload", 3.0)) if getattr(rt, "profile", None) else 3.0
+                    if kg > pay * 1.05:               # it hangs in the jaws but the arm can't carry it
+                        self._fail_phys(palm, f"Too heavy: {self.pretty(obj)} weighs about {kg:.1f} kg and I can lift {pay:g} kg, "
+                                              "so I let it back down.")
+                    else:
+                        self._fail_phys(palm, f"My arm couldn't follow that path with {self.pretty(obj)} in hand: it stopped "
+                                              f"{off * 100:.0f} cm short of where I'd put it down, so I'm still holding it.", let_go=False)
+                    return
+            elif ph["phase"] == "settle":          # let the arm arrive before closing (the plant lags the plan)
+                tgt = rt.data.mocap_pos[rt.hands_mid[palm]]
+                if np.linalg.norm(tcp - tgt) < 0.012 or now - ph["t0"] > 1.2:
+                    pl.grip_cmd(role, "close")
+                    ph["phase"], ph["t0"] = "close", now
+            elif ph["phase"] == "close":
+                ta, tb = pl.touching(role, obj)
+                if (ta and tb and now - ph["t0"] > 0.3) or now - ph["t0"] > 0.9:
+                    R = rt.data.site_xmat[rt.palm_sid[palm]].reshape(3, 3)
+                    self.holding[palm] = obj        # an attempt: the slip monitor decides whether it really holds
+                    self.held[palm] = {"obj": obj, "rel": R.T @ (self.obj_pos(obj) - tcp), "t0": now, "lost": None,
+                                       "free_t": None, "weighed": False, "z0": float(self.obj_pos(obj)[2]), "contact": bool(ta and tb)}
+                    self.ph = None
+                    self._hold_path(False)
+                    if self.task:
+                        self.task["step"] = "grasped"
+            elif ph["phase"] == "open":
+                if now - ph["t0"] > 0.35:
+                    self.holding[palm] = None
+                    self.held.pop(palm, None)
+                    self.cur = obj
+                    self.ph = None
+                    self._hold_path(False)
+                    if self.task:
+                        self.task["step"] = "placed"
+        for palm, h in list(self.held.items()):
+            self._slip_check(palm, h, now)
+        if ph is not None and ph["phase"] == "press":
+            self._press_tick(now)
+
+    def _slip_check(self, palm, h, now):
+        rt, pl = self.rt, self.plant
+        obj, role = h["obj"], self.role(palm)
+        tcp = rt.data.site_xpos[rt.palm_sid[palm]]
+        R = rt.data.site_xmat[rt.palm_sid[palm]].reshape(3, 3)
+        drift = float(np.linalg.norm(self.obj_pos(obj) - (tcp + R @ h["rel"])))
+        ta, tb = pl.touching(role, obj)
+        h["lost"] = None if (ta and tb) else (h["lost"] if h["lost"] is not None else now)
+        what = self.pretty(obj)
+        F = pl.params["grip_force"]
+        if drift > 0.05 or (h["lost"] is not None and now - h["lost"] > 0.3):
+            lifted = float(self.obj_pos(obj)[2]) - h["z0"] > 0.02
+            why = (f"It slipped: {what} fell out of my {self.limb(role)}." if lifted else
+                   f"It slipped: {what} didn't come up with my {self.limb(role)}") + ("" if lifted else
+                   (f" (grip force {F:.0f} N)." if F < 5 else " (I couldn't get a firm grip)."))
+            self._fail_phys(palm, why)
+            return
+        others = [g for g in pl.object_contacts(obj) if g not in pl.grip[role]["pads"][0] + pl.grip[role]["pads"][1]
+                  and self.rt.model.geom_bodyid[g] not in pl.ee_bodies[role]]
+        if others:
+            h["free_t"] = None
+        elif h["free_t"] is None:
+            h["free_t"] = now
+        if not h["weighed"] and h["free_t"] is not None and now - h["free_t"] > 0.2:
+            h["weighed"] = True                     # lifted clear: what the wrist feels is the object's weight
+            kg = pl.grip_load(role, obj) / 9.81
+            pay = float((getattr(rt, "profile", None) and rt.profile.physics or {}).get("payload", 3.0))
+            if kg > pay * 1.05:
+                self._fail_phys(palm, f"Too heavy: {what} weighs about {kg:.1f} kg and I can lift {pay:g} kg, so I let it back down.")
+
+    def _press_tick(self, now):
+        """Admittance outer loop on the hand target along the approach axis: track `force` (N), never exceed the impedance
+        force limit, hold for hold_s, then carry on along the path (retreat)."""
+        rt, pl, ph = self.rt, self.plant, self.ph
+        palm, mid = ph["palm"], self.rt.hands_mid[ph["palm"]]
+        down = np.array([0.0, 0.0, -1.0])
+        f = float(-np.dot(pl.ee_force_raw[self.role(palm)], down))      # what the surface pushes back with (unfiltered)
+        ph["fmax"] = max(ph["fmax"], f)
+        lim = pl.params["force_limit"] if pl.params["impedance"] else float("inf")
+        want = min(ph["force"], 0.8 * lim)
+        dt = max(now - ph["t_last"], 0.0)
+        ph["t_last"] = now
+        if f > 0.9 * lim:                         # near the limit: back off at once
+            v = -0.03
+        else:                                     # admittance: a guarded move toward the surface until the force is right
+            v = float(np.clip(0.002 * (want - f), -0.03, 0.01))
+        rt.data.mocap_pos[mid] = rt.data.mocap_pos[mid] + down * v * dt
+        if abs(f - want) < max(0.25 * want, 1.0):
+            ph["fs"].append(f)
+            ph["on"] = ph["on"] if ph["on"] is not None else now
+        if ph["on"] is not None and now - ph["on"] >= ph["hold"]:
+            fs = ph["fs"] or [f]
+            self.press_result = {"mean": float(np.mean(fs)), "max": ph["fmax"], "want": ph["force"], "limit": lim}
+            capped = ph["force"] > want
+            self.done_msg = (f"Pressed {ph['label']} with {np.mean(fs):.1f} N for {ph['hold']:.1f} s (peak {ph['fmax']:.1f} N"
+                             + (f", capped by the {lim:.0f} N impedance limit" if capped else "") + ").")
+            self.ph = None
+            rt.mode = "FOLLOW"                    # retreat along the rest of the path
+            self._hold_path(False)
+        elif now - ph["t0"] > 8.0:
+            self._fail_phys(palm, f"I couldn't press {ph['label']}: no firm contact after 8 s (peak {ph['fmax']:.1f} N).", let_go=False)
+
+    def press(self, tid, target, target_uv, cam, aspect, force=10.0, hold_s=1.5):
+        """Press down on a spot (or an object's top) with a force (N) for hold_s seconds: compliance, needs physics."""
+        rt = self.rt
+        if self.plant is None:
+            self.set_task(tid, "press", "failed", "Pressing needs contact forces: physics is off (kinematic mode).")
+            return
+        dest, label = self.resolve(target, target_uv, cam, aspect)
+        if dest is None:
+            self.set_task(tid, "press", "failed", label[0].upper() + label[1:] + ".")
+            return
+        try:
+            force, hold_s = float(np.clip(float(force), 0.5, 200.0)), float(np.clip(float(hold_s), 0.2, 10.0))
+        except (TypeError, ValueError):
+            self.set_task(tid, "press", "failed", "Say how hard (force in N) and how long (hold_s).")
+            return
+        for n_, o in self.objs.items():           # on top of an object when the spot is on one
+            cc = self.mug_center(n_)
+            if np.hypot(*(cc[:2] - dest[:2])) < o["r"]:
+                dest = np.array([cc[0], cc[1], cc[2] + o["half_h"]])
+        palm = self.hand_for(dest)
+        role = self.role(palm)
+        g = self.plant.grip.get(role)
+        tip = g["tip"] if g else 0.0
+        if g:
+            self.plant.grip_cmd(role, "close")    # press with closed jaws
+        cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()
+        home = self.home_palm[palm]
+        start = dest + np.array([0, 0, tip + 0.03])
+        kps = [cur]
+        if home[2] < TABLE_TOP + 0.06 and home[0] < TABLE_X[0] + 0.05 and cur[2] < TABLE_TOP + 0.06:
+            kps.append(np.array([cur[0], cur[1], TABLE_TOP + 0.10]))
+        kps += [dest + np.array([0, 0, 0.10]), start]
+        ev = {len(kps) - 1: "press"}
+        kps += [dest + np.array([0, 0, 0.10]), home]
+        self.press_spec = {"force": force, "hold": hold_s, "label": label}
+        self.done_msg = f"Pressed {label}."
+        rt.set_obstacles(())
+        self._launch(tid, "press", kps, palm, ev, "task", f"Pressing {label} with {force:.0f} N for {hold_s:.1f} s.",
+                     loose=[(0, len(kps) - 3)])
+
+    def _placed_badly(self):
+        """Physics: after a pick & place, is the object resting where it should, upright? -> reason it isn't, or None."""
+        if self.plant is None or self.place_at is None:
+            return None
+        name, dest = self.place_at
+        self.place_at = None
+        if name not in self.objs:
+            return None
+        c = self.mug_center(name)
+        err = float(np.hypot(*(c[:2] - dest[:2])))
+        tilt = float(np.degrees(np.arccos(np.clip(self.obj_mat(name)[2, 2], -1, 1))))
+        if tilt > 35:
+            return f"I let go of {self.pretty(name)} but it fell over ({tilt:.0f}°)."
+        if err > 0.06:
+            return f"I let go of {self.pretty(name)} but it ended up {err * 100:.0f} cm from the spot."
+        return None
 
     def _event(self, name, palm):
         d = self.rt.data
+        if self.plant is not None and name == "press":     # compliance: the force loop takes over the hand target
+            now = float(self.plant.d.time)
+            self.ph = {"phase": "press", "palm": palm, "t0": now, "t_last": now, "fmax": 0.0, "fs": [], "on": None,
+                       **getattr(self, "press_spec", {"force": 10.0, "hold": 1.5, "label": "there"})}
+            self.rt.mode = "PRESS"
+            self._hold_path(True)
+            return
+        if self.plant is not None and name in ("grasp", "release"):
+            now = float(self.plant.d.time)
+            if name == "grasp":
+                self.ph = {"phase": "settle", "palm": palm, "obj": self.cur, "t0": now}
+            else:                                 # arrive first, then let go
+                obj = self.holding.get(palm) or self.cur
+                self.ph = {"phase": "arrive", "palm": palm, "obj": obj, "t0": now}
+            self._hold_path(True)
+            return
         if name == "grasp":
             self.holding[palm] = self.cur
-            self.grasp_off = d.mocap_pos[self.mug_mid] - d.site_xpos[self.rt.palm_sid[palm]]
+            self.grasp_off = self.obj_pos(self.cur) - d.site_xpos[self.rt.palm_sid[palm]]
             if self.task:
                 self.task["step"] = "grasped"
         elif name == "release":
@@ -450,10 +720,10 @@ class Tasks:
                 self.cur = self.holding[palm]
             self.holding[palm] = None
             self.grasp_off = None
-            p = d.mocap_pos[self.mug_mid].copy()
+            p = self.obj_pos(self.cur)
             c = p + self.mug_center_off
             p[2] = (TABLE_TOP if self.on_table(c) else 0.0) + self.mug_half_h - self.mug_center_off[2]
-            d.mocap_pos[self.mug_mid] = p
+            self.set_obj_pose(self.cur, p)
             if self.task:
                 self.task["step"] = "placed"
 
@@ -511,35 +781,288 @@ class Tasks:
         c = self.mug_center()
         palm = held or self.hand_for(c)
         d = self.rt.data
+        mid = self.rt.hands_mid[palm]
+        q_now = d.mocap_quat[mid].copy()
+        if self.plant is None:
+            self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, None, q_now)
+            return
+        grasp = (self.rt.profile.physics or {}).get("grasp", grasp) if getattr(self.rt, "profile", None) else grasp
+        self.rt.set_obstacles((name,))            # the planner keeps the gripper clear of everything else on the table
+        palms = [palm] if held else [palm] + [h for h in self.hands if h != palm]   # two hands: the other one may get there
+        stop, first = False, None
+        for k, p in enumerate(palms):
+            mid = self.rt.hands_mid[p]
+            q_now = d.mocap_quat[mid].copy()
+            for variant in range(len(SIDE_WAYS) + 2):  # physics: a few ways in (approach direction / jaw yaw); first feasible wins
+                d.mocap_quat[mid] = q_now
+                off, n, why = self.grasp_plan(name, p, grasp, held, variant)
+                if off is None:
+                    if why is not None and k == 0 and not held:
+                        self.set_task(tid, "pick_place", "failed", why)
+                        return
+                    break
+                if self._pick_plan(tid, name, p, held, c, dest, label, via, via_pts, grasp, (off, n), q_now, last=first is None):
+                    return
+                if first is None:                 # all failing: report the first (main) way and its suggestion
+                    first = (dict(self.task), self.rt.path)
+                if getattr(self, "fail_reason", "reach") != "reach" or held:
+                    stop = True
+                    break
+            d.mocap_quat[mid] = q_now
+            if stop:
+                break
+        if first is not None and not stop:
+            self.task, self.rt.path = first
+        self.fail_reason = "reach"
+
+    def _pick_plan(self, tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=True):
+        """Keypoints of a pick & place (approach, grasp, carry, release, retreat) -> _launch. plan: (offset, approach) with
+        physics, None for the kinematic grasp. -> launched?"""
+        d = self.rt.data
+        mid = self.rt.hands_mid[palm]
         cur = d.site_xpos[self.rt.palm_sid[palm]].copy()
-        off = np.array([0.0, 0.0, self.mug_half_h + 0.035]) if grasp == "top" else np.array([-(self.mug_r + 0.015), 0.0, 0.01])
+        if plan is None:
+            off, n = (np.array([0.0, 0.0, self.mug_half_h + 0.035]) if grasp == "top" else
+                      np.array([-(self.mug_r + 0.015), 0.0, 0.01])), None
+        else:
+            off, n = plan
+        q_grip = d.mocap_quat[mid].copy()          # grasp_plan sets the orientation the grasp needs
         self.cur_off = off
         place_c = np.array([dest[0], dest[1], TABLE_TOP + self.mug_half_h])
-        place_hand = place_c + off
+        place_hand = place_c + off + (np.array([0, 0, 0.008]) if n is not None else 0.0)   # let go just above the surface
+        sidegrasp = n is not None and n[2] > -0.7
+        nh = n if sidegrasp else None             # side grasps come in (and back out) along the approach axis
         kps, ev = [cur], {}
+        home = self.home_palm[palm]
+        over = n is not None and home[2] < TABLE_TOP + 0.06 and home[0] < TABLE_X[0] + 0.05   # hands start below the edge
+        if over and cur[2] < TABLE_TOP + 0.06:    # physics: up over the table's edge first (a straight line would cut it)
+            kps.append(np.array([cur[0], cur[1], TABLE_TOP + 0.10]))
         if held is None:
-            grasp = c + off
-            kps += [grasp + (np.array([0, 0, 0.09]) if np.array_equal(off[:2], [0, 0]) else np.array([-0.08, 0, 0.07])), grasp]
+            g = c + off
+            if n is None:
+                pre = g + (np.array([0, 0, 0.09]) if np.array_equal(off[:2], [0, 0]) else np.array([-0.08, 0, 0.07]))
+            else:                                 # physics: come in along the approach axis with the jaws open
+                pre = g - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else g + np.array([0, 0, 0.09])
+            kps += [pre, g]
             ev[len(kps) - 1] = "grasp"
-            kps += [grasp + np.array([0, 0, 0.12])]
+            kps += [g + np.array([0, 0, 0.12])]
         if via is not None:
             kps += [np.array(v) for v in via]
             if via_pts is None:
                 label = "the end of your route"
         kps += [place_hand + np.array([0, 0, 0.12]), place_hand]
         ev[len(kps) - 1] = "release"
-        kps += [place_hand + np.array([-0.10, 0, 0.07]), self.home_palm[palm]]
+        if n is None:
+            retreat = place_hand + np.array([-0.10, 0, 0.07])
+        else:                                     # back off along the approach axis before going home
+            retreat = place_hand - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else place_hand + np.array([0, 0, 0.10])
+            self.place_at = (name, place_c)
+            if held is None:
+                self.plant.grip_cmd(self.role(palm), "open")
+        kps += [retreat] + ([np.array([home[0], home[1], TABLE_TOP + 0.10])] if over else []) + [home]
+        quats = None
+        if n is not None:                         # the hand turns to the grasp orientation, keeps it, and turns back home
+            # (back over the table's edge with the home orientation already)
+            quats = [q_now] + [q_grip] * (len(kps) - 2 - int(over)) + [self.home_quat[palm]] * (1 + int(over))
         if via is None and self.keepout:   # keep-out zones: detour around or over them (adds e.g. ", going around zone A")
+            old = list(kps)
             kps, ev, note = self.keepout.route(kps, ev, palm)
             label += note
+            if quats is not None and len(kps) != len(old):     # detour points take the orientation of the point before
+                qmap, j = [], 0
+                for p in kps:
+                    if j < len(old) and np.allclose(p, old[j]):
+                        j += 1
+                    qmap.append(quats[max(0, j - 1)])
+                quats = qmap
         side = "right" if palm.startswith("right") else "left"
         what = self.pretty(name)
         self.done_msg = f"Placed {what} on {label}."
+        loose = None
+        if n is not None:                         # physics: getting there and going home are transit, not the work
+            gk = [k for k, e in ev.items() if e == "grasp"]
+            rk = [k for k, e in ev.items() if e == "release"]
+            loose = ([(0, gk[0] - 1)] if gk and gk[0] > 1 else []) + ([(rk[-1], len(kps) - 1)] if rk else [])
         ok = self._launch(tid, "pick_place", kps, palm, ev, "task",
-                          f"Every waypoint is reachable. Picking up {what} with my {self.limb(side)} and placing it on {label}.")
-        if not ok and getattr(self, "fail_reason", "reach") == "reach" and via is None:
+                          f"Every waypoint is reachable. Picking up {what} with my {self.limb(side)} and placing it on {label}.",
+                          quats=quats, loose=loose)
+        if not ok:
+            self.place_at = None
+        if not ok and last and getattr(self, "fail_reason", "reach") == "reach" and via is None:
             self.suggest(tid, dest, palm, off)
+        reason = getattr(self, "fail_reason", "reach")
         self.fail_reason = "reach"
+        if not ok and reason != "reach":
+            self.fail_reason = reason             # the caller stops trying other grasps (vase, zone)
+        return ok
+
+    def grasp_waypoints(self, name, palm, cur):
+        """Approach, grasp and lift keypoints after `cur` (features that build their own tasks: pick & hold, handover).
+        Physics: the first way in the planner can trace, with an orientation per keypoint. -> (kps, quats | None, index of
+        the grasp in [cur] + kps)."""
+        c, o = self.mug_center(name), self.objs[name]
+        if self.plant is None:                    # the UX 2.0 side grasp (the object rides the hand)
+            off = np.array([-(o["r"] + 0.015), 0.0, 0.01])
+            self.cur_off = off
+            g = c + off
+            return [g + np.array([-0.08, 0, 0.07]), g, g + np.array([0, 0, 0.14])], None, 2
+        rt, d = self.rt, self.rt.data
+        mid = rt.hands_mid[palm]
+        q_now = d.mocap_quat[mid].copy()
+        style = (rt.profile.physics or {}).get("grasp", rt.profile.grasp)
+        rt.set_obstacles((name,))
+        self.plant.grip_cmd(self.role(palm), "open")
+        home, best = self.home_palm[palm], None
+        lift = [np.array([cur[0], cur[1], TABLE_TOP + 0.10])] if (home[2] < TABLE_TOP + 0.06 and home[0] < TABLE_X[0] + 0.05
+                                                                and cur[2] < TABLE_TOP + 0.06) else []
+        for variant in range(len(SIDE_WAYS) + 2):
+            d.mocap_quat[mid] = q_now
+            off, n, why = self.grasp_plan(name, palm, style, None, variant)
+            if off is None:
+                break
+            q_g = d.mocap_quat[mid].copy()
+            g = c + off
+            pre = g - n * 0.10 + np.array([0, 0, 0.03]) if n[2] > -0.7 else g + np.array([0, 0, 0.09])
+            kps = lift + [pre, g, g + np.array([0, 0, 0.12])]
+            quats = [q_now] + [q_g] * len(kps)
+            pts, qs, _ = self._dense([cur] + kps, quats)
+            plan = (kps, quats, len(kps) - 1, off)
+            rt.orient(True)
+            if all(rt.precheck(pts, palm, quats=qs)):
+                best = plan
+                break
+            best = best or plan
+        d.mocap_quat[mid] = q_now
+        if best is None:
+            return [c + np.array([0, 0, 0.09]), c, c + np.array([0, 0, 0.12])], None, 2
+        self.cur_off = best[3]
+        return best[0], best[1], best[2]
+
+    @staticmethod
+    def _dense(keypoints, quats=None):
+        """Keypoints -> densified points (+ slerped orientations) and the index of every keypoint in them."""
+        idx_map, pts, qs = [], [], []
+        for k, kp in enumerate(keypoints):
+            if k == 0:
+                pts.append(np.asarray(kp, float))
+                idx_map.append(0)
+                if quats is not None:
+                    qs.append(np.asarray(quats[0], float))
+                continue
+            seg = densify([pts[-1], kp])[1:]
+            pts.extend(seg)
+            if quats is not None:
+                qs += [slerp(quats[k - 1], quats[k], (j + 1) / len(seg)) for j in range(len(seg))]
+            idx_map.append(len(pts) - 1)
+        return np.array(pts), (np.array(qs) if quats is not None else None), idx_map
+
+    def grasp_plan(self, name, palm, style, held, variant=0):
+        """Physics: where the gripper's TCP goes relative to the object centre, and from which direction.
+        -> (offset, approach direction, None) or (None, None, why not); variant 0, 1, 2 are different ways in
+        (side: from the shoulder / straight ahead / in between; top: jaw yaw 0 / +90 / -90 degrees).
+        Sets the hand target's orientation."""
+        rt, pl = self.rt, self.plant
+        role = self.role(palm)
+        g = pl.grip.get(role)
+        what = self.pretty(name)
+        if g is None:
+            return None, None, f"I have no gripper on my {self.limb(role)}: I can't pick up {what}."
+        sid, mid = rt.palm_sid[palm], rt.hands_mid[palm]
+        tcp = rt.data.site_xpos[sid].copy()
+        c = self.mug_center(name)
+        if held:                                  # already in hand: keep the grip it has
+            if variant:
+                return None, None, None
+            R = rt.data.site_xmat[sid].reshape(3, 3)
+            return tcp - c, R @ g["approach"], None
+        Rt = np.zeros(9)
+        mujoco.mju_quat2Mat(Rt, rt.data.mocap_quat[mid])
+        Rt = Rt.reshape(3, 3)
+        Ro = self.obj_mat(name)
+        kind = pl.objects.get(name, {}).get("kind", "block")
+        o = self.objs[name]
+        top_z, w = c[2] + o["half_h"], g["width"]
+        if style == "side" and variant >= len(SIDE_WAYS) and kind in ("block", "box", "can", "cup", "bottle", "fruit") \
+                and variant - len(SIDE_WAYS) < 2:  # small things: from above as a last resort (doesn't sweep its neighbours)
+            sh = rt.retargeter.robot_shoulders[palm]
+            h = np.array([c[0] - sh[0], c[1] - sh[1], 0.0])
+            h = h / (np.linalg.norm(h) or 1.0)
+            a = np.cross([0.0, 0.0, 1.0], h) if variant == len(SIDE_WAYS) else h
+            n = np.array([0.0, 0.0, -1.0])
+            if kind in ("block", "box"):          # jaws square to the block's faces
+                psi = np.arctan2(Ro[1, 0], Ro[0, 0])
+                ang = np.arctan2(a[1], a[0])
+                ang = psi + np.round((ang - psi) / (np.pi / 2)) * np.pi / 2
+                a = np.array([np.cos(ang), np.sin(ang), 0.0])
+            L = np.column_stack([g["axis"], g["approach"], np.cross(g["axis"], g["approach"])])
+            W = np.column_stack([a, n, np.cross(a, n)])
+            mujoco.mju_mat2Quat(rt.data.mocap_quat[mid], (W @ L.T).flatten())
+            z = max(top_z - min(0.025, 0.8 * o["half_h"]), TABLE_TOP + g["tip"] + 0.006)
+            style = "top"
+        elif style == "side":                     # humanoid hands / Stretch: from the robot's side, jaws closing horizontally
+            if variant >= len(SIDE_WAYS):
+                return None, None, None
+            sh = rt.retargeter.robot_shoulders[palm]
+            n = np.array([c[0] - sh[0], c[1] - sh[1], 0.0])
+            n = n / (np.linalg.norm(n) or 1.0)
+            heading, pitch = SIDE_WAYS[variant]
+            n = [n, np.array([1.0, 0, 0]), n + np.array([1.0, 0, 0])][heading]
+            n = n / (np.linalg.norm(n) or 1.0)
+            a = np.cross([0.0, 0.0, 1.0], n)
+            if np.dot(a, Rt @ g["axis"]) < 0:
+                a = -a
+            n = np.cos(pitch) * n + np.array([0, 0, -np.sin(pitch)])     # pitched down about the (level) jaw axis
+            L = np.column_stack([g["axis"], g["approach"], np.cross(g["axis"], g["approach"])])
+            W = np.column_stack([a, n, np.cross(a, n)])
+            mujoco.mju_mat2Quat(rt.data.mocap_quat[mid], (W @ L.T).flatten())
+            z = max(c[2], TABLE_TOP + g["tip"] * np.sin(pitch) + g.get("pad_h", 0.018) * np.cos(pitch) + 0.006)
+        else:
+            if variant >= 3:
+                return None, None, None
+            n = np.array([0.0, 0.0, -1.0])
+            a = Rt @ g["axis"]
+            dz = [0.0, np.pi / 2, -np.pi / 2][variant]
+            if kind in ("block", "box"):          # square up the jaws with the block's faces (smallest wrist turn)
+                phi, psi = np.arctan2(a[1], a[0]), np.arctan2(Ro[1, 0], Ro[0, 0])
+                k = np.round((phi - psi) / (np.pi / 2))
+                dz += psi + k * np.pi / 2 - phi
+            elif kind == "mug":                   # jaws across the handle's direction: they hold the round body only
+                phi, psi = np.arctan2(a[1], a[0]), np.arctan2(-Ro[1, 1], -Ro[0, 1]) + np.pi / 2
+                dz += psi + np.round((phi - psi) / np.pi) * np.pi - phi
+            if dz:
+                qz = np.array([np.cos(dz / 2), 0, 0, np.sin(dz / 2)])
+                q = np.zeros(4)
+                mujoco.mju_mulQuat(q, qz, rt.data.mocap_quat[mid].copy())
+                rt.data.mocap_quat[mid] = q
+                a = np.array([np.cos(dz) * a[0] - np.sin(dz) * a[1], np.sin(dz) * a[0] + np.cos(dz) * a[1], a[2]])
+            z = max(top_z - min(0.025, 0.8 * o["half_h"]), TABLE_TOP + g["tip"] + 0.006)
+        a = np.array([a[0], a[1], 0.0]) / (np.hypot(a[0], a[1]) or 1.0)
+        if kind in ("block", "box"):
+            hs = pl.m.geom_size[o["geom"]]
+            ext = 2 * (abs(np.dot(a, Ro[:, 0])) * hs[0] + abs(np.dot(a, Ro[:, 1])) * hs[1])
+        else:
+            ext = 2 * o["r"]
+        p = np.array([c[0], c[1], z])
+        if kind == "mug":                         # its real outline along the jaws: the body and, maybe, the handle
+            from .physics import MUG
+            s = o["r"] / 0.065
+            body = self.obj_pos(name) + Ro @ np.array([0, MUG["cy"] * s, 0])
+            handle = Ro @ np.array([0, -1.0, 0])
+            tip = float(np.dot(handle, a)) * (MUG["R"] + 0.031) * s
+            lo, hi = min(-MUG["R"] * s, tip), max(MUG["R"] * s, tip)
+            mid = body + a * (lo + hi) / 2
+            p, ext = np.array([mid[0], mid[1], z]), hi - lo
+        if kind == "mug" and style != "side" and ext > w - 0.012:     # too wide for the jaws: hold it by the rim
+            sh = rt.retargeter.robot_shoulders[palm]
+            side = -np.sign(np.dot(a, handle)) if abs(np.dot(a, handle)) > 0.5 else \
+                (1.0 if np.linalg.norm(body[:2] + a[:2] * 0.04 - sh[:2]) < np.linalg.norm(body[:2] - a[:2] * 0.04 - sh[:2]) else -1.0)
+            rim = body + side * a * (MUG["R"] - MUG["t"] / 2) * s
+            p = np.array([rim[0], rim[1], self.obj_pos(name)[2] + MUG["z1"] * s - 0.02])
+            ext = MUG["t"] * s
+        if ext > w - 0.006:
+            return None, None, (f"{what.capitalize()} is {ext * 100:.0f} cm wide and my gripper opens {w * 100:.0f} cm, "
+                                "so I can't get a grip on it.")
+        return p - c, n, None
 
     def suggest(self, tid, dest, palm, off):
         """Infeasible target: walk it toward the robot until the hand can place there, and offer that spot as a marker."""
@@ -611,7 +1134,7 @@ class Tasks:
             self.set_task(tid, "follow_path", "failed", rt.path.get("why") or "Part of that path is out of my reach (red). Redraw it closer.")
             return
         self.events, self.fired, self.kind = {}, set(), "path"
-        rt.engaged, rt.mode, rt.follow_s, rt.path["i"] = False, "FOLLOW", 0.0, 0
+        rt.engaged, rt.mode, rt.follow_s, rt.path["i"], rt.follow_hold = False, "FOLLOW", 0.0, 0, False
         rt.recorder.start()
         self.done_msg = "Finished the path."
         self.set_task(tid, "follow_path", "running", f"Following your path with my {self.limb(rt.path['hand'])}.")
@@ -619,6 +1142,7 @@ class Tasks:
     def follow_me(self, tid, enabled):
         rt = self.rt
         if enabled:
+            rt.orient(False)                      # mirroring moves the hands freely
             rt.path, self.kind = None, None
             rt.retargeter.reset()
             rt.engaged, rt.hold = True, False
@@ -695,11 +1219,14 @@ class Tasks:
         rt.mode = "MIRROR"
         if getattr(rt, "drive_goal", None) is not None:
             rt.drive_goal = None
-            rt.base_task.set_cost(np.zeros(rt.model.nv))
+            rt.base_task.set_cost(np.zeros(rt.configuration.model.nv))
         if self.task and self.task.get("status") in ("running", "planning") and self.task.get("id") != tid:
             self.task["status"], self.task["message"] = "failed", "Stopped by you before it finished."
             self.stopped_task = dict(self.task)
         self.kind = None
+        if self.plant is not None:                # stop where the arm *is*, not where the plan was heading
+            self.ph, self.place_at, rt.follow_hold = None, None, False
+            rt.hold_here()
         self.set_task(tid, "stop", "done", "Stopped. Holding this pose.")
 
     def home(self, tid, reset_scene=False):
@@ -707,15 +1234,28 @@ class Tasks:
         rt.home()
         rt.retargeter.reset()
         rt.engaged, rt.mode, rt.path, self.kind = False, "MIRROR", None, None
+        if self.plant is not None:
+            self.ph, self.place_at, rt.follow_hold = None, None, False
         if reset_scene:
             self.holding = {h: None for h in self.holding}
             self.grasp_off = None
-            for o in self.objs.values():
-                rt.data.mocap_pos[o["mid"]] = o["home"]
+            if self.plant is not None:            # a reset of the simulation: robot and objects back, at rest
+                self.held = {}
+                for r in self.plant.grip:
+                    self.plant.grip_cmd(r, "open")
+                self.plant.reset(rt.configuration.q)
+                self.plant.settle(0.3)
+            else:
+                for n, o in self.objs.items():
+                    self.set_obj_pose(n, o["home"], o["home_q"])
             self.markers, self.next_marker = [], 0
         else:
             for palm, obj in self.holding.items():
-                if obj:
+                if obj and self.plant is not None:     # going home with something in hand: let go of it
+                    self.plant.grip_cmd(self.role(palm), "open")
+                    self.holding[palm] = None
+                    self.held.pop(palm, None)
+                elif obj:
                     self._event("release", palm)
         self.set_task(tid, "reset_scene" if reset_scene else "home", "done",
                       "Scene reset." if reset_scene else "Back to my start pose.")
