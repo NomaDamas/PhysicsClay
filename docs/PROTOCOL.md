@@ -620,9 +620,11 @@ below reports `mode: "kinematic"` and the `physics` message is refused. Details 
   slice per frame) and then runs or is refused; clients wait past `planning` for the verdict. The same holds for
   `pick_from` / `place_in` and for plan cards (`preview: true`: "planning" until the card is made): planning runs as a job
   that pauses between IK waypoints (`pps/slicing.py`), so the server keeps streaming frames; a new command drops it.
-- `state.perf = {last_ms, max_ms, plan_ms, plan_max_ms, rest_ms, budget_ms, frames, since}`: the server loop's frame
-  times (the last and longest frame, time spent planning in the last / any frame, the rest of a frame, the planning
-  budget per frame; maxima since `since` seconds ago). `{type:"perf", op:"reset"}` restarts the maxima.
+- `state.perf = {last_ms, max_ms, plan_ms, plan_max_ms, plan_frame_max_ms, plan_stalls, rest_ms, stretch_ms, budget_ms,
+  frames, since}`: the server loop's frame times (the last and longest frame, time spent planning in the last / any
+  frame, the longest frame planning ran in, how many frames planning pushed past 0.5 s, the rest of a frame, how far a
+  planning slice may run past its budget, the planning budget per frame; maxima since `since` seconds ago).
+  `{type:"perf", op:"reset"}` restarts the maxima.
 - `pick_place` with physics: the jaws open on the way in, close at the grasp (the path waits), and the object is held
   only by friction. The task fails honestly with "It slipped: ..." (the object didn't come up / fell out), "Too heavy:
   ... I can lift X kg" (weight sensed once it hangs free), "I let go of ... but it fell over / ended up N cm from the

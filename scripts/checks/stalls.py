@@ -57,7 +57,9 @@ async def run(t):
                 seen = seen or tk.get("status") == "planning"
                 if tk.get("status") not in ("planning", None):
                     break
-        tk, pf = st().get("task") or {}, dict(st().get("perf") or {})
+        tk = st().get("task") or {}
+        await t.pump(0.6)                      # (perf counts a frame when the next one starts: a plan made in one frame)
+        pf = dict(st().get("perf") or {})
         t.check(f"stalls: plan card dry run (mug to the {target}) never stalls the loop",
                 tk.get("id") == tid and tk.get("status") in want and _ok(pf),
                 f"{tk.get('status')} after {time.time() - t0:.1f} s ({'planned across frames' if seen else 'one frame'}): "
@@ -84,6 +86,7 @@ async def run(t):
         seen = seen or g.get("status") == "planning"
         if g.get("status") not in ("planning", "idle"):
             break
+    await t.pump(0.6)
     pf = dict(st().get("perf") or {})
     seq = [(s["kind"], s["object"]) for s in g.get("sequence") or []]
     t.check("stalls: goal set-aside planning never stalls the loop",
