@@ -22,6 +22,7 @@ from .ir import IntentRecorder
 from .protocol import PERCEIVE_TO_ROBOT, ROBOT_TO_PERCEIVE, make_receiver, make_sender
 from .body import BodyRetargeter
 from .retarget import Retargeter
+from .slicing import point as pause_point
 from .traj import follow_step
 from .validate import ARM_JOINTS, Validator
 
@@ -495,6 +496,17 @@ class Runtime:
         self.path_msg = (f"{side} hand path: {len(pts)} waypoints, all reachable. Press F to follow."
                          if bad == 0 else f"{side} hand path: {bad}/{len(pts)} waypoints out of reach (red). Redraw or press F.")
 
+    def _trace(self, cfg, task, target, n, dt):
+        """n IK steps of a scratch configuration toward target. A planning job may hand the server loop a frame between
+        them (pps/slicing.py; the loop's own step sets the hand targets meanwhile, so the target is set again after)."""
+        pause_point()
+        task.set_target(target)
+        for i in range(n):
+            if i and i % 2 == 0:
+                pause_point()
+                task.set_target(target)
+            cfg.integrate_inplace(self.solve(cfg, dt), dt)
+
     def precheck(self, pts, palm, iters=10, dt=0.03, quats=None):
         """Trace the path with IK on a scratch configuration; a waypoint is ok if the hand gets within reach_tol.
         quats: an orientation per waypoint (wxyz: grasps, P2 trajectories); default: the hand target's current one."""
@@ -512,19 +524,14 @@ class Runtime:
         start = cfg.data.site_xpos[self.palm_sid[palm]].copy()     # far first waypoint: lead in from the hand (unscored),
         n_lead = int(np.linalg.norm(np.asarray(pts[0]) - start) / 0.035)   # the IK moves joints no faster than the robot
         for j in range(1, n_lead):
-            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[0]),
-                                                                   start + (np.asarray(pts[0]) - start) * j / n_lead))
-            for _ in range(iters):
-                cfg.integrate_inplace(self.solve(cfg, dt), dt)
+            self._trace(cfg, task, mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[0]),
+                                                                          start + (np.asarray(pts[0]) - start) * j / n_lead), iters, dt)
         for k, p in enumerate(pts):
-            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[k]), p))
             n = iters
             if quats is not None and k > 0:       # the hand turns slower than it moves: more time where it turns a lot
                 ang = 2 * np.arccos(min(1.0, abs(float(np.dot(quats[k - 1], quats[k])))))
                 n = iters * (1 + int(ang / 0.25))
-            for _ in range(n):
-                v = self.solve(cfg, dt)
-                cfg.integrate_inplace(v, dt)
+            self._trace(cfg, task, mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[k]), p), n, dt)
             dist = float(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p))
             dists.append(dist)
             ok.append(dist < self.validator.reach_tol)
