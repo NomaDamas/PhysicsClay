@@ -56,11 +56,18 @@ def listing():
             for d in all_packs().values()]
 
 
-def target(name, current_robot=None):
-    """Pack -> (robot id, scene spec). Raises ValueError with a sentence."""
+def target(name, current_robot=None, seed=None):
+    """Pack -> (robot id, scene spec). Raises ValueError with a sentence. A generated world's name (issue #48:
+    kitchen_full, warehouse, ...) works as a pack too: the current robot when it fits there, else a Panda."""
+    from .. import rooms
+    key = str(name or "").strip().lower().replace(" ", "_")
+    if key in rooms.ROOMS:
+        fits = rooms.ROOMS[key]["robots"]
+        robot = current_robot if current_robot in fits else ("panda" if "panda" in fits else fits[0])
+        return robot, {"template": key, "seed": int(seed or 0)}
     p = find(name)
     if p is None:
-        raise ValueError(f"There is no demo pack '{name}'. Packs: {', '.join(all_packs())}.")
+        raise ValueError(f"There is no demo pack '{name}'. Packs: {', '.join(all_packs())}; worlds: {', '.join(rooms.ROOMS)}.")
     robots = list(p.get("robots") or [p.get("robot")])
     robot = current_robot if current_robot in robots else (p.get("robot") or robots[0])
     spec = copy.deepcopy(p["scene"])

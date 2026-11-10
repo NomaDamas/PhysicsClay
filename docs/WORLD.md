@@ -74,6 +74,22 @@ makes them free bodies with mass and friction (same names), adds grippers / serv
   `scripts/bench_grasp.py`. Physics-only profile tuning lives in `RobotProfile.physics` (gripper pads, servo stiffness,
   physics home pose, contact excludes, a riser under a mount: `mount.z`).
 
+### Generated worlds (issue #48, `docs/worlds.md`)
+Besides the surface templates, `template` can be a generated home or industrial site with a `seed`:
+```json
+{"template": "kitchen_full" | "dining" | "living_room" | "laundry" | "assembly_line" | "warehouse" | "machine_tending" |
+             "electronics_bench" | "lab" | "packing",
+ "seed": 7, "objects": [...]}
+```
+`pps/world/rooms.py` turns `(template, seed)` into the full spec: `surface` (the station in front of the robot, its
+near edge at x = 0.22), `fixtures` (`pps/world/fixtures.py`: cabinets with drawers and doors, a sink, a fridge,
+conveyors, racks, totes, a CNC, tube racks...) and objects with an exact 3D `pos` + `quat` (clutter settled by a
+headless physics drop) and the container they are `in`. More object kinds (`pps/world/objects.py`): utensils,
+tableware, towels, books, tools, industrial parts, lab items. Fixtures' moving parts are mocap bodies in the planner and
+jointed bodies in the plant (`fx_<fixture>_<part>`); `state.world.fixtures` / `containers` report them and the task
+actions `open`, `close`, `pick_from`, `place_in` and `sequence` work with them (`docs/PROTOCOL.md` "v11 · Worlds").
+Up to 60 objects in a generated world (16 on a template).
+
 ## 2. Brain (owner: Brain workstream) — `pps/agent.py`
 * **Config:**
   * Locally it reads `.env`: `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` (default `gpt-6.1-terra`), and

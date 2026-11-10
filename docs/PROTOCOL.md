@@ -656,3 +656,40 @@ Method, math and results: `docs/calibration.md`.
   not retried for the rest of the run. `state.tts_server`: the server has an OpenAI key (never with `--byok`).
 * **Server views zoom.** `{type: "camera", zoom}`: one proportional factor per message (the browser sums wheel deltas
   and sends at most every 30 ms); the server clamps it to 0.25–4 and the distance to 0.35–8 m.
+
+## v11 · Worlds: homes and industrial sites (issue #48, `pps/world/{fixtures,objects,rooms}.py`, `pps/manip.py`, `pps/features/fixtures.py`)
+Guide, templates, fixtures, per-robot results and how to add your own: `docs/worlds.md`.
+- `{type:"world", op:"set", template: "kitchen_full"|"dining"|"living_room"|"laundry"|"assembly_line"|"warehouse"|
+  "machine_tending"|"electronics_bench"|"lab"|"packing", seed?, robot?}` builds a generated world (same seed, same
+  layout). `{op:"set", seed}` alone re-generates the current one with another layout ("shuffle"); `{op:"set", scene:
+  {template, seed, objects?}}` also works (objects are added on the work surface); `{op:"pack", name: <template>, seed?}`
+  loads one like a demo pack (the current robot when it fits, else a Panda). `add_object` / `remove_object` / switching
+  the robot keep the generated world as it is.
+- The scene spec of a generated world (`state.world.scene`) carries `seed`, `surface` `{top, x, y, label, floor_dx?}`,
+  `fixtures` `[{name, kind, pos, yaw, size, ...}]` and `room` `{label, group}`; its objects have a 3D `pos` (centre), a
+  `quat` and `in` (the container they started in). `state.world.templates` entries have `group` (`basic` | `home` |
+  `industrial`), `summary` and `seeded`.
+- `state.world.fixtures = [{name, kind: drawer|door|lid|rack, label, open: 0..1, joint, type: slide|hinge, fixture,
+  locked?}, {name, kind: conveyor|rollers, label, running, speed, holding: object|null}]`, `state.world.containers =
+  [{name, label, kind, objects: [...], behind?: part, open?}]` (refreshed twice a second), `state.world.seed`. Each
+  `scene_objects` entry has `in` when the object is in a container. Moving parts are bodies, so `/scene.json` marks their
+  geoms `dynamic` and `geom_poses` streams them (the 3D view renders drawers and doors live).
+- Task actions: `{type:"task", action:"open", fixture, amount?: 0..1 (0.8)}`, `{action:"close", fixture}`,
+  `{action:"pick_from", container, object?}`, `{action:"place_in", object?, container}`. `fixture` / `container` are a
+  name or what people say ("the top drawer", "the fridge door", "the empty tote", "the tube rack" = its first free
+  slot). Answers in `state.task` like any task (`running` → `done` | `failed` with the reason: out of reach, a knob
+  under another one, no grip, slipped off the handle, stuck at N % open, "open the top drawer first", didn't end up in
+  the container). With `preview: true` each becomes a one-step plan card.
+- `{type:"task", action:"sequence", id, steps: [task, ...], text?, preview?}`: several steps in a row. With `preview`, a
+  plan card (`state.plan` with `seq: true`, `steps` = one per task, the first step checked for real, `phase`
+  proposing | blocked); `{type:"plan", op:"confirm"}` runs it, `cancel` stops it. Steps run with ids `<id>#1`, `<id>#2`…
+  and the sequence ends as the task `<id>` (`done`: the steps' results joined; `failed`: "Step 2 of 4 (take the spoon out
+  of the top drawer) didn't work: ..."). `state.sequence = {id, status: running|done|failed, i, n, message, steps: [{text,
+  result}]}`.
+- `{type:"fixture", op:"run"|"stop", name?, speed?}` starts / stops a conveyor (it stops by itself while a part sits at
+  its photo-eye and starts again when the part is taken); `op:"lock"|"unlock", name` jams / frees a drawer or door (a
+  test probe); `op:"set", name, open: 0..1` puts a part at an opening (a setup probe: what is inside doesn't move with
+  it). Answers in `state.task` (action `fixture`) when the message has an `id`.
+- Agent tools: `open_fixture`, `close_fixture`, `pick_from`, `place_in`, `plan_steps`, `conveyor`; `load_world {name, seed?}` and
+  `build_scene` take the world templates and a `seed`; the context has `world.fixtures`, `world.containers` and each
+  object's `in`.

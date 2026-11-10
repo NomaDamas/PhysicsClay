@@ -32,7 +32,8 @@
     floor: ["Floor", "Objects on the floor"],
     gym: ["Gym", "Rubber floor for lifting"],
   };
-  const KINDS = ["mug", "block", "bowl", "cup", "bottle", "can", "box", "plate", "fruit"];
+  const KINDS = ["mug", "block", "bowl", "cup", "bottle", "can", "box", "plate", "fruit", "spoon", "fork", "knife", "towel", "book", "tube", "bolt", "gear"];
+  const GROUPS = [["home", "Homes"], ["industrial", "Industrial sites"]];   // generated worlds (issue #48), every seed a new layout
   const COLORS = { red: "#e0574f", orange: "#f59145", yellow: "#e8c44e", green: "#4caf6e", blue: "#4a7fe0", purple: "#9b6fd6", white: "#f4f4f6", black: "#2a2a2e", grey: "#9a9aa0" };
   const WHERE = ["left", "center", "right", "front", "back"];
   const DOCK_TOOLS = ["point", "zone", "goal", "show", "path", "handover", "drive"];   // the ones a robot JSON can switch
@@ -64,6 +65,9 @@
     kitchen: '<rect x="3" y="9" width="18" height="10" rx="1.5"/><path d="M3 13h18M8 9V6h4"/>',
     shelf: '<rect x="5" y="3" width="14" height="18" rx="1.5"/><path d="M5 9h14M5 15h14"/>',
     floor: '<path d="M2 18h20M6 18l2-6h8l2 6"/><circle cx="12" cy="9" r="2"/>',
+    home: '<path d="M4 11 12 4l8 7M6 9.5V20h12V9.5"/><rect x="10" y="14" width="4" height="6" rx=".6"/>',
+    industrial: '<path d="M3 20V10l5 3V10l5 3V10l5 3V5h3v15z"/><path d="M7 17h2M12 17h2M17 17h2"/>',
+    shuffle: '<path d="M4 7h3.5c4 0 5 10 9 10H20M4 17h3.5c1.6 0 2.7-1.6 3.6-3.5M16.5 7H20m-2-2 2 2-2 2m0 6 2 2-2 2M13.4 10.5C14.3 8.6 15.2 7 16.5 7"/>',
   };
   const icon = (n, size = 20) => (IC[n]
     ? `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n]}</svg>`
@@ -78,7 +82,10 @@
       const robots = arr(W.robots).filter((r) => r && r.id);
       if (!robots.some((r) => r.id === robot.id)) robots.unshift(robot);
       const scene = W.scene && typeof W.scene === "object" ? W.scene : { template: "table", objects: [] };
+      const info = {};
+      for (const t of arr(W.templates)) if (t && typeof t === "object" && t.id) info[t.id] = t;
       return { world: true, rev: W.rev, id: robot.id, robot, robots, scene, packs: arr(W.packs).filter((p) => p && p.id), pack: W.pack || scene.pack || null,
+        info, seed: W.seed != null ? W.seed : scene.seed,
         templates: arr(W.templates).length ? arr(W.templates).map((t) => (t && typeof t === "object" ? String(t.id || "") : String(t))).filter(Boolean) : TEMPLATES };
     }
     const robot = { id: "g1", label: "Unitree G1", kind: "humanoid", base: "legged", capabilities: G1_CAPS };
@@ -209,6 +216,8 @@
 .sc-pack { min-height: 96px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; border-radius: 14px;
   border: 1px solid var(--line); background: var(--raised); text-align: left; color: var(--t1); cursor: pointer; }
 .sc-pack b { font-size: var(--fs-sm); font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.sc-world[aria-pressed="true"] { border-color: var(--accent); }
+.rb-sec-title svg { vertical-align: -3px; color: var(--t2); }
 .sc-pack span { font-size: 11px; color: var(--t2); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .sc-pack small { font-size: 11px; color: var(--t3); }
 .sc-pack:hover:not(:disabled) { border-color: color-mix(in srgb, var(--hot) 60%, transparent); }
@@ -315,6 +324,7 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
     else if (b.dataset.tab) setTab(b.dataset.tab);
     else if (b.dataset.robot) pickRobot(b.dataset.robot);
     else if (b.dataset.tpl) pickTemplate(b.dataset.tpl);
+    else if (b.dataset.shuffle != null) shuffle();
     else if (b.dataset.pack) pickPack(b.dataset.pack);
     else if (b.dataset.del) removeObject(b.dataset.del);
     else if (b.dataset.sceneReset != null) resetScene();
@@ -351,11 +361,27 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
     const r = m.robots.find((x) => x.id === id) || {}, lab = r.label || (catalog[id] || {}).label || id;
     if (begin("robot", { type: "world", op: "set", robot: id }, { id, label: lab })) U.say("sys", `Switching to ${lab}…`);
   }
+  const newSeed = () => Math.floor(Math.random() * 100000);
   function pickTemplate(t) {
     const m = model(U.state);
+    const inf = (m.info || {})[t];
+    if (inf && inf.seeded) {                     // a generated world: a fresh seed each time it's picked
+      if (pending) return;
+      const seed = newSeed();
+      if (begin("scene", { type: "world", op: "set", template: t, seed }, { label: `Building the ${String(inf.label).toLowerCase()} (layout ${seed})` }))
+        U.say("sys", `Building the ${String(inf.label).toLowerCase()}, layout ${seed}…`);
+      return;
+    }
     if (t === m.scene.template || pending) return;
     const objects = arr(m.scene.objects);
     if (begin("scene", { type: "world", op: "set", scene: { template: t, objects } }, { label: `${(TPL[t] || [t])[0]} scene` })) U.say("sys", `Building the ${(TPL[t] || [t])[0].toLowerCase()} scene…`);
+  }
+  function shuffle() {                           // same world, another layout
+    const m = model(U.state), inf = (m.info || {})[m.scene.template];
+    if (pending || !inf || !inf.seeded) return;
+    const seed = newSeed();
+    if (begin("scene", { type: "world", op: "set", seed }, { label: `New ${String(inf.label).toLowerCase()} layout (${seed})` }))
+      U.say("sys", `Shuffling: a new ${String(inf.label).toLowerCase()} layout, ${seed}…`);
   }
   function pickPack(id) {
     const m = model(U.state);
@@ -523,6 +549,7 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
       ${off.length ? `<h3 class="rb-sec-title">${m.world ? "Not on this server" : "Coming with the world update"}</h3><div class="rb-grid">${off.map((r) => robotCard(r, m, false)).join("")}</div>` : ""}`;
   }
   function where(o) {
+    if (o.in) return `in ${String(o.in).replace(/_/g, " ")}`;
     if (typeof o.pos === "string") return o.pos;
     if (Array.isArray(o.pos) && o.pos.length >= 2) return `${(+o.pos[0]).toFixed(2)}, ${(+o.pos[1]).toFixed(2)} m`;
     return "";
@@ -530,17 +557,25 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
   function sceneHTML(m) {
     const objs = arr(m.scene.objects), tpl = m.scene.template || "table", busy = !!pending, ro = !m.world;
     const st = pending ? `<span class="sc-status busy" role="status"><span class="rb-spin" aria-hidden="true"></span>${esc(pending.label)}…</span>`
-      : `<span class="sc-status" role="status">${objs.length} object${objs.length === 1 ? "" : "s"} · ${esc((TPL[tpl] || [tpl])[0])}</span>`;
+      : `<span class="sc-status" role="status">${objs.length} object${objs.length === 1 ? "" : "s"} · ${esc((TPL[tpl] || [((m.info || {})[tpl] || {}).label || tpl])[0])}${(m.info || {})[tpl] && m.seed != null ? ` · layout ${esc(m.seed)}` : ""}</span>`;
     const opts = (list, sel, lab) => list.map((v) => `<option value="${esc(v)}" ${v === sel ? "selected" : ""}>${esc(lab ? lab(v) : v)}</option>`).join("");
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-    const packs = arr(m.packs);
+    const packs = arr(m.packs), info = m.info || {}, cur = info[tpl];
+    const basic = m.templates.filter((t) => !(info[t] && info[t].seeded));
+    const worldsHTML = GROUPS.map(([g, title]) => {
+      const ws = m.templates.filter((t) => info[t] && info[t].group === g);
+      return ws.length ? `<h3 class="rb-sec-title">${icon(g, 16)} ${esc(title)}</h3><div class="sc-packs">${ws.map((t) => `<button type="button" class="sc-pack sc-world" data-tpl="${esc(t)}" aria-pressed="${t === tpl}" ${ro || busy ? "disabled" : ""}>
+        <b>${esc(info[t].label || t)}</b><span>${esc(info[t].summary || "")}</span>${t === tpl && m.seed != null ? `<small>Layout ${esc(m.seed)}</small>` : "<small>A new layout each time</small>"}</button>`).join("")}</div>` : "";
+    }).join("");
+    const shuffleHTML = cur && cur.seeded ? `<button type="button" class="btn" data-shuffle ${ro || busy ? "disabled" : ""}>${icon("shuffle", 16)}Shuffle layout</button>` : "";
     const packsHTML = packs.length ? `<h3 class="rb-sec-title">Demo packs</h3>
       <div class="sc-packs">${packs.map((p) => `<button type="button" class="sc-pack" data-pack="${esc(p.id)}" aria-pressed="${p.id === m.pack}" ${ro || busy ? "disabled" : ""}>
         <b>${esc(p.label || p.id)}</b><span>${esc(p.summary || "")}</span><small>${esc((p.robots || []).length > 1 ? `${p.robot} (or ${p.robots.filter((r) => r !== p.robot).slice(0, 2).join(", ")})` : (p.robot || ""))}</small></button>`).join("")}</div>` : "";
-    return `${ro ? '<p class="rb-hint">Building scenes arrives with the world update. This is the current G1 table.</p>' : '<p class="rb-hint">Or just say it: “a kitchen counter with a bowl and two cups”, or “set up a weld cell”.</p>'}
+    return `${ro ? '<p class="rb-hint">Building scenes arrives with the world update. This is the current G1 table.</p>' : '<p class="rb-hint">Or just say it: “a messy kitchen”, “a warehouse with totes”, “a kitchen counter with a bowl and two cups”, or “set up a weld cell”.</p>'}
+      ${worldsHTML}
       ${packsHTML}
       <h3 class="rb-sec-title">Template</h3>
-      <div class="sc-tpl">${m.templates.map((t) => `<button type="button" class="sc-tpl-btn" data-tpl="${esc(t)}" aria-pressed="${t === tpl}" ${ro || busy ? "disabled" : ""}>${icon(IC[t] ? t : "table", 20)}<b>${esc((TPL[t] || [cap(t)])[0])}</b><span>${esc((TPL[t] || [, ""])[1])}</span></button>`).join("")}</div>
+      <div class="sc-tpl">${basic.map((t) => `<button type="button" class="sc-tpl-btn" data-tpl="${esc(t)}" aria-pressed="${t === tpl}" ${ro || busy ? "disabled" : ""}>${icon(IC[t] ? t : "table", 20)}<b>${esc((TPL[t] || [cap(t)])[0])}</b><span>${esc((TPL[t] || [, ""])[1])}</span></button>`).join("")}</div>
       <h3 class="rb-sec-title">Objects</h3>
       <ul class="sc-list">${objs.length ? objs.map((o) => {
         const nm = String(o.name || ""), sw = COLORS[o.color] || COLORS[nm.split(/[ _]/)[0]] || "";
@@ -555,13 +590,13 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
         <label><span>Where</span><select name="where" ${ro ? "disabled" : ""}>${opts(WHERE, "center", cap)}</select></label>
         <button type="submit" class="btn primary" ${ro || busy ? "disabled" : ""}>${icon("plus", 16)}Add</button>
       </form>
-      <div class="sc-foot">${st}<span class="grow"></span><button type="button" class="btn" data-scene-reset ${ro || busy ? "disabled" : ""}>${icon("reset", 16)}Reset scene</button></div>`;
+      <div class="sc-foot">${st}<span class="grow"></span>${shuffleHTML}<button type="button" class="btn" data-scene-reset ${ro || busy ? "disabled" : ""}>${icon("reset", 16)}Reset scene</button></div>`;
   }
   let dlgKey = "";
   function render(force) {
     if (!dlg.open && !force) return;
     const m = model(U.state);
-    const key = JSON.stringify([tab, m.world, m.id, m.rev, m.robots, m.scene, m.templates, pending && [pending.kind, pending.id, pending.label], Object.keys(catalog).length]);
+    const key = JSON.stringify([tab, m.world, m.id, m.rev, m.robots, m.scene, m.templates, m.seed, pending && [pending.kind, pending.id, pending.label], Object.keys(catalog).length]);
     if (key === dlgKey && !force) return;
     dlgKey = key;
     const pane = tab === "robot" ? robotPane : scenePane;

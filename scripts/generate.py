@@ -19,6 +19,9 @@ episode ({type: "world"}), records with {type: "dataset"} and runs the task over
 check the robot makes (reach, collisions, zones, safety, physics) applies. Output: datasets/<name>/<robot>/ (one
 LeRobot v2.1 dataset per robot body; scenes and variations are per-episode metadata), then a success table.
 
+--scenes also takes the generated worlds (kitchen_full, warehouse, lab, ...: docs/worlds.md): every episode then gets a
+new layout (a fresh world seed, kept in the episode's metadata) with the seed's objects added on its work surface.
+
 Randomization (--randomize, comma list):
     objects    object positions anywhere in the reachable band of the surface, sizes x0.85-1.15, distractor colours
                (an object named with a colour in the seed keeps it: the words must stay true), 0-2 distractors
@@ -213,8 +216,8 @@ async def generate(a, kind, seed):
         if profiles.get(r) is None:
             raise SystemExit(f"unknown robot '{r}'. Known: {', '.join(profiles.PROFILES)}")
     for s in scenes:
-        if s not in world_scene.TEMPLATES:
-            raise SystemExit(f"unknown scene '{s}'. Known: {', '.join(world_scene.TEMPLATES)}")
+        if s not in world_scene.TEMPLATES and not world_scene.is_room(s):
+            raise SystemExit(f"unknown scene '{s}'. Known: {', '.join(t['id'] for t in world_scene.templates())}")
     language = seed.get("language") or seed.get("utterance") or seed.get("label")
     language = [language] if isinstance(language, str) else list(language or [])
     objs = base_objects(kind, seed)
@@ -245,7 +248,11 @@ async def generate(a, kind, seed):
                     k += 1
                     key = (robot, template)
                     tally[key]["tries"] += 1
-                    spec = randomize_scene(template, objs, rng, "objects" in rand)
+                    if world_scene.is_room(template):    # a generated home / site (docs/worlds.md): a new layout per episode
+                        spec = {"template": template, "seed": int(rng.integers(1_000_000)),
+                                "objects": [{k2: v for k2, v in o.items() if k2 not in ("pos", "_named")} for o in objs]}
+                    else:
+                        spec = randomize_scene(template, objs, rng, "objects" in rand)
                     wid = f"gen-w{k}"
                     await c.send(type="world", op="set", robot=robot, scene=spec, id=wid)
                     w = await c.until(lambda s: (s.get("task") or {}).get("id") == wid and s["task"]["status"] in ("done", "failed")
@@ -259,6 +266,8 @@ async def generate(a, kind, seed):
                     top = float((world.get("surface") or {}).get("top", world_scene.surface(template)["top"]))
                     variation = {"generator": "scripts/generate.py", "seed": a.seed or "inline", "i": i, "robot": robot,
                                  "scene": template, "randomize": sorted(rand)}
+                    if spec.get("seed") is not None:
+                        variation["world_seed"] = spec["seed"]
                     if "physics" in rand and has_physics:
                         if robot not in rnds:
                             rnds[robot] = Randomizer(robot=robot, seed=int(rng.integers(1 << 30)))

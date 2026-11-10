@@ -112,7 +112,7 @@ def robot_spec_bodies(spec):
     out = []
     for b in spec.bodies:
         n = b.name or ""
-        if b is spec.worldbody or n.startswith(("obj_", "obs_")) or n.endswith("_target") or n.startswith("pc_harness"):
+        if b is spec.worldbody or n.startswith(("obj_", "obs_", "fx_")) or n.endswith("_target") or n.startswith("pc_harness"):
             continue
         if n in LEGACY_KINDS or n in ("vase", "blue_block"):
             continue
@@ -120,7 +120,7 @@ def robot_spec_bodies(spec):
         while root.parent is not None and root.parent is not spec.worldbody:
             root = root.parent
         rn = root.name or ""
-        if rn.startswith(("obj_", "obs_")) or rn.endswith("_target") or rn in LEGACY_KINDS or rn in ("vase", "blue_block"):
+        if rn.startswith(("obj_", "obs_", "fx_")) or rn.endswith("_target") or rn in LEGACY_KINDS or rn in ("vase", "blue_block"):
             continue
         out.append(b)
     return out
@@ -357,13 +357,67 @@ def plant_spec(spec, profile, kinds, masses=None):
             col.contype, col.conaffinity = 0, 0           # the bounding cylinder stays for the task layer; the walls collide
             _hollow_mug(b, n, s, mu)
             continue
+        from .world import objects as wobj
         from .world.scene import KINDS  # late: scene imports this module
+        if kind in wobj.KINDS:                            # issue #48 kinds: their own mass and friction
+            mass, mu = wobj.KINDS[kind]["mass"], wobj.KINDS[kind]["mu"]
         dsz = np.array(KINDS.get(kind, KINDS["block"])[0], float) / 2
         vol = float(sz[0] ** 2 * sz[1] / (dsz[0] ** 2 * dsz[2])) if cyl else float(np.prod(sz) / np.prod(dsz))
         b.explicitinertial, b.mass, b.ipos = True, float(masses.get(name) or mass * np.clip(vol, 0.2, 8.0)), gp.tolist()
         b.inertia = _cyl_inertia(b.mass, sz[0], 2 * sz[1]) if cyl else _box_inertia(b.mass, sz)
         col.contype, col.conaffinity, col.condim = 3, 3, 4
         col.friction = [mu, 0.01, 0.0001]
+        hs = (float(sz[0]), float(sz[0] if cyl else sz[1]), float(sz[1] if cyl else sz[2]))
+        parts = wobj.collision(kind, hs) if kind in wobj.KINDS else None
+        if parts:                                         # compound: a handle the jaws can close on, a bowl, a head...
+            col.contype, col.conaffinity = 0, 0           # the bounding shape stays for the task layer
+            kw = dict(contype=3, conaffinity=3, condim=4, friction=[mu, 0.01, 0.0001], group=3, rgba=[0, 0, 0, 0])
+            T = {"box": mujoco.mjtGeom.mjGEOM_BOX, "sphere": mujoco.mjtGeom.mjGEOM_SPHERE, "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
+                 "capsule": mujoco.mjtGeom.mjGEOM_CAPSULE}
+            for i, (typ, size, pos, q) in enumerate(parts):
+                g = b.add_geom(name=f"{n}_part{i}", type=T[typ], size=list(size) + [0] * (3 - len(size)), pos=list(pos), **kw)
+                if q is not None:
+                    g.quat = list(q)
+
+
+def fixture_joints(spec, built):
+    """Plant only (issue #48): the fixtures' moving parts (mocap bodies in the planner) get their joint: a drawer slides,
+    a door / lid turns on its hinge, with damping, Coulomb friction, armature, limits and (dishwasher door) a spring.
+    Their contacts with the static world are excluded (the joint holds them), conveyor slats and rollers get a velocity
+    servo (pps/world/fixtures.py FixtureRuntime drives them). Parts are light (plywood / sheet-metal density)."""
+    T = {"slide": mujoco.mjtJoint.mjJNT_SLIDE, "hinge": mujoco.mjtJoint.mjJNT_HINGE}
+    for p in built.parts:
+        try:
+            b = spec.body(p["body"])
+        except Exception:
+            continue
+        if b is None:
+            continue
+        b.mocap = False
+        endless = p["kind"] in ("slat", "roller")
+        j = b.add_joint(name=p["joint"], type=T[p["type"]], axis=list(p["axis"]), pos=[0, 0, 0],
+                        damping=float(p["damping"]), frictionloss=float(p["friction"]), armature=float(p["armature"]))
+        if not endless:
+            j.limited = mujoco.mjtLimited.mjLIMITED_TRUE
+            j.range = list(p["range"])
+        if p.get("stiffness"):
+            try:
+                j.stiffness = float(p["stiffness"])
+            except TypeError:                             # newer MuJoCo: a stiffness polynomial
+                j.stiffness = [float(p["stiffness"]), 0.0, 0.0]
+            j.springref = float(p.get("springref", 0.0))
+        for g in b.geoms:
+            g.density = 500.0 if endless else 250.0
+            if g.contype or g.conaffinity:
+                g.friction = [0.8, 0.01, 0.0001]
+                g.condim = 4 if endless else 3
+        spec.add_exclude(bodyname1="world", bodyname2=p["body"])
+        act = p.get("act")
+        if act:
+            a = spec.add_actuator(name=f"{p['joint']}_act", target=p["joint"], trntype=mujoco.mjtTrn.mjTRN_JOINT)
+            a.set_to_velocity(kv=float(act["kv"]))
+            a.forcelimited, a.forcerange = True, [-float(act["force"]), float(act["force"])]
+            a.ctrllimited, a.ctrlrange = False, [0.0, 0.0]
 
 
 def _hollow_mug(b, n, s, mu):
@@ -484,6 +538,7 @@ class Plant:
         self.ee_force = {r: np.zeros(3) for r in self.site_ids}        # wrist-sensor-like: contact force on the hand (N)
         self.ee_force_raw = {r: np.zeros(3) for r in self.site_ids}
         self._f6 = np.zeros(6)
+        self.fixtures = None                              # issue #48: pps.world.fixtures.FixtureRuntime (conveyors, joints)
         self.set_params({})
 
     # ---------------------------------------------------------------- structure
@@ -644,9 +699,19 @@ class Plant:
         return q
 
     def settle(self, sec=0.4):
-        for _ in range(int(sec / DT)):
+        for i in range(int(sec / DT)):
+            if i % 10 == 0:
+                self.fixture_tick()
             self._apply_ctrl(self.q_cmd, np.zeros(self.nq_r))
             mujoco.mj_step(self.m, self.d)
+
+    def fixture_tick(self):
+        """Conveyors: drive the belt / rollers, wrap slats, stop at the photo-eye (pps/world/fixtures.py)."""
+        fx = self.fixtures
+        if fx is None or not fx.belts:
+            return
+        d = self.d
+        fx.belt_tick({n: d.xpos[o["bid"]] for n, o in self.objects.items()})
 
     # ---------------------------------------------------------------- control
     def _apply_ctrl(self, q, qd):
@@ -711,7 +776,9 @@ class Plant:
             lat = self.params["latency_ms"] / 1000.0
             if lat <= 0:
                 self.lag.clear()
-            for _ in range(n):
+            for k in range(n):
+                if k % 8 == 0:
+                    self.fixture_tick()                  # conveyors (pps/world/fixtures.py)
                 err = target - self.q_cmd
                 v_want = np.clip(v_plan + err / SETPOINT_TAU, -self.v_max, self.v_max)
                 v_want = np.sign(v_want) * np.minimum(np.abs(v_want), np.sqrt(2 * self.a_max * np.abs(err)) + np.abs(v_plan))

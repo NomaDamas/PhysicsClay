@@ -49,9 +49,12 @@ def test_regions_lie_on_the_surface(tpl):
 
 
 def test_templates_listing():
+    """Surface templates first (with their height), then the generated worlds (issue #48) with their group."""
+    from pps.world import rooms
     ids = [t["id"] for t in scene.templates()]
-    assert ids == list(scene.TEMPLATES)
-    assert all({"id", "label", "top"} <= set(t) for t in scene.templates())
+    assert ids == list(scene.TEMPLATES) + list(rooms.ROOMS)
+    assert all({"id", "label", "top"} <= set(t) for t in scene.templates() if t["id"] in scene.TEMPLATES)
+    assert all(t["group"] in ("home", "industrial") and t.get("seeded") for t in scene.templates() if t["id"] in rooms.ROOMS)
 
 
 # ---------------------------------------------------------------------------------------------- normalize
@@ -78,7 +81,7 @@ def test_empty_and_garbage_specs():
     "raw, kind",
     [
         ({"kind": "mug"}, "mug"),
-        ({"kind": "Apple"}, "fruit"),  # alias, case-insensitive
+        ({"kind": "Lemon"}, "fruit"),  # alias, case-insensitive (apple is a kind of its own since #48)
         ({"kind": "brick"}, "block"),
         ({"name": "coffee mug"}, "mug"),  # from the name, longest word first
         ({"name": "soda can"}, "can"),

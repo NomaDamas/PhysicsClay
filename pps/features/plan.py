@@ -50,7 +50,7 @@ def _dry_run(ctx, msg):
     tasks, rt = ctx.tasks, ctx.rt
     rt_keys = ("path", "path_msg", "mode", "engaged", "follow_s")
     t_keys = ("task", "kind", "events", "fired", "done_msg", "cur", "cur_off", "fail_reason", "hit_obstacle", "stopped_task",
-              "place_at")
+              "place_at", "fxop", "place_z", "transit_z", "place_check", "place_drop", "cur_action", "release_z", "approach_z")
     snap_rt = {k: getattr(rt, k) for k in rt_keys}
     snap_t = {k: getattr(tasks, k) for k in t_keys if hasattr(tasks, k)}
     snap_q = rt.data.mocap_quat.copy()            # physics plans turn the hand target to the grasp orientation
@@ -82,6 +82,12 @@ def _dry_run(ctx, msg):
         a, tid = msg.get("action"), str(msg.get("id", "plan"))
         if a == "pick_place":
             tasks.pick_place(tid, msg.get("object", "mug"), msg.get("target"), msg.get("target_uv"), ctx.cam_params, ctx.aspect)
+        elif a in ("open", "close"):              # issue #48 (pps/manip.py): the same code the run uses
+            tasks.operate(tid, a, msg.get("fixture") or msg.get("target") or "", msg.get("amount"))
+        elif a == "pick_from":
+            tasks.pick_from(tid, msg.get("container") or msg.get("target") or "", msg.get("object"))
+        elif a == "place_in":
+            tasks.place_in(tid, msg.get("object"), msg.get("container") or msg.get("target") or "")
         else:
             tasks.reach(tid, msg.get("target"), msg.get("target_uv"), ctx.cam_params, ctx.aspect)
         verdict = dict(tasks.task or {})
@@ -396,7 +402,7 @@ def _confirm_hook(ctx):
 def track(ctx):
     ctx.store.setdefault("confirm_hook", _confirm_hook)
     p = ctx.store.get(KEY)
-    if not p:
+    if not p or p.get("seq"):                     # a multi-step plan tracks itself (pps/features/fixtures.py)
         return
     t = ctx.tasks.task or {}
     tid = t.get("id")

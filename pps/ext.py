@@ -31,6 +31,15 @@ import traceback
 from types import SimpleNamespace
 
 HANDLERS, PRE_TASK, STATE, TICK, OVERLAY = {}, [], [], [], []
+ACTIONS = {}            # task action -> fn(msg): actions a feature adds (the app's dispatch runs them, plan cards too)
+
+
+def action(name):
+    """A task action a feature implements (its fn gets the task message; it keeps its own ctx from a tick)."""
+    def deco(fn):
+        ACTIONS[name] = fn
+        return fn
+    return deco
 
 
 def handler(kind):

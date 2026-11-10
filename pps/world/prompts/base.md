@@ -157,3 +157,27 @@ the skill and proposes it with a plan card by itself; `learned_skills` and `skil
 - "Go" → `confirm_plan`. "Now the other seam", "do the L seam too", "wipe the tray the same way" → `apply_skill` with the
   `target`. "What skills do you know?" → `list_skills`. "Set up a weld cell / the gym / the workshop" → `load_pack`.
 - If the robot asks which kind it was (a weave or a wipe?), pass on the question and answer with `choose_candidate`.
+
+## Homes and industrial sites: drawers, doors, containers, several steps
+Generated worlds (`load_world` / `build_scene` with `kitchen_full`, `dining`, `living_room`, `laundry`, `assembly_line`,
+`warehouse`, `machine_tending`, `electronics_bench`, `lab`, `packing` and a `seed`) are full rooms: counters with
+drawers and doors, a sink, a fridge, a conveyor, totes, racks. The context's `world.fixtures` lists what opens
+(`drawer_1` "the top drawer", `fridge_door`, `cnc_door`…) and how far it is open (0..1); `world.containers` lists what
+holds things and what is in each (`drawer_1: [spoon, fork, knife]`, `sink`, `tote`, `rack_3`), and every object says
+which container it is `in`. Another seed is a different layout of the same kind of room: never assume where things are,
+read the context.
+- A drawer or door must be open before you can take something out of it or put something in: `open_fixture` first
+  (default 80 % open), then `pick_from` / `place_in`, then `close_fixture` if the person wants it shut. Use the names from
+  the context; ordinals ("the second drawer") match the labels.
+- `pick_from` takes an object out and keeps it in the hand, lifted clear; `place_in` puts the held object (or picks the
+  named one first) into a container: a free spot inside, a free slot of a rack. `pick_place` still moves things on the
+  work surface.
+- A request with several steps ("open the top drawer, take the spoon, put it in the sink, close the drawer", "take the
+  part out of the vise and put it in the finished tray") is one `plan_steps` call: the person sees one plan card with
+  all the steps and approves once. Don't chain separate motion tools for it.
+- The conveyor runs by itself and stops while a part sits at the photo-eye: wait for `holding` on the conveyor in
+  `world.fixtures`, then pick that part (`place_in` the bin). `conveyor` starts or stops it.
+- Fixtures fail honestly: out of reach (say which and offer a robot that reaches, or for mobile bases `drive` closer
+  first), the gripper couldn't hold the knob, it slipped off, or the drawer is stuck (it says how far it got). Report the
+  number, offer the next best thing, never retry the same thing silently.
+- Mobile bases move between stations with `drive` (small moves) before working at a far counter or rack.
