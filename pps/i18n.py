@@ -142,6 +142,7 @@ WORDS_KO = {
     "chip": "칩", "battery": "배터리", "phone": "휴대폰", "laptop": "노트북", "towel": "수건", "cloth": "천",
     "shirt": "셔츠", "sock": "양말", "marker": "마커", "spot": "자리", "seam": "용접선",
     "workpiece": "작업물", "pallet": "팔레트", "crate": "상자", "carton": "상자", "package": "택배 상자",
+    "bar": "바", "parts": "부품", "tool": "공구", "sample": "샘플",
     "top": "위", "bottom": "아래", "side": "옆", "upper": "위", "lower": "아래", "inner": "안쪽", "outer": "바깥쪽",
     "right": "오른쪽", "left": "왼쪽", "front": "앞", "back": "뒤", "hand": "손", "arm": "팔",
 }
@@ -171,7 +172,11 @@ def word(value, lang="ko"):
         items = _LIST.split(core)
         if len(items) > 1 and all(len(x.split()) <= 4 for x in items):     # names, not clauses
             outs = [word(x, lang) for x in items if x.strip()]
-            return ", ".join(outs[:-1]) + (" 또는 " if " or " in core else ", ") + outs[-1]
+            if " or " in core:
+                return ", ".join(outs[:-1]) + " 또는 " + outs[-1]
+            if " and " in core:                           # 머그컵, 빨간 블록과 꽃병
+                return ", ".join(outs[:-1]) + particle(outs[-2], "와") + " " + outs[-1]
+            return ", ".join(outs)
     toks = low.split()
     if toks and all(t in WORDS_KO or t.isdigit() for t in toks):
         return " ".join(WORDS_KO.get(t, t) for t in toks)

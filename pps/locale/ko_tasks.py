@@ -4,42 +4,45 @@ English is the message id; see pps/i18n.py.
 Object names reach these messages through Tasks.pretty ("the mug", "the red block"), so object placeholders sit after a
 literal "the " ("I'm holding the {obj}."): the template stays specific and the captured name has no article. Hands and
 arms come from Tasks.limb ("right hand", "left arm" on two-armed bodies, "gripper" / "arm" on single arms) and the
-glossary turns them into 오른손 / 왼팔 / 그리퍼 / 팔. Some messages are joined from pieces at run time (a verdict plus a
-hint, a done message plus how far off it landed): those have an entry for the whole message, so a placeholder at the end
-of the first sentence never swallows the sentences after it."""
+glossary turns them into 오른손 / 왼팔 / 그리퍼 / 팔. Messages joined from pieces at run time (a verdict plus a hint, a done
+message plus how far off it landed) have an entry per sentence, or one for the whole message where a piece isn't a
+sentence of its own. pps/physics.py writes no user-facing text. The generic trajectory-check sentences ("{why} at point
+{i}.") and a few lines shared with the features live in ko_features."""
 
 MESSAGES = {
     # key: (English template, Korean template)
 
     # ------------------------------------------------------------------ places (Tasks.resolve labels, used inside messages)
-    "tasks.label_marker": ("marker {mid}", "마커 {mid}"),
+    # ("marker {m}" and "the end of your route" are in ko_features / ko_app)
     "tasks.label_pointed": ("the spot you pointed at ({id})", "가리킨 자리({id})"),
     "tasks.label_marked": ("the spot you marked ({id})", "표시한 자리({id})"),
     "tasks.label_region": ("the {region} of the {surface}", "{surface} {region}"),
     "tasks.label_next_to": ("next to the {obj}", "{obj} 옆"),
-    "tasks.label_end_of_route": ("the end of your route", "경로 끝"),
     "tasks.label_beside": (
         "{label} (beside the {blocker}, which is there)",
         "{label} 근처 빈자리({blocker|이} 거기 있어서)",
     ),
-    "tasks.label_going_around": ("{label}, going around {zones}", "{zones|을} 돌아서 {label}"),
-    "tasks.label_going_over": ("{label}, going over {zones}", "{zones} 위로 넘어서 {label}"),
-    # lists of objects (Tasks.movable_list, Tasks._names, container contents): "the mug, the cup or the bowl"
-    "tasks.list_or_2": ("the {a} or the {b}", "{a} 또는 {b}"),
-    "tasks.list_or_3": ("the {a}, the {b} or the {c}", "{a}, {b} 또는 {c}"),
-    "tasks.list_or_4": ("the {a}, the {b}, the {c} or the {d}", "{a}, {b}, {c} 또는 {d}"),
-    "tasks.list_or_5": ("the {a}, the {b}, the {c}, the {d} or the {e}", "{a}, {b}, {c}, {d} 또는 {e}"),
-    "tasks.list_or_6": (
-        "the {a}, the {b}, the {c}, the {d}, the {e} or the {f}",
-        "{a}, {b}, {c}, {d}, {e} 또는 {f}",
+    # a pick & place detouring around a keep-out zone: the place gets ", going around keep-out zone A" (pps/features/
+    # zones.py). Each starts with the place's own lowercase words, so it can't swallow a whole sentence.
+    "tasks.via_around_marker": ("marker {mid}, going around {zones}", "{zones|을} 돌아 마커 {mid}"),
+    "tasks.via_over_marker": ("marker {mid}, going over {zones}", "{zones} 위로 넘어 마커 {mid}"),
+    "tasks.via_around_region": (
+        "the {region} of the {surface}, going around {zones}",
+        "{zones|을} 돌아 {surface} {region}",
     ),
-    "tasks.list_and_2": ("the {a} and the {b}", "{a|와} {b}"),
-    "tasks.list_and_3": ("the {a}, the {b} and the {c}", "{a}, {b|와} {c}"),
-    "tasks.list_and_4": ("the {a}, the {b}, the {c} and the {d}", "{a}, {b}, {c|와} {d}"),
-    "tasks.list_2": ("the {a}, the {b}", "{a}, {b}"),
-    "tasks.list_3": ("the {a}, the {b}, the {c}", "{a}, {b}, {c}"),
-    "tasks.list_4": ("the {a}, the {b}, the {c}, the {d}", "{a}, {b}, {c}, {d}"),
-    "tasks.list_5": ("the {a}, the {b}, the {c}, the {d}, the {e}", "{a}, {b}, {c}, {d}, {e}"),
+    "tasks.via_over_region": ("the {region} of the {surface}, going over {zones}", "{zones} 위로 넘어 {surface} {region}"),
+    "tasks.via_around_pointed": (
+        "the spot you pointed at ({id}), going around {zones}",
+        "{zones|을} 돌아 가리킨 자리({id})",
+    ),
+    "tasks.via_over_pointed": (
+        "the spot you pointed at ({id}), going over {zones}",
+        "{zones} 위로 넘어 가리킨 자리({id})",
+    ),
+    "tasks.via_around_next_to": ("next to the {obj}, going around {zones}", "{zones|을} 돌아 {obj} 옆"),
+    "tasks.via_over_next_to": ("next to the {obj}, going over {zones}", "{zones} 위로 넘어 {obj} 옆"),
+    "tasks.via_around_obj": ("the {obj}, going around {zones}", "{zones|을} 돌아 {obj}"),
+    "tasks.via_over_obj": ("the {obj}, going over {zones}", "{zones} 위로 넘어 {obj}"),
 
     # ------------------------------------------------------------------ where? (Tasks.resolve: why a target can't be used)
     "tasks.spot_not_visible": ("That spot is not on anything I can see.", "그 자리에는 제가 볼 수 있는 게 없어요."),
@@ -60,10 +63,6 @@ MESSAGES = {
     "tasks.carry_hits": (
         "I can't carry it that way: the {obj} would hit the {obstacle} ({cm} cm too low).",
         "그렇게는 옮길 수 없어요: {obj|이} {obstacle}에 부딪혀요 ({cm} cm 너무 낮아요).",
-    ),
-    "tasks.carry_hits_draw": (
-        "Draw a route over {over} in 3D, then say 'carry it along my path'.",
-        "3D에서 {over} 위로 지나가는 경로를 그린 다음 'carry it along my path'(또는 '경로대로 옮겨')라고 말하세요.",
     ),
     "tasks.exact_grasp": (
         "I can't: my {arm} can't get my {hand} exactly to the grasp ({cm} cm off: it is at the edge of my reach or "
@@ -88,19 +87,9 @@ MESSAGES = {
         "로봇의 팔이 닿지 않는 곳에 있어요).",
     ),
     "tasks.zone_hand": ("I can't: my {hand} would enter {zone}.", "안 돼요: {hand|이} {zone}에 들어가게 돼요."),
-    "tasks.zone_hand_full": (
-        "I can't: my {hand} would enter {zone}. Draw a route around it in 3D, or remove the zone.",
-        "안 돼요: {hand|이} {zone}에 들어가게 돼요. 3D에서 구역을 돌아가는 경로를 그리거나 구역을 지워 주세요.",
-    ),
     "tasks.zone_carry": (
         "I can't carry it that way: the {obj} would pass through {zone}.",
         "그렇게는 옮길 수 없어요: {obj|이} {zone|을} 지나가게 돼요.",
-    ),
-    "tasks.zone_carry_full": (
-        "I can't carry it that way: the {obj} would pass through {zone}. Draw a route around it in 3D, or remove the "
-        "zone.",
-        "그렇게는 옮길 수 없어요: {obj|이} {zone|을} 지나가게 돼요. 3D에서 구역을 돌아가는 경로를 그리거나 구역을 지워 "
-        "주세요.",
     ),
     "tasks.zone_draw_around": (
         "Draw a route around it in 3D, or remove the zone.",
@@ -122,18 +111,16 @@ MESSAGES = {
         "The {fixed} is fixed in this scene; I can move nothing here.",
         "{fixed|은} 이 장면에 고정돼 있어요. 여기엔 제가 옮길 수 있는 물건이 없어요.",
     ),
-    "tasks.dont_see": ("I don't see '{obj}'.", "'{obj}' 같은 건 안 보여요."),
     "tasks.dont_see_can_move": (
         "I don't see '{obj}'. I can move {list}.",
-        "'{obj}' 같은 건 안 보여요. {list|을} 옮길 수 있어요.",
+        "{obj|이} 보이지 않아요. {list|을} 옮길 수 있어요.",
     ),
     "tasks.dont_see_can_move_nothing": (
         "I don't see '{obj}'. I can move nothing here.",
-        "'{obj}' 같은 건 안 보여요. 여기엔 제가 옮길 수 있는 물건이 없어요.",
+        "{obj|이} 보이지 않아요. 여기엔 제가 옮길 수 있는 물건이 없어요.",
     ),
     "tasks.still_holding": ("I'm still holding the {obj}.", "아직 {obj|을} 들고 있어요."),
     "tasks.no_route": ("There is no route yet.", "아직 경로가 없어요."),
-    "tasks.no_route_draw": ("Draw one on my view or in 3D first.", "먼저 제 화면이나 3D에서 경로를 그려 주세요."),
     "tasks.not_on_surface": (
         "I can't place it there: {label} is not on the {surface}.",
         "거기에는 놓을 수 없어요: {label|은} {surface} 위가 아니에요.",
@@ -185,7 +172,15 @@ MESSAGES = {
         "Placed the {obj} on {label}, {cm} cm from the spot.",
         "{obj|을} {label}에 놓았어요 (오차 {cm} cm).",
     ),
-    "tasks.from_spot_tail": (", {cm} cm from the spot.", " (오차 {cm} cm)."),
+    "tasks.placed_on_around_err": (
+        "Placed the {obj} on {label}, going around {zones}, {cm} cm from the spot.",
+        "{obj|을} {zones|을} 돌아 {label}에 놓았어요 (오차 {cm} cm).",
+    ),
+    "tasks.placed_on_over_err": (
+        "Placed the {obj} on {label}, going over {zones}, {cm} cm from the spot.",
+        "{obj|을} {zones} 위로 넘어 {label}에 놓았어요 (오차 {cm} cm).",
+    ),
+    "tasks.from_spot_tail":(", {cm} cm from the spot.", " (오차 {cm} cm)."),
     "tasks.put_in": ("Put the {obj} in {label}.", "{obj|을} {label}에 넣었어요."),
     "tasks.holding": ("I'm holding the {obj}.", "{obj|을} 들고 있어요."),
     "tasks.holding_taken": ("I'm holding the {obj}, taken from {label}.", "{label}에서 꺼낸 {obj|을} 들고 있어요."),
@@ -252,11 +247,11 @@ MESSAGES = {
     "tasks.one_arm_hint": ("Set it down and pick it up again.", "내려놓았다가 다시 집으라고 말해 주세요."),
     "tasks.dont_see_can_pass": (
         "I don't see '{obj}'. I can pass {list}.",
-        "'{obj}' 같은 건 안 보여요. {list|을} 다른 손으로 건넬 수 있어요.",
+        "{obj|이} 보이지 않아요. {list|을} 다른 손으로 건넬 수 있어요.",
     ),
     "tasks.dont_see_can_pass_nothing": (
         "I don't see '{obj}'. I can pass nothing here.",
-        "'{obj}' 같은 건 안 보여요. 여기엔 제가 건넬 수 있는 물건이 없어요.",
+        "{obj|이} 보이지 않아요. 여기엔 제가 건넬 수 있는 물건이 없어요.",
     ),
     "tasks.already_in_hand": ("The {obj} is already in my {hand}.", "{obj|은} 이미 {hand}에 있어요."),
     "tasks.grippers_too_narrow": (
@@ -339,7 +334,6 @@ MESSAGES = {
         "{lim} path: {k}/{n} waypoints inside {zone} (red).",
         "{lim} 경로: 경유점 {n}개 중 {k}개가 {zone} 안에 있어요 (빨간색).",
     ),
-    "tasks.path_lifted_tail": (", lifted over {over}", ", {over} 위로 들어 올림"),
     "tasks.say_go_or_f": ("Say 'go' or press F.", "'go'(또는 '가자')라고 말하거나 F를 누르세요."),
     "tasks.press_f_to_follow": ("Press F to follow.", "따라가려면 F를 누르세요."),
     "tasks.redraw_or_f": ("Redraw or press F.", "다시 그리거나 F를 누르세요."),
@@ -354,131 +348,75 @@ MESSAGES = {
     "tasks.path_draw_around": ("Draw it around, or over it in 3D.", "돌아가게 그리거나 3D에서 위로 넘어가게 그려 주세요."),
     "tasks.path_through_zone": ("Part of that path goes through {zone} (red).", "경로 일부가 {zone|을} 지나가요 (빨간색)."),
     "tasks.path_redraw_around": ("Redraw it around.", "돌아가도록 다시 그려 주세요."),
-    "tasks.path_part_out": ("Part of that path is out of my reach (red).", "경로 일부가 팔이 닿는 범위 밖이에요 (빨간색)."),
-    "tasks.path_redraw_closer": ("Redraw it closer.", "더 가깝게 다시 그려 주세요."),
-    "tasks.no_path": ("There is no path yet.", "아직 경로가 없어요."),
+    # ("Part of that path is out of my reach (red).", "Redraw it closer." and "There is no path yet." are in ko_features)
     "tasks.no_path_draw": ("Draw one on my view.", "제 화면에 그려 주세요."),
     "tasks.following_path": ("Following your path with my {hand}.", "{hand|으로} 경로를 따라갈게요."),
     "tasks.finished_path": ("Finished the path.", "경로를 끝까지 따라갔어요."),
-    # why a waypoint is red (tasks.path_object_hits; the P2 checks in pps/traj.py and pps/features/traj.py)
-    "tasks.why_my_hits": ("my {hand} would hit the {thing}", "{hand|이} {thing}에 부딪혀요"),
+    # why a waypoint is red (tasks.path_object_hits, traj.surface_checker; the other reasons and the generic
+    # "{why} at point {i}." sentences of traj.check are in ko_features)
     "tasks.why_obj_hits": ("the {obj} would hit the {thing}", "{obj|이} {thing}에 부딪혀요"),
-    "tasks.why_carry_hits": ("what I carry would hit the {thing}", "들고 있는 물건이 {thing}에 부딪혀요"),
     "tasks.why_below_surface": ("{cm} cm below the surface", "표면보다 {cm} cm 아래로 내려가요"),
-    "tasks.why_reach": ("out of my reach by {cm} cm", "팔이 닿는 범위를 {cm} cm 벗어나요"),
-    "tasks.why_reach_cap": ("Out of my reach by {cm} cm", "팔이 닿는 범위를 {cm} cm 벗어나요"),
-    "tasks.why_inside": ("inside {zone}", "{zone} 안"),
-    "tasks.why_inside_cap": ("Inside {zone}", "{zone} 안"),
     "tasks.why_check_failed": ("check failed ({e})", "확인 중에 오류가 났어요 ({e})"),
     "tasks.why_check_failed_cap": ("Check failed ({e})", "확인 중에 오류가 났어요 ({e})"),
-    # traj.check: the first issue and where it is ("The hand would hit the vase at point 3, and 1 more place.")
-    "tasks.check_at": ("{why} at point {i}.", "{why} ({i}번 점)."),
-    "tasks.check_at_more": ("{why} at point {i}, and {n} more place{_s}.", "{why} ({i}번 점, 그 밖에 {n}곳 더)."),
-    "tasks.check_between": ("{why} between points {i0} and {i1}.", "{why} ({i0}번과 {i1}번 점 사이)."),
-    "tasks.check_between_more": (
-        "{why} between points {i0} and {i1}, and {n} more place{_s}.",
-        "{why} ({i0}번과 {i1}번 점 사이, 그 밖에 {n}곳 더).",
-    ),
-    "tasks.check_from": ("{why} from point {i0} to point {i1}.", "{why} ({i0}~{i1}번 점)."),
-    "tasks.check_from_more": (
-        "{why} from point {i0} to point {i1}, and {n} more place{_s}.",
-        "{why} ({i0}~{i1}번 점, 그 밖에 {n}곳 더).",
-    ),
-    "tasks.check_start": ("{why} on the way to the start.", "{why} (시작점으로 가는 길)."),
-    "tasks.check_start_more": (
-        "{why} on the way to the start, and {n} more place{_s}.",
-        "{why} (시작점으로 가는 길, 그 밖에 {n}곳 더).",
-    ),
-    # (the "would hit" reasons end with the object's name, so they get whole sentences of their own)
-    "tasks.check_my_at": ("My {hand} would hit the {thing} at point {i}.", "{hand|이} {thing}에 부딪혀요 ({i}번 점)."),
+    # traj.check's first issue when its subject is one the generic sentences can't put into Korean
+    # ("My right hand would hit the mug at point 3, and 1 more place.")
+    "tasks.check_my_at": ("My {hand} would hit the {thing} at point {i}.", "{i}번 지점에서 {hand|이} {thing}에 부딪혀요."),
     "tasks.check_my_at_more": (
         "My {hand} would hit the {thing} at point {i}, and {n} more place{_s}.",
-        "{hand|이} {thing}에 부딪혀요 ({i}번 점, 그 밖에 {n}곳 더).",
+        "{i}번 지점에서 {hand|이} {thing}에 부딪혀요. 그 밖에도 {n}곳이 더 있어요.",
     ),
     "tasks.check_my_between": (
         "My {hand} would hit the {thing} between points {i0} and {i1}.",
-        "{hand|이} {thing}에 부딪혀요 ({i0}번과 {i1}번 점 사이).",
+        "{i0}번과 {i1}번 지점 사이에서 {hand|이} {thing}에 부딪혀요.",
     ),
     "tasks.check_my_between_more": (
         "My {hand} would hit the {thing} between points {i0} and {i1}, and {n} more place{_s}.",
-        "{hand|이} {thing}에 부딪혀요 ({i0}번과 {i1}번 점 사이, 그 밖에 {n}곳 더).",
+        "{i0}번과 {i1}번 지점 사이에서 {hand|이} {thing}에 부딪혀요. 그 밖에도 {n}곳이 더 있어요.",
     ),
     "tasks.check_my_from": (
         "My {hand} would hit the {thing} from point {i0} to point {i1}.",
-        "{hand|이} {thing}에 부딪혀요 ({i0}~{i1}번 점).",
+        "{i0}번부터 {i1}번 지점까지 {hand|이} {thing}에 부딪혀요.",
     ),
     "tasks.check_my_from_more": (
         "My {hand} would hit the {thing} from point {i0} to point {i1}, and {n} more place{_s}.",
-        "{hand|이} {thing}에 부딪혀요 ({i0}~{i1}번 점, 그 밖에 {n}곳 더).",
+        "{i0}번부터 {i1}번 지점까지 {hand|이} {thing}에 부딪혀요. 그 밖에도 {n}곳이 더 있어요.",
     ),
     "tasks.check_my_start": (
         "My {hand} would hit the {thing} on the way to the start.",
-        "{hand|이} {thing}에 부딪혀요 (시작점으로 가는 길).",
+        "시작점으로 가는 길에 {hand|이} {thing}에 부딪혀요.",
     ),
     "tasks.check_my_start_more": (
         "My {hand} would hit the {thing} on the way to the start, and {n} more place{_s}.",
-        "{hand|이} {thing}에 부딪혀요 (시작점으로 가는 길, 그 밖에 {n}곳 더).",
+        "시작점으로 가는 길에 {hand|이} {thing}에 부딪혀요. 그 밖에도 {n}곳이 더 있어요.",
     ),
-    "tasks.check_the_at": ("The {obj} would hit the {thing} at point {i}.", "{obj|이} {thing}에 부딪혀요 ({i}번 점)."),
-    "tasks.check_the_at_more": (
-        "The {obj} would hit the {thing} at point {i}, and {n} more place{_s}.",
-        "{obj|이} {thing}에 부딪혀요 ({i}번 점, 그 밖에 {n}곳 더).",
-    ),
-    "tasks.check_the_between": (
-        "The {obj} would hit the {thing} between points {i0} and {i1}.",
-        "{obj|이} {thing}에 부딪혀요 ({i0}번과 {i1}번 점 사이).",
-    ),
-    "tasks.check_the_between_more": (
-        "The {obj} would hit the {thing} between points {i0} and {i1}, and {n} more place{_s}.",
-        "{obj|이} {thing}에 부딪혀요 ({i0}번과 {i1}번 점 사이, 그 밖에 {n}곳 더).",
-    ),
-    "tasks.check_the_from": (
-        "The {obj} would hit the {thing} from point {i0} to point {i1}.",
-        "{obj|이} {thing}에 부딪혀요 ({i0}~{i1}번 점).",
-    ),
-    "tasks.check_the_from_more": (
-        "The {obj} would hit the {thing} from point {i0} to point {i1}, and {n} more place{_s}.",
-        "{obj|이} {thing}에 부딪혀요 ({i0}~{i1}번 점, 그 밖에 {n}곳 더).",
-    ),
-    "tasks.check_the_start": (
-        "The {obj} would hit the {thing} on the way to the start.",
-        "{obj|이} {thing}에 부딪혀요 (시작점으로 가는 길).",
-    ),
-    "tasks.check_the_start_more": (
-        "The {obj} would hit the {thing} on the way to the start, and {n} more place{_s}.",
-        "{obj|이} {thing}에 부딪혀요 (시작점으로 가는 길, 그 밖에 {n}곳 더).",
-    ),
-    "tasks.check_carry_at": (
-        "What I carry would hit the {thing} at point {i}.",
-        "들고 있는 물건이 {thing}에 부딪혀요 ({i}번 점).",
-    ),
+    "tasks.check_carry_at": ("What I carry would hit the {thing} at point {i}.", "{i}번 지점에서 들고 있는 물건이 {thing}에 부딪혀요."),
     "tasks.check_carry_at_more": (
         "What I carry would hit the {thing} at point {i}, and {n} more place{_s}.",
-        "들고 있는 물건이 {thing}에 부딪혀요 ({i}번 점, 그 밖에 {n}곳 더).",
+        "{i}번 지점에서 들고 있는 물건이 {thing}에 부딪혀요. 그 밖에도 {n}곳이 더 있어요.",
     ),
     "tasks.check_carry_between": (
         "What I carry would hit the {thing} between points {i0} and {i1}.",
-        "들고 있는 물건이 {thing}에 부딪혀요 ({i0}번과 {i1}번 점 사이).",
+        "{i0}번과 {i1}번 지점 사이에서 들고 있는 물건이 {thing}에 부딪혀요.",
     ),
     "tasks.check_carry_between_more": (
         "What I carry would hit the {thing} between points {i0} and {i1}, and {n} more place{_s}.",
-        "들고 있는 물건이 {thing}에 부딪혀요 ({i0}번과 {i1}번 점 사이, 그 밖에 {n}곳 더).",
+        "{i0}번과 {i1}번 지점 사이에서 들고 있는 물건이 {thing}에 부딪혀요. 그 밖에도 {n}곳이 더 있어요.",
     ),
     "tasks.check_carry_from": (
         "What I carry would hit the {thing} from point {i0} to point {i1}.",
-        "들고 있는 물건이 {thing}에 부딪혀요 ({i0}~{i1}번 점).",
+        "{i0}번부터 {i1}번 지점까지 들고 있는 물건이 {thing}에 부딪혀요.",
     ),
     "tasks.check_carry_from_more": (
         "What I carry would hit the {thing} from point {i0} to point {i1}, and {n} more place{_s}.",
-        "들고 있는 물건이 {thing}에 부딪혀요 ({i0}~{i1}번 점, 그 밖에 {n}곳 더).",
+        "{i0}번부터 {i1}번 지점까지 들고 있는 물건이 {thing}에 부딪혀요. 그 밖에도 {n}곳이 더 있어요.",
     ),
     "tasks.check_carry_start": (
         "What I carry would hit the {thing} on the way to the start.",
-        "들고 있는 물건이 {thing}에 부딪혀요 (시작점으로 가는 길).",
+        "시작점으로 가는 길에 들고 있는 물건이 {thing}에 부딪혀요.",
     ),
     "tasks.check_carry_start_more": (
         "What I carry would hit the {thing} on the way to the start, and {n} more place{_s}.",
-        "들고 있는 물건이 {thing}에 부딪혀요 (시작점으로 가는 길, 그 밖에 {n}곳 더).",
+        "시작점으로 가는 길에 들고 있는 물건이 {thing}에 부딪혀요. 그 밖에도 {n}곳이 더 있어요.",
     ),
     # how a trajectory from keypoints goes past things (plan card reasons: the note, capitalized, with a period)
     "tasks.note_over": ("Over the {x} with {cm} cm to spare.", "{x} 위로 {cm} cm 여유를 두고 지나가요."),
@@ -488,15 +426,13 @@ MESSAGES = {
     "tasks.note_lifted": ("Lifted over the {x}.", "{x} 위로 들어 올려 지나가요."),
 
     # ------------------------------------------------------------------ trajectories that can't be used (traj.TrajError)
-    "tasks.traj_number": ("{what} must be a number.", "{what|은} 숫자여야 해요."),
-    "tasks.traj_finite": ("{what} must be finite.", "{what|은} 유한한 값이어야 해요."),
     "tasks.traj_numbers": ("{what} must be {n} numbers.", "{what|은} 숫자 {n}개여야 해요."),
     "tasks.traj_point_object": (
         "Point {i} must be an object with p: [x, y, z].",
-        "{i}번 점은 p: [x, y, z]가 있는 객체여야 해요.",
+        "{i}번 지점은 p: [x, y, z]가 있는 객체여야 해요.",
     ),
-    "tasks.traj_point_no_p": ("Point {i} has no position p.", "{i}번 점에 위치 p가 없어요."),
-    "tasks.traj_point_far": ("Point {i} is more than 10 m away.", "{i}번 점이 10 m보다 멀리 있어요."),
+    "tasks.traj_point_no_p": ("Point {i} has no position p.", "{i}번 지점에 위치 p가 없어요."),
+    "tasks.traj_point_far": ("Point {i} is more than 10 m away.", "{i}번 지점이 10 m보다 멀리 있어요."),
     "tasks.traj_pattern": (
         "Pattern must be {{kind, amp, freq, axis}}.",
         "패턴은 {{kind, amp, freq, axis}} 형식이어야 해요.",
@@ -508,8 +444,8 @@ MESSAGES = {
         "frame은 'world' 또는 'object:<name>'이어야 해요.",
     ),
     "tasks.traj_object": ("A trajectory must be an object with points.", "궤적은 points가 있는 객체여야 해요."),
-    "tasks.traj_one_point": ("A trajectory needs at least one point.", "궤적에는 점이 적어도 하나 있어야 해요."),
-    "tasks.traj_max_points": ("A trajectory can have at most {n} points.", "궤적의 점은 최대 {n}개까지예요."),
+    "tasks.traj_one_point": ("A trajectory needs at least one point.", "궤적에는 지점이 적어도 하나 있어야 해요."),
+    "tasks.traj_max_points": ("A trajectory can have at most {n} points.", "궤적의 지점은 최대 {n}개까지예요."),
     "tasks.traj_role": ("Role must be 'right' or 'left'.", "role은 'right' 또는 'left'여야 해요."),
     "tasks.traj_source": ("Source must be one of {sources}.", "source는 {sources} 중 하나여야 해요."),
     "tasks.traj_frame_missing": (
@@ -522,34 +458,34 @@ MESSAGES = {
     "tasks.traj_keypoint_object": ("Keypoint {i} must be an object.", "{i}번 키포인트는 객체여야 해요."),
     "tasks.traj_keypoint_hand": (
         "Keypoint {i}: only the first point can be where the hand is now.",
-        "{i}번 키포인트: 지금 손이 있는 곳은 첫 번째 점만 될 수 있어요.",
+        "{i}번 키포인트: 지금 손이 있는 곳은 첫 번째 지점만 될 수 있어요.",
     ),
     "tasks.traj_keypoint_needs": (
         "Keypoint {i} needs one of: of (an object), xyz, dxyz, marker, region, from: hand.",
         "{i}번 키포인트에는 of(물체), xyz, dxyz, marker, region, from: hand 중 하나가 필요해요.",
     ),
     "tasks.traj_hand_unknown": ("I don't know where my hand is.", "제 손이 어디 있는지 모르겠어요."),
-    "tasks.traj_dxyz": ("A relative step (dxyz) needs a point before it.", "상대 이동(dxyz) 앞에는 점이 있어야 해요."),
+    "tasks.traj_dxyz": ("A relative step (dxyz) needs a point before it.", "상대 이동(dxyz) 앞에는 지점이 있어야 해요."),
     "tasks.traj_no_marker_tap": (
         "There is no marker {m}; tap the spot first.",
         "마커 {m|이} 없어요. 먼저 그 자리를 탭해 주세요.",
     ),
     "tasks.traj_no_marker": ("There is no marker {m}.", "마커 {m|이} 없어요."),
     "tasks.traj_region": ("I don't know the region '{region}'.", "'{region}' 영역은 몰라요."),
-    "tasks.traj_dont_see_here": ("I don't see '{x}' here.", "여기에 '{x}' 같은 건 안 보여요."),
-    "tasks.traj_dont_see_have": ("I don't see '{x}' here (I see {have}).", "여기에 '{x}' 같은 건 안 보여요 ({have|이} 보여요)."),
+    "tasks.traj_dont_see_here": ("I don't see '{x}' here.", "여기에 {x|이} 보이지 않아요."),
+    "tasks.traj_dont_see_have": ("I don't see '{x}' here (I see {have}).", "여기에 {x|이} 보이지 않아요 ({have|이} 보여요)."),
     "tasks.traj_dont_see_nothing": (
         "I don't see '{x}' here (I see nothing).",
-        "여기에 '{x}' 같은 건 안 보여요 (아무것도 안 보여요).",
+        "여기에 {x|이} 보이지 않아요 (아무것도 안 보여요).",
     ),
-    "tasks.traj_dont_see_near": ("I don't see '{x}' near the path.", "경로 근처에 '{x}' 같은 건 안 보여요."),
+    "tasks.traj_dont_see_near": ("I don't see '{x}' near the path.", "경로 근처에 {x|이} 보이지 않아요."),
     "tasks.traj_via": ("Via must be one of {via}.", "via는 {via} 중 하나여야 해요."),
     "tasks.traj_rel": ("Rel must be one of {rel}.", "rel은 {rel} 중 하나여야 해요."),
     "tasks.traj_no_point": (
         "There is no point {i} (the trajectory has {n}).",
-        "{i}번 점은 없어요 (궤적의 점은 {n}개예요).",
+        "{i}번 지점은 없어요 (궤적의 지점은 {n}개예요).",
     ),
-    "tasks.traj_which_point": ("Say which point: index or near.", "어느 점인지 말해 주세요: index 또는 near."),
+    "tasks.traj_which_point": ("Say which point: index or near.", "어느 지점인지 말해 주세요: index 또는 near."),
     "tasks.traj_point_first": (
         "Point at the spot or tap it first, then say 'there'.",
         "먼저 그 자리를 가리키거나 탭한 다음 'there'(또는 '저기')라고 말하세요.",
@@ -576,7 +512,7 @@ MESSAGES = {
     "tasks.which_one": ("Which one: {list}?", "{list} 중 어느 거요?"),
     "tasks.dont_see_there_is": (
         "I don't see '{text}'. There is {list}.",
-        "'{text}' 같은 건 안 보여요. 여기에는 {list|이} 있어요.",
+        "{text|이} 보이지 않아요. 여기에는 {list|이} 있어요.",
     ),
     "tasks.cant_open_body": (
         "I can't open things with this body: it has no gripper I can drive.",
@@ -670,7 +606,7 @@ MESSAGES = {
     ),
     "tasks.let_go_handle": ("I let go of the handle.", "손잡이를 놓았어요."),
     "tasks.is_empty": ("{label} is empty.", "{label|은} 비어 있어요."),
-    "tasks.dont_see_in": ("I don't see '{obj}' in {label}.", "{label}에 '{obj}' 같은 건 안 보여요."),
+    "tasks.dont_see_in": ("I don't see '{obj}' in {label}.", "{label}에 {obj|이} 보이지 않아요."),
     "tasks.isnt_in": (
         "The {obj} isn't in {label}. In {label} there is {have}.",
         "{obj|은} {label}에 없어요. {label}에는 {have|이} 있어요.",
@@ -721,11 +657,8 @@ MESSAGES = {
     ),
     "tasks.learned": ("Learned '{name}': {s} s, {pct}% feasible.", "'{name}' 동작을 배웠어요: 길이 {s} s, {pct}% 실행 가능해요."),
     "tasks.unknown_skill": ("I don't know '{name}'.", "'{name}' 동작은 몰라요."),
-    "tasks.known_skills": ("I know: {list}.", "아는 동작: {list}."),
     "tasks.known_skills_none": ("I know: nothing yet.", "아직 아는 동작이 없어요."),
     "tasks.finished_skill": ("Finished '{skill}'.", "'{skill}' 동작을 마쳤어요."),
-    "tasks.playing_skill": ("Playing '{skill}' at x{speed} speed.", "'{skill}' 동작을 x{speed} 속도로 재생할게요."),
-    "tasks.no_base": ("The {robot} has no base to drive.", "{robot}에는 이동할 수 있는 베이스가 없어요."),
     "tasks.drive_how_far": (
         "Say how far: dx / dy in metres, dyaw in degrees.",
         "얼마나 움직일지 말해 주세요: dx / dy는 미터, dyaw는 도 단위예요.",

@@ -88,7 +88,10 @@ MESSAGES = {
 
     # ----------------------------------------------- rule errors (pps/human/rules.py), after “That rule doesn't work: ”
     "watch.err_unknown_condition": ("unknown condition '{t}'", "모르는 조건 '{t}'"),
-    "watch.err_unknown_activity": ("unknown activity '{a}' (know: {known})", "모르는 동작 '{a}' (아는 동작: {known})"),
+    "watch.err_unknown_activity": (
+        "unknown activity '{a}' (know: squat, press, curl, wave, weave, reach, point, still, moving)",
+        "모르는 동작 '{a}' (아는 동작: squat, press, curl, wave, weave, reach, point, still, moving)",
+    ),
     "watch.err_empty_condition": ("empty condition", "조건이 비어 있음"),
     "watch.err_empty_action": ("empty action", "할 일이 비어 있음"),
     "watch.err_expr_parse": ("expression doesn't parse: {msg}", "식을 해석할 수 없음: {msg}"),
@@ -127,48 +130,48 @@ MESSAGES = {
         "'{name}' 배웠어요: {act} {n}회, {hand}, {dur}초.",
     ),
     "watch.learned_squat": (
-        "Learned '{name}': {dur} s of squat with your {hand}.",
-        "'{name}' 배웠어요: 스쿼트, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of squat with your {side} hand.",
+        "'{name}' 배웠어요: 스쿼트, {side} 손, {dur}초.",
     ),
     "watch.learned_curl": (
-        "Learned '{name}': {dur} s of curl with your {hand}.",
-        "'{name}' 배웠어요: 컬, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of curl with your {side} hand.",
+        "'{name}' 배웠어요: 컬, {side} 손, {dur}초.",
     ),
     "watch.learned_press": (
-        "Learned '{name}': {dur} s of press with your {hand}.",
-        "'{name}' 배웠어요: 프레스, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of press with your {side} hand.",
+        "'{name}' 배웠어요: 프레스, {side} 손, {dur}초.",
     ),
     "watch.learned_wave": (
-        "Learned '{name}': {dur} s of wave with your {hand}.",
-        "'{name}' 배웠어요: 손 흔들기, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of wave with your {side} hand.",
+        "'{name}' 배웠어요: 손 흔들기, {side} 손, {dur}초.",
     ),
     "watch.learned_weave": (
-        "Learned '{name}': {dur} s of weave with your {hand}.",
-        "'{name}' 배웠어요: 위빙, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of weave with your {side} hand.",
+        "'{name}' 배웠어요: 위빙, {side} 손, {dur}초.",
     ),
     "watch.learned_reach": (
-        "Learned '{name}': {dur} s of reach with your {hand}.",
-        "'{name}' 배웠어요: 손 뻗기, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of reach with your {side} hand.",
+        "'{name}' 배웠어요: 손 뻗기, {side} 손, {dur}초.",
     ),
     "watch.learned_point": (
-        "Learned '{name}': {dur} s of point with your {hand}.",
-        "'{name}' 배웠어요: 가리키기, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of point with your {side} hand.",
+        "'{name}' 배웠어요: 가리키기, {side} 손, {dur}초.",
     ),
     "watch.learned_still": (
-        "Learned '{name}': {dur} s of still with your {hand}.",
-        "'{name}' 배웠어요: 가만히 있기, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of still with your {side} hand.",
+        "'{name}' 배웠어요: 가만히 있기, {side} 손, {dur}초.",
     ),
     "watch.learned_moving": (
-        "Learned '{name}': {dur} s of moving with your {hand}.",
-        "'{name}' 배웠어요: 움직임, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of moving with your {side} hand.",
+        "'{name}' 배웠어요: 움직임, {side} 손, {dur}초.",
     ),
     "watch.learned_none": (
-        "Learned '{name}': {dur} s of none with your {hand}.",
-        "'{name}' 기록했어요: {hand}, {dur}초, 뚜렷한 동작 없음.",
+        "Learned '{name}': {dur} s of none with your {side} hand.",
+        "'{name}' 기록했어요: {side} 손, {dur}초, 뚜렷한 동작 없음.",
     ),
     "watch.learned": (
-        "Learned '{name}': {dur} s of {act} with your {hand}.",
-        "'{name}' 배웠어요: {act}, {hand}, {dur}초.",
+        "Learned '{name}': {dur} s of {act} with your {side} hand.",
+        "'{name}' 배웠어요: {act}, {side} 손, {dur}초.",
     ),
     "watch.replay_none": (
         "I have no demonstration to repeat yet. Say 'watch and learn' and show me.",
@@ -232,28 +235,41 @@ MESSAGES = {
     "watch.sum_moving_more": ("moving · {rest}", "움직이는 중 · {rest}"),
     "watch.sum_nobody_in_view": ("nobody in view", "보이는 사람 없음"),
     "watch.sum_nobody_in_view_more": ("nobody in view · {rest}", "보이는 사람 없음 · {rest}"),
+    "watch.sum_squatting_rep": ("squatting · rep {n}", "스쿼트 중 · {n}회"),
+    "watch.sum_squatting_rep_more": ("squatting · rep {n} · {rest}", "스쿼트 중 · {n}회 · {rest}"),
     "watch.sum_squatting_down": ("squatting · down", "스쿼트 중 · 내려가는 중"),
+    "watch.sum_squatting_rep_down": ("squatting · rep {n} · down", "스쿼트 중 · {n}회 · 내려가는 중"),
     "watch.sum_squatting_up": ("squatting · up", "스쿼트 중 · 올라가는 중"),
-    "watch.sum_squatting_stuck": ("squatting · stuck", "스쿼트 중 · 막힘"),
+    "watch.sum_squatting_rep_up": ("squatting · rep {n} · up", "스쿼트 중 · {n}회 · 올라가는 중"),
+    "watch.sum_pressing_overhead_rep": ("pressing overhead · rep {n}", "오버헤드 프레스 중 · {n}회"),
+    "watch.sum_pressing_overhead_rep_more": (
+        "pressing overhead · rep {n} · {rest}",
+        "오버헤드 프레스 중 · {n}회 · {rest}",
+    ),
     "watch.sum_pressing_overhead_down": ("pressing overhead · down", "오버헤드 프레스 중 · 내려가는 중"),
+    "watch.sum_pressing_overhead_rep_down": (
+        "pressing overhead · rep {n} · down",
+        "오버헤드 프레스 중 · {n}회 · 내려가는 중",
+    ),
     "watch.sum_pressing_overhead_up": ("pressing overhead · up", "오버헤드 프레스 중 · 올라가는 중"),
-    "watch.sum_pressing_overhead_stuck": ("pressing overhead · stuck", "오버헤드 프레스 중 · 막힘"),
+    "watch.sum_pressing_overhead_rep_up": (
+        "pressing overhead · rep {n} · up",
+        "오버헤드 프레스 중 · {n}회 · 올라가는 중",
+    ),
+    "watch.sum_doing_curls_rep": ("doing curls · rep {n}", "컬 하는 중 · {n}회"),
+    "watch.sum_doing_curls_rep_more": ("doing curls · rep {n} · {rest}", "컬 하는 중 · {n}회 · {rest}"),
     "watch.sum_doing_curls_down": ("doing curls · down", "컬 하는 중 · 내려가는 중"),
+    "watch.sum_doing_curls_rep_down": ("doing curls · rep {n} · down", "컬 하는 중 · {n}회 · 내려가는 중"),
     "watch.sum_doing_curls_up": ("doing curls · up", "컬 하는 중 · 올라가는 중"),
-    "watch.sum_doing_curls_stuck": ("doing curls · stuck", "컬 하는 중 · 막힘"),
-    "watch.sum_rep": ("rep {n}", "{n}회"),
+    "watch.sum_doing_curls_rep_up": ("doing curls · rep {n} · up", "컬 하는 중 · {n}회 · 올라가는 중"),
+    "watch.sum_weaving_a_hand_rep": ("weaving a hand · rep {n}", "손으로 위빙하는 중 · {n}회"),
+    "watch.sum_weaving_a_hand_rep_more": ("weaving a hand · rep {n} · {rest}", "손으로 위빙하는 중 · {n}회 · {rest}"),
     "watch.sum_rep_more": ("rep {n} · {rest}", "{n}회 · {rest}"),
-    "watch.sum_rep_down": ("rep {n} · down", "{n}회 · 내려가는 중"),
-    "watch.sum_rep_up": ("rep {n} · up", "{n}회 · 올라가는 중"),
-    "watch.sum_rep_stuck": ("rep {n} · stuck", "{n}회 · 막힘"),
     "watch.sum_down_more": ("down · {rest}", "내려가는 중 · {rest}"),
-    "watch.sum_down_stuck": ("down · stuck", "내려가는 중 · 막힘"),
     "watch.sum_up_more": ("up · {rest}", "올라가는 중 · {rest}"),
-    "watch.sum_up_stuck": ("up · stuck", "올라가는 중 · 막힘"),
     "watch.sum_top_more": ("top · {rest}", "위 · {rest}"),
-    "watch.sum_top_stuck": ("top · stuck", "위 · 막힘"),
     "watch.sum_bottom_more": ("bottom · {rest}", "아래 · {rest}"),
-    "watch.sum_bottom_stuck": ("bottom · stuck", "아래 · 막힘"),
+    "watch.sum_stuck": ("stuck", "막힘"),
     "watch.sum_stuck_more": ("stuck · {rest}", "막힘 · {rest}"),
     "watch.sum_weave": ("{amp} cm at {freq} Hz", "폭 {amp} cm · {freq} Hz"),
     "watch.sum_weave_more": ("{amp} cm at {freq} Hz · {rest}", "폭 {amp} cm · {freq} Hz · {rest}"),
@@ -290,7 +306,7 @@ MESSAGES = {
     "skills.right": ("Right?", "맞나요?"),
     "skills.say_go": ("Say go, or tell me what to change.", "'go'(또는 '실행')라고 하시거나, 바꿀 점을 말해 주세요."),
     "skills.blocked": ("{say} But I can't do it yet: {why}", "{say} 하지만 아직은 할 수 없어요: {why}"),
-    "skills.waiting": ("waiting for you", "기다리는 중"),
+    "skills.blocked_alone": ("But I can't do it yet: {why}", "하지만 아직은 할 수 없어요: {why}"),
     "skills.torch_note_said": (
         "I couldn't read your torch angle from the camera, so the angles are defaults (10° push, square to the "
         "plate). {said}",
@@ -314,27 +330,17 @@ MESSAGES = {
     ),
     "skills.learned_err": ("Learned '{name}', {label}: {desc}. {err}", "'{name}' 배웠어요 ({label}): {desc}. {err}"),
     "skills.learned": ("Learned '{name}', {label}: {desc}.", "'{name}' 배웠어요 ({label}): {desc}."),
+    "skills.ask_kind3": (
+        "Was that 1, {a} or 2, {b} or 3, {c}?",
+        "방금 건 1번 {a}, 2번 {b}, 3번 {c} 중 어느 쪽이었나요?",
+    ),
+    "skills.ask_kind2": ("Was that 1, {a} or 2, {b}?", "방금 건 1번 {a}, 2번 {b} 중 어느 쪽이었나요?"),
     "skills.ask_kind": ("Was that {options}?", "방금 건 {options} 중 어느 쪽이었나요?"),
-    "skills.opt1_wipe": ("1, wiping or {rest}", "1번 닦기, {rest}"),
-    "skills.opt2_wipe_or": ("2, wiping or {rest}", "2번 닦기, {rest}"),
-    "skills.opt2_wipe": ("2, wiping", "2번 닦기"),
-    "skills.opt3_wipe": ("3, wiping", "3번 닦기"),
-    "skills.opt1_stir": ("1, stirring or {rest}", "1번 젓기, {rest}"),
-    "skills.opt2_stir_or": ("2, stirring or {rest}", "2번 젓기, {rest}"),
-    "skills.opt2_stir": ("2, stirring", "2번 젓기"),
-    "skills.opt3_stir": ("3, stirring", "3번 젓기"),
-    "skills.opt1_press": ("1, pressing or {rest}", "1번 누르기, {rest}"),
-    "skills.opt2_press_or": ("2, pressing or {rest}", "2번 누르기, {rest}"),
-    "skills.opt2_press": ("2, pressing", "2번 누르기"),
-    "skills.opt3_press": ("3, pressing", "3번 누르기"),
-    "skills.opt1_weave": ("1, a weave along a seam or {rest}", "1번 용접선 따라 위빙, {rest}"),
-    "skills.opt2_weave_or": ("2, a weave along a seam or {rest}", "2번 용접선 따라 위빙, {rest}"),
-    "skills.opt2_weave": ("2, a weave along a seam", "2번 용접선 따라 위빙"),
-    "skills.opt3_weave": ("3, a weave along a seam", "3번 용접선 따라 위빙"),
-    "skills.opt1_spot": ("1, a lift to spot or {rest}", "1번 리프트 보조, {rest}"),
-    "skills.opt2_spot_or": ("2, a lift to spot or {rest}", "2번 리프트 보조, {rest}"),
-    "skills.opt2_spot": ("2, a lift to spot", "2번 리프트 보조"),
-    "skills.opt3_spot": ("3, a lift to spot", "3번 리프트 보조"),
+    "skills.kind_word_wipe": ("wiping", "닦기"),
+    "skills.kind_word_stir": ("stirring", "젓기"),
+    "skills.kind_word_press": ("pressing", "누르기"),
+    "skills.kind_word_weave": ("a weave along a seam", "용접선 따라 위빙"),
+    "skills.kind_word_spot": ("a lift to spot", "리프트 보조"),
     "skills.note_unclean": ("it wasn't a clean weave: {why}", "깔끔한 위빙이 아니었어요: {why}"),
     "skills.note_torch": (
         "I couldn't read your torch angle from the camera, so the angles are defaults (10° push, square to the plate)",
@@ -384,7 +390,6 @@ MESSAGES = {
         "Unknown skill op '{op}'. Use extract, apply, edit, list, delete, bead_clear or pack_demo.",
         "모르는 스킬 동작이에요: '{op}'. extract, apply, edit, list, delete, bead_clear, pack_demo 중 하나를 쓰세요.",
     ),
-    "skills.err_no_traj": ("Trajectories aren't available on this server.", "이 서버에서는 궤적을 쓸 수 없어요."),
     "skills.err_no_watch": ("Watching isn't available.", "보기 기능을 쓸 수 없어요."),
 
     # ------------------------------------------------------------------ demo packs played without a camera
@@ -420,19 +425,133 @@ MESSAGES = {
     "skills.kind_motion_lc": ("whole-body motion", "전신 동작"),
 
     # ---------------------------------- describe: the style in one line (“4 mm zigzag at 2 Hz, 5 mm/s, 15° push angle”)
-    "skills.desc_weave_zigzag": (
-        "{amp} mm zigzag at {freq} Hz, {speed}, {angle}",
-        "{amp} mm 지그재그 위빙 {freq} Hz, {speed}, {angle}",
+    "skills.say_weld_zigzag": (
+        "I'll weld {seam} ({length} cm): {amp} mm zigzag at {freq} Hz, {speed}, {angle}.",
+        "{seam|을} 용접할게요 ({length} cm): {amp} mm 지그재그 위빙 {freq} Hz, {speed}, {angle}.",
     ),
-    "skills.desc_weave_circle": (
-        "{amp} mm circle at {freq} Hz, {speed}, {angle}",
-        "{amp} mm 원형 위빙 {freq} Hz, {speed}, {angle}",
+    "skills.learned_zigzag": (
+        "Learned '{name}', {label}: {amp} mm zigzag at {freq} Hz, {speed}, {angle}.",
+        "'{name}' 배웠어요 ({label}): {amp} mm 지그재그 위빙 {freq} Hz, {speed}, {angle}.",
     ),
-    "skills.desc_weave_figure8": (
-        "{amp} mm figure8 at {freq} Hz, {speed}, {angle}",
-        "{amp} mm 8자 위빙 {freq} Hz, {speed}, {angle}",
+    "skills.learned_zigzag_err": (
+        "Learned '{name}', {label}: {amp} mm zigzag at {freq} Hz, {speed}, {angle}. {err}",
+        "'{name}' 배웠어요 ({label}): {amp} mm 지그재그 위빙 {freq} Hz, {speed}, {angle}. {err}",
     ),
-    "skills.desc_no_weave": ("no weave, {speed}, {angle}", "위빙 없음, {speed}, {angle}"),
+    "skills.okay_now_zigzag": (
+        "Okay: {changed}. '{name}' is now {amp} mm zigzag at {freq} Hz, {speed}, {angle}.",
+        "알겠어요: {changed}. 이제 '{name}' 스킬: {amp} mm 지그재그 위빙 {freq} Hz, {speed}, {angle}.",
+    ),
+    "skills.blocked_weld_zigzag": (
+        "I'll weld {seam} ({length} cm): {amp} mm zigzag at {freq} Hz, {speed}, {angle}. But I can't do it yet: {why}",
+        "{seam|을} 용접할게요 ({length} cm): {amp} mm 지그재그 위빙 {freq} Hz, {speed}, {angle}. 하지만 아직은 할 수 "
+        "없어요: {why}",
+    ),
+    "skills.say_weld_circle": (
+        "I'll weld {seam} ({length} cm): {amp} mm circle at {freq} Hz, {speed}, {angle}.",
+        "{seam|을} 용접할게요 ({length} cm): {amp} mm 원형 위빙 {freq} Hz, {speed}, {angle}.",
+    ),
+    "skills.learned_circle": (
+        "Learned '{name}', {label}: {amp} mm circle at {freq} Hz, {speed}, {angle}.",
+        "'{name}' 배웠어요 ({label}): {amp} mm 원형 위빙 {freq} Hz, {speed}, {angle}.",
+    ),
+    "skills.learned_circle_err": (
+        "Learned '{name}', {label}: {amp} mm circle at {freq} Hz, {speed}, {angle}. {err}",
+        "'{name}' 배웠어요 ({label}): {amp} mm 원형 위빙 {freq} Hz, {speed}, {angle}. {err}",
+    ),
+    "skills.okay_now_circle": (
+        "Okay: {changed}. '{name}' is now {amp} mm circle at {freq} Hz, {speed}, {angle}.",
+        "알겠어요: {changed}. 이제 '{name}' 스킬: {amp} mm 원형 위빙 {freq} Hz, {speed}, {angle}.",
+    ),
+    "skills.blocked_weld_circle": (
+        "I'll weld {seam} ({length} cm): {amp} mm circle at {freq} Hz, {speed}, {angle}. But I can't do it yet: {why}",
+        "{seam|을} 용접할게요 ({length} cm): {amp} mm 원형 위빙 {freq} Hz, {speed}, {angle}. 하지만 아직은 할 수 "
+        "없어요: {why}",
+    ),
+    "skills.say_weld_figure8": (
+        "I'll weld {seam} ({length} cm): {amp} mm figure8 at {freq} Hz, {speed}, {angle}.",
+        "{seam|을} 용접할게요 ({length} cm): {amp} mm 8자 위빙 {freq} Hz, {speed}, {angle}.",
+    ),
+    "skills.learned_figure8": (
+        "Learned '{name}', {label}: {amp} mm figure8 at {freq} Hz, {speed}, {angle}.",
+        "'{name}' 배웠어요 ({label}): {amp} mm 8자 위빙 {freq} Hz, {speed}, {angle}.",
+    ),
+    "skills.learned_figure8_err": (
+        "Learned '{name}', {label}: {amp} mm figure8 at {freq} Hz, {speed}, {angle}. {err}",
+        "'{name}' 배웠어요 ({label}): {amp} mm 8자 위빙 {freq} Hz, {speed}, {angle}. {err}",
+    ),
+    "skills.okay_now_figure8": (
+        "Okay: {changed}. '{name}' is now {amp} mm figure8 at {freq} Hz, {speed}, {angle}.",
+        "알겠어요: {changed}. 이제 '{name}' 스킬: {amp} mm 8자 위빙 {freq} Hz, {speed}, {angle}.",
+    ),
+    "skills.blocked_weld_figure8": (
+        "I'll weld {seam} ({length} cm): {amp} mm figure8 at {freq} Hz, {speed}, {angle}. But I can't do it yet: {why}",
+        "{seam|을} 용접할게요 ({length} cm): {amp} mm 8자 위빙 {freq} Hz, {speed}, {angle}. 하지만 아직은 할 수 "
+        "없어요: {why}",
+    ),
+    "skills.say_wipe_raster_pass": (
+        "I'll wipe {label}: raster wipe, strokes {spacing} cm apart, {f} N, {n} pass.",
+        "{label|을} 닦을게요: 왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.learned_raster_pass": (
+        "Learned '{name}', {label}: raster wipe, strokes {spacing} cm apart, {f} N, {n} pass.",
+        "'{name}' 배웠어요 ({label}): 왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.learned_raster_pass_err": (
+        "Learned '{name}', {label}: raster wipe, strokes {spacing} cm apart, {f} N, {n} pass. {err}",
+        "'{name}' 배웠어요 ({label}): 왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회. {err}",
+    ),
+    "skills.okay_now_raster_pass": (
+        "Okay: {changed}. '{name}' is now raster wipe, strokes {spacing} cm apart, {f} N, {n} pass.",
+        "알겠어요: {changed}. 이제 '{name}' 스킬: 왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.say_wipe_raster_passes": (
+        "I'll wipe {label}: raster wipe, strokes {spacing} cm apart, {f} N, {n} passes.",
+        "{label|을} 닦을게요: 왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.learned_raster_passes": (
+        "Learned '{name}', {label}: raster wipe, strokes {spacing} cm apart, {f} N, {n} passes.",
+        "'{name}' 배웠어요 ({label}): 왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.learned_raster_passes_err": (
+        "Learned '{name}', {label}: raster wipe, strokes {spacing} cm apart, {f} N, {n} passes. {err}",
+        "'{name}' 배웠어요 ({label}): 왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회. {err}",
+    ),
+    "skills.okay_now_raster_passes": (
+        "Okay: {changed}. '{name}' is now raster wipe, strokes {spacing} cm apart, {f} N, {n} passes.",
+        "알겠어요: {changed}. 이제 '{name}' 스킬: 왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.say_wipe_spiral_pass": (
+        "I'll wipe {label}: spiral wipe, strokes {spacing} cm apart, {f} N, {n} pass.",
+        "{label|을} 닦을게요: 나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.learned_spiral_pass": (
+        "Learned '{name}', {label}: spiral wipe, strokes {spacing} cm apart, {f} N, {n} pass.",
+        "'{name}' 배웠어요 ({label}): 나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.learned_spiral_pass_err": (
+        "Learned '{name}', {label}: spiral wipe, strokes {spacing} cm apart, {f} N, {n} pass. {err}",
+        "'{name}' 배웠어요 ({label}): 나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회. {err}",
+    ),
+    "skills.okay_now_spiral_pass": (
+        "Okay: {changed}. '{name}' is now spiral wipe, strokes {spacing} cm apart, {f} N, {n} pass.",
+        "알겠어요: {changed}. 이제 '{name}' 스킬: 나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.say_wipe_spiral_passes": (
+        "I'll wipe {label}: spiral wipe, strokes {spacing} cm apart, {f} N, {n} passes.",
+        "{label|을} 닦을게요: 나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.learned_spiral_passes": (
+        "Learned '{name}', {label}: spiral wipe, strokes {spacing} cm apart, {f} N, {n} passes.",
+        "'{name}' 배웠어요 ({label}): 나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
+    "skills.learned_spiral_passes_err": (
+        "Learned '{name}', {label}: spiral wipe, strokes {spacing} cm apart, {f} N, {n} passes. {err}",
+        "'{name}' 배웠어요 ({label}): 나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회. {err}",
+    ),
+    "skills.okay_now_spiral_passes": (
+        "Okay: {changed}. '{name}' is now spiral wipe, strokes {spacing} cm apart, {f} N, {n} passes.",
+        "알겠어요: {changed}. 이제 '{name}' 스킬: 나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회.",
+    ),
     "skills.desc_push": ("{deg}° push angle", "미는 각도 {deg}°"),
     "skills.desc_drag": ("{deg}° drag angle", "끄는 각도 {deg}°"),
     "skills.desc_no_push": ("no push or drag", "밀거나 끌지 않음"),
@@ -459,14 +578,6 @@ MESSAGES = {
     "skills.desc_no_push_lean_left": (
         "no push or drag, leaning {lean}° to the left",
         "밀거나 끌지 않음, 왼쪽으로 {lean}° 기울임",
-    ),
-    "skills.desc_wipe_raster": (
-        "raster wipe, strokes {spacing} cm apart, {f} N, {n} pass{_es}",
-        "왕복 닦기, 줄 간격 {spacing} cm, {f} N, {n}회",
-    ),
-    "skills.desc_wipe_spiral": (
-        "spiral wipe, strokes {spacing} cm apart, {f} N, {n} pass{_es}",
-        "나선형 닦기, 줄 간격 {spacing} cm, {f} N, {n}회",
     ),
     "skills.desc_stir_ccw": (
         "{turns} counter-clockwise turns of {r} cm at {f} Hz, {d} cm deep",
@@ -511,34 +622,38 @@ MESSAGES = {
     "skills.change_after": ("after {old} → {new}", "대기 시간 {old} → {new}"),
     "skills.change_max_force": ("max force {old} → {new}", "최대 힘 {old} → {new}"),
     "skills.change_lift": ("lift {old} → {new}", "들어 올림 {old} → {new}"),
-    "skills.change_and_weave_width": ("{first}; weave width {old} → {new}", "{first}; 위빙 폭 {old} → {new}"),
-    "skills.change_and_weave_freq": ("{first}; weave frequency {old} → {new}", "{first}; 위빙 주파수 {old} → {new}"),
-    "skills.change_and_weave": ("{first}; weave {old} → {new}", "{first}; 위빙 모양 {old} → {new}"),
-    "skills.change_and_travel_speed": ("{first}; travel speed {old} → {new}", "{first}; 이동 속도 {old} → {new}"),
-    "skills.change_and_travel_angle": ("{first}; travel angle {old} → {new}", "{first}; 진행 각도 {old} → {new}"),
-    "skills.change_and_work_angle": ("{first}; work angle {old} → {new}", "{first}; 작업 각도 {old} → {new}"),
-    "skills.change_and_standoff": ("{first}; standoff {old} → {new}", "{first}; 토치 거리 {old} → {new}"),
-    "skills.change_and_direction": ("{first}; direction {old} → {new}", "{first}; 방향 {old} → {new}"),
-    "skills.change_and_force": ("{first}; force {old} → {new}", "{first}; 힘 {old} → {new}"),
-    "skills.change_and_pattern": ("{first}; pattern {old} → {new}", "{first}; 패턴 {old} → {new}"),
-    "skills.change_and_passes": ("{first}; passes {old} → {new}", "{first}; 반복 횟수 {old} → {new}"),
-    "skills.change_and_spacing": ("{first}; spacing {old} → {new}", "{first}; 간격 {old} → {new}"),
-    "skills.change_and_speed": ("{first}; speed {old} → {new}", "{first}; 속도 {old} → {new}"),
-    "skills.change_and_radius": ("{first}; radius {old} → {new}", "{first}; 반지름 {old} → {new}"),
-    "skills.change_and_freq": ("{first}; freq {old} → {new}", "{first}; 주파수 {old} → {new}"),
-    "skills.change_and_depth": ("{first}; depth {old} → {new}", "{first}; 깊이 {old} → {new}"),
-    "skills.change_and_turns": ("{first}; turns {old} → {new}", "{first}; 바퀴 수 {old} → {new}"),
-    "skills.change_and_hold": ("{first}; hold {old} → {new}", "{first}; 누르는 시간 {old} → {new}"),
-    "skills.change_and_help_below": ("{first}; help below {old} → {new}", "{first}; 도움 기준 속도 {old} → {new}"),
-    "skills.change_and_after": ("{first}; after {old} → {new}", "{first}; 대기 시간 {old} → {new}"),
-    "skills.change_and_max_force": ("{first}; max force {old} → {new}", "{first}; 최대 힘 {old} → {new}"),
-    "skills.change_and_lift": ("{first}; lift {old} → {new}", "{first}; 들어 올림 {old} → {new}"),
+    "skills.change_more_weave_width": ("weave width {old} → {new}; {rest}", "위빙 폭 {old} → {new}; {rest}"),
+    "skills.change_more_weave_freq": ("weave frequency {old} → {new}; {rest}", "위빙 주파수 {old} → {new}; {rest}"),
+    "skills.change_more_weave": ("weave {old} → {new}; {rest}", "위빙 모양 {old} → {new}; {rest}"),
+    "skills.change_more_travel_speed": ("travel speed {old} → {new}; {rest}", "이동 속도 {old} → {new}; {rest}"),
+    "skills.change_more_travel_angle": ("travel angle {old} → {new}; {rest}", "진행 각도 {old} → {new}; {rest}"),
+    "skills.change_more_work_angle": ("work angle {old} → {new}; {rest}", "작업 각도 {old} → {new}; {rest}"),
+    "skills.change_more_standoff": ("standoff {old} → {new}; {rest}", "토치 거리 {old} → {new}; {rest}"),
+    "skills.change_more_direction": ("direction {old} → {new}; {rest}", "방향 {old} → {new}; {rest}"),
+    "skills.change_more_force": ("force {old} → {new}; {rest}", "힘 {old} → {new}; {rest}"),
+    "skills.change_more_pattern": ("pattern {old} → {new}; {rest}", "패턴 {old} → {new}; {rest}"),
+    "skills.change_more_passes": ("passes {old} → {new}; {rest}", "반복 횟수 {old} → {new}; {rest}"),
+    "skills.change_more_spacing": ("spacing {old} → {new}; {rest}", "간격 {old} → {new}; {rest}"),
+    "skills.change_more_speed": ("speed {old} → {new}; {rest}", "속도 {old} → {new}; {rest}"),
+    "skills.change_more_radius": ("radius {old} → {new}; {rest}", "반지름 {old} → {new}; {rest}"),
+    "skills.change_more_freq": ("freq {old} → {new}; {rest}", "주파수 {old} → {new}; {rest}"),
+    "skills.change_more_depth": ("depth {old} → {new}; {rest}", "깊이 {old} → {new}; {rest}"),
+    "skills.change_more_turns": ("turns {old} → {new}; {rest}", "바퀴 수 {old} → {new}; {rest}"),
+    "skills.change_more_hold": ("hold {old} → {new}; {rest}", "누르는 시간 {old} → {new}; {rest}"),
+    "skills.change_more_help_below": ("help below {old} → {new}; {rest}", "도움 기준 속도 {old} → {new}; {rest}"),
+    "skills.change_more_after": ("after {old} → {new}; {rest}", "대기 시간 {old} → {new}; {rest}"),
+    "skills.change_more_max_force": ("max force {old} → {new}; {rest}", "최대 힘 {old} → {new}; {rest}"),
+    "skills.change_more_lift": ("lift {old} → {new}; {rest}", "들어 올림 {old} → {new}; {rest}"),
 
     # ------------------------------------------------------------------ pps/skills/compile.py: what the robot will do
     "skills.say_weld": ("I'll weld {seam} ({length} cm): {desc}.", "{seam|을} 용접할게요 ({length} cm): {desc}."),
     "skills.say_wipe": ("I'll wipe {label}: {desc}.", "{label|을} 닦을게요: {desc}."),
     "skills.say_stir": ("I'll stir {label}: {desc}.", "{label} 안을 저을게요: {desc}."),
     "skills.say_press": ("I'll press with {f} N for {s} s on {label}.", "{label|을} {f} N으로 {s}초 동안 누를게요."),
+    "skills.blocked_press": (
+        "I'll press with {f} N for {s} s on {label}. But I can't do it yet: {why}",
+        "{label|을} {f} N으로 {s}초 동안 누를게요. 하지만 아직은 할 수 없어요: {why}",
+    ),
     "skills.say_spot": ("I'll spot you: {desc}.", "리프트를 보조할게요: {desc}."),
     "skills.say_motion": ("I'll replay the whole-body motion '{clip}'.", "전신 동작 '{clip}' 재생할게요."),
     "skills.err_wipe_small": ("The {obj} is too small to wipe.", "{obj|은} 닦기엔 너무 작아요."),
@@ -558,11 +673,8 @@ MESSAGES = {
     "skills.err_no_clip": ("This motion skill has no clip.", "이 동작 스킬에는 클립이 없어요."),
 
     # ----------------------------------------------------------------- pps/skills/geom.py: where (targets in the scene)
-    "skills.seam_straight": ("the straight seam", "직선 용접선"),
-    "skills.seam_l": ("the L seam", "L자 용접선"),
     "skills.seam_given": ("the seam you gave me", "알려 주신 용접선"),
     "skills.edge_of": ("the edge of the {obj}", "{obj} 가장자리"),
-    "skills.region_of_table": ("the {side} of the table", "테이블 {side}"),
     "skills.that_area": ("that area", "그 영역"),
     "skills.that_spot": ("that spot", "그 자리"),
     "skills.err_polyline": (
@@ -587,8 +699,6 @@ MESSAGES = {
     "skills.err_press_say": ("Say what to press on.", "무엇을 누를지 말해 주세요."),
 
     # --------------------- pps/skills/core.py, extract.py: skills that can't be made (said with a capital and a period)
-    "skills.err_number": ("{param} must be a number.", "{param} 값은 숫자여야 해요."),
-    "skills.err_finite": ("{param} must be finite.", "{param} 값은 유한한 수여야 해요."),
     "skills.err_one_of": ("{param} must be one of {opts}.", "{param} 값은 {opts} 중 하나여야 해요."),
     "skills.err_kind": (
         "I don't know the skill kind '{kind}'. Kinds: {kinds}.",
