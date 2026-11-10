@@ -4,6 +4,7 @@ the table, facing the robot, doing something.
     frames("squat", seconds=10, reps=5, valgus=True)     # 5 squats with knees caving in
     frames("weave", seconds=6, amp=0.015, freq=2.0)       # right hand weaving along a seam (welding)
     frames("wave", seconds=3)  frames("curl", ...)  frames("press", ...)  frames("offer", target=[x, y, z])
+    frames("lean", 1.0, lean=45, at=[x, y, z], at_l=None)  # leaning over the table, hands reaching in (safety)
     sequence([("rest", 1.0, {}), ("squat", 6.0, {"reps": 3})])
 
 Built in world coordinates (x toward the robot is -x for the person, y left of the robot, z up) and converted with
@@ -154,6 +155,10 @@ def frame_at(kind, t, anchor=PERSON, **kw):
         return synth_pose(offer=tgt, anchor=anchor)
     if kind == "offer":
         return synth_pose(offer=kw.get("target", [0.80, -0.05, TABLE_TOP + 0.25]), anchor=anchor)
+    if kind == "lean":                            # leaning over the table toward the robot (P5 safety checks), the right
+        arms = {sd: (np.asarray(kw[k], float), bool(kw.get("open", True)))   # hand reaching into its workspace at
+                for sd, k in (("r", "at"), ("l", "at_l")) if kw.get(k) is not None}   # `at` (left: `at_l`), else hanging
+        return _lm(body(lean=float(kw.get("lean", 40.0)), anchor=anchor, arms=arms), anchor)
     if kind == "hand":                            # the right hand at a world point (mirror tests), open or a fist
         wr = np.asarray(kw["at"], float)
         return _lm(body(anchor=anchor, arms={"r": (wr, bool(kw.get("open", True)))}), anchor)

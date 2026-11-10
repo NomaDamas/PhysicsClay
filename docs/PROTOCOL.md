@@ -391,3 +391,31 @@ target?: "hands"|<object>, max_force?, name?}`.
   "when I …, …" are handled there (`pc-hear`).
 - Test only: `pps/human/synth.py` builds synthetic people (squats with valgus / stall, curls, presses, waves, a weave,
   an offered hand, a hand at a point) as landmark frames for `{type:"copresence_feed"}`.
+
+## v7 · Safety around people (v1 P5, `pps/safety.py`, `pps/features/safety.py`, `web/ui/safety.js`)
+Speed and separation monitoring in the spirit of ISO/TS 15066. **Not a certified safety system** (`docs/safety.md`).
+
+**State** (every frame): `safety = {person, d_min (m, surface to surface, negative = touching), speed_scale (0..1),
+stop, latched, reason: "body"|"critical"|"no_force"|"force"|null, zone: "clear"|"slow"|"stop"|null (no person),
+closest: {robot_link, robot_kind: "ee"|"arm"|"body", robot_ee, human_part, region, d, p_robot, p_human}, binding
+(the pair that sets the speed / caused the stop, same shape), message ("Slowing: you're 30 cm away" | "Stopped: too
+close to your head" | null), coop (assist, mirror or a handover), force (N, or null without P0 force sensing), v_robot, v_human (m/s),
+capsules: [[ax, ay, az, bx, by, bz, r, region] * 17], config: {...}, reply}`.
+- A person counts when co-presence's source is `webcam`, `phone`, `vr` or `feed` (a played person in checks); never
+  the synthetic no-camera dancer or a replayed video. Turning the co-presence avatar off does not turn safety off.
+- Motion: both runtimes read `rt.safety_scale` in `step()`: paths, skills, previews and driving advance at `dt * s`,
+  the IK joint velocity is scaled by `s` (live mirroring and assist slow too), `s = 0` holds everything still.
+- A stop pauses a running task: `task.status` stays `running`, `task.step = "paused"`, `task.paused = "safety"`,
+  `task.message = "Paused for safety: … I'll go on when you step back."`; the message is restored on resume.
+- Pre-task guard (`ext.guard`, before every other pre_task): during a stop, `pick_place`, `reach`, `follow_path`,
+  `play_skill`, `handover`, `drive`, `home`, `follow_me` fail with "I can't move right now: …"; a `pick_place` /
+  `reach` target (or object) inside the person's body zone fails with "I won't reach there: that spot is inside your
+  body zone …". `reset_scene` and `stop` are always allowed.
+- Planners: `tasks.safety.check_point(p, role, radius=0.04, coop=None) -> {ok, d, part, region, why, role}` (also
+  `pps.features.safety.check_point(ctx, p, role)`), plus `tasks.safety.scale` and `tasks.safety.stopped`.
+- Messages: `{type:"safety", op:"resume", id?}` confirms a latched (force-limit) stop once the person is clear. Any
+  other op answers `safety.reply = {id, op, ok: false, message: "Safety is always on…"}` and changes nothing.
+- Config is server side: `pps.safety.Config` defaults, the robot profile's `safety` dict, then
+  `--safety-config file.json` / `PC_SAFETY_CONFIG`; every value is clamped to a floor.
+- Handover: the robot now offers the object 10 cm in front of the person's hand (`HANDOVER_GAP`), so it never has to
+  touch them; they close the gap.

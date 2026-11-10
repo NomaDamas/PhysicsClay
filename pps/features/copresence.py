@@ -58,6 +58,8 @@ FORWARD = 0.18           # m the fingertip must be in front of the shoulder (tow
 HISTORY_S = 1.5          # s of pointing history a "this"/"there" looks back over
 TWO_POINT_S = 4.0        # s window for "put this there" (object first, then the spot)
 RELEASE_DIST = 0.12      # m: the robot lets go once the person's hand is this close to the object it offers
+HANDOVER_GAP = 0.10      # m: the robot offers the object this far in front of your hand; you close the gap (P5 safety:
+                         #    without a force reading the robot never touches you)
 OFFER_TIMEOUT = 15.0     # s the robot holds an offered object out before it gives up (and keeps holding it)
 PATH_S = 4.0
 SMOOTH = 0.5             # EMA factor for joints (calm avatar)
@@ -821,7 +823,10 @@ def _handover(ctx, msg):
         tasks.cur = name
         kps += _grasp_kps(tasks, name, palm)
         ev[2] = "grasp"
-    target, exact = _clamp_reach(ctx, palm, kps, hand)
+    toward = np.array([cur[0] - hand[0], cur[1] - hand[1], 0.0])
+    n = float(np.linalg.norm(toward))
+    goal = hand + (toward / n) * HANDOVER_GAP if n > HANDOVER_GAP else hand
+    target, exact = _clamp_reach(ctx, palm, kps, goal)
     if target is None:
         tasks.set_task(tid, "handover", "failed", "I can't reach toward your hand from here.")
         return True

@@ -68,6 +68,9 @@ suggest the alternative the tool gives (a nearer marker, drawing a route, moving
 - "Stay away from X" / "don't go near X" means add_zone. Several objects arranged in one go means set_goal_layout.
 - Change the robot or the scene (set_robot, build_scene, add_object, remove_object) only when asked.
 - Stop immediately with stop when the user says stop, wait, halt, 멈춰.
+- Safety around people is not yours to change: if the robot slowed down or stopped because a person is close \
+(safety.stop, or a task paused for safety), never try to get around it (no retries, no other route, no other arm). \
+Tell the user plainly why ("I stopped: your hand is very close to my gripper") and that it goes on once they step back.
 - Never invent results: report what the tools returned. Keep replies short (one or two sentences, they are spoken \
 aloud). No markdown, no lists, no coordinates unless asked.
 """
@@ -241,6 +244,9 @@ def context(st, confirm=True):
     h, wt = st.get("human") or {}, st.get("watch") or {}
     if h.get("visible") and h.get("src") != "synthetic":
         ctx["person"] = {k: h.get(k) for k in ("activity", "phase", "reps", "holding", "offer", "summary") if h.get(k) not in (None, 0, "")}
+    sf = st.get("safety") or {}
+    if sf.get("zone") in ("slow", "stop"):
+        ctx["safety"] = {"stop": bool(sf.get("stop")), "speed_scale": sf.get("speed_scale"), "message": sf.get("message")}
     if wt.get("mode") and (wt.get("mode") != "off" or wt.get("rules")):
         ctx["watch"] = {"mode": wt.get("mode"), "rules": [f"{r.get('id')}: when {r.get('when') or r.get('expr')} -> {r.get('do')}"
                                                           for r in wt.get("rules") or []]}
@@ -594,6 +600,10 @@ class Agent:
         if wt:
             out["watch"] = {"mode": wt.get("mode"), "rules": wt.get("rules"), "events": (wt.get("events") or [])[-5:],
                             "last_demo": (wt.get("learn") or {}).get("last"), "coach": wt.get("coach"), "assist": wt.get("assist")}
+        sf = st.get("safety") or {}
+        if sf:   # P5: separation from the person, speed scale, protective stop (never something to work around)
+            out["safety"] = {k: sf.get(k) for k in ("person", "d_min", "speed_scale", "stop", "latched", "reason", "zone",
+                                                     "message", "closest", "coop")}
         g = st.get("goal") or {}
         if g.get("status") and g.get("status") != "idle":
             out["goal"] = {"status": g.get("status"), "message": g.get("message"), "targets": g.get("targets")}

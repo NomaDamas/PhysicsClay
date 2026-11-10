@@ -46,6 +46,7 @@ class RobotProfile:
     grasp: str = "top"                 # default pick_place grasp: "top" | "side"
     freeze: tuple = ()                 # joint name substrings the IK must not move (fingers, head, wheels)
     reach_tol: float = 0.06
+    safety: dict = field(default_factory=dict)   # P5 overrides of pps.safety.Config (server config; clamped to floors)
 
     def public(self):
         d = {"id": self.id, "label": self.label, "kind": self.kind, "base": self.base, "ee": list(self.ee),

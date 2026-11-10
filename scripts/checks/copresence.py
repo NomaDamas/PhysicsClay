@@ -135,7 +135,7 @@ async def run(t):
     await feed(t, [synth_pose(point_at=objpos(t, "mug"))] * 30)
     await wait_for(t, lambda c: (c.get("pointing") or {}).get("armed"), 3.0)
     await utter(t, "pick this up", "cp-4")
-    await t.until_done(20)
+    await t.until_done(35)          # the pointing hand is within half a metre of the arm: it works slower (P5 safety)
     await feed(t, [synth_pose(offer=HAND)] * 20)
     await wait_for(t, lambda c: c.get("offer") is not None, 2.0)
     c0 = _cp(t)
