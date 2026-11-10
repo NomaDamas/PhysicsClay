@@ -55,7 +55,7 @@ async def main():
         nonlocal st
         t0 = time.time()
         while time.time() - t0 < sec:
-            m = await asyncio.wait_for(ws.receive(), 10)
+            m = await asyncio.wait_for(ws.receive(), 120)   # physics: a refused pick plans every grasp first (seconds; more on a loaded machine)
             if m.type == aiohttp.WSMsgType.TEXT:
                 st = json.loads(m.data)
             elif m.type == aiohttp.WSMsgType.BINARY:

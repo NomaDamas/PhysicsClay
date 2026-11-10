@@ -805,6 +805,7 @@ def worker(args, shared):
         t_phys = now
         if rt.plant is not None:                 # the plant may use ~40 % of a frame; heavier models run slower (rtf < 1)
             rt.plant.budget(0.4 / max(fps, 10.0) / IK_ITERS)
+            dt = min(dt, rt.plant.sub_cap * physics.DT)   # ...and the plan with it: never ahead of what the plant simulates
         for _ in range(IK_ITERS):
             rt.step(dt)
             tasks.tick()
