@@ -146,6 +146,12 @@ def watch_tick(ctx):
                  offer=cp.get("offer"), hand_open=cp.get("hand_open"), pts=getattr(ctx, "pts", None),
                  near_x=T.TABLE_X[1] + 0.15)
     w["human"] = h
+    # Real camera (#37): the pose's hand points are knuckles, too coarse for open / closed; when MediaPipe Hands in the
+    # browser sees a hand, its 21-point reading decides co-presence's hand_open too (state.copresence.hand_open).
+    if isinstance(cp.get("hand_open"), dict):
+        for side, hd in (h.get("hands") or {}).items():
+            if hd.get("src") == "hands" and hd.get("open") is not None:
+                cp["hand_open"][side[0]] = bool(hd["open"])
     for kind, val in m.events:
         if kind == "activity" and val not in ("none", "moving", "still") and w["mode"] != "off":
             _event(w, "activity", f"{val}")

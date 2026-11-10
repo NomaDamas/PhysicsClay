@@ -1219,6 +1219,9 @@
     document.querySelectorAll("[data-robot]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.robot === rb)));
     const sp = state.spatial && typeof state.spatial === "object" ? state.spatial : null;
     if (sp && sp.model && document.activeElement !== $("setSpatial")) $("setSpatial").value = String(sp.model);
+    const yo = $("setSpatial").querySelector('option[value="yolo-seg"]');   // YOLO (ultralytics, AGPL) is an optional extra
+    if (yo && sp) { yo.disabled = sp.yolo === false; yo.textContent = sp.yolo === false ? "YOLO segmentation (not installed)" : "YOLO segmentation"; }
+    if ($("spatialNote")) { $("spatialNote").textContent = (sp && sp.note) || ""; $("spatialNote").hidden = !(sp && sp.note); }
     const er = sp && sp.er && typeof sp.er === "object" ? sp.er : null;
     $("erStatus").textContent = er ? `ER · ${er.target || ""} · ${arr(er.points).length} points${er.ms ? " · " + Math.round(er.ms) + " ms" : ""}` : "";
     $("serverGemini").hidden = !state.server_gemini; $("byokNote").hidden = !state.byok;

@@ -58,7 +58,13 @@ Roadmap: VR/XR teaching at true scale -> real robots -> learning from correction
 ./scripts/web.sh --fake            # no camera
 ```
 Open Settings in the page and paste a Gemini API key (stored only in the browser). Without a key the page falls back to
-browser speech recognition and a rule parser.
+browser speech recognition and a rule parser. `web.sh` restarts only its own server (same `--port`), never others.
+YOLO segmentation is optional (`uv pip install --python .venv/bin/python ultralytics`, AGPL-3.0); without it the
+camera overlay uses the MediaPipe object detector.
+
+Tests: `PC_SELFTEST_PORT=8791 .venv/bin/python scripts/selftest.py` (synthetic person, no camera). Real camera, end to
+end (headless Chrome plays your own clip as its webcam; needs Chrome + ffmpeg, see `scripts/e2e_camera.py` for how
+to record the clips): `PC_CAM_POINT=point.mov PC_CAM_HAND=hand.mov PC_CAM_SQUAT=squats.mov .venv/bin/python scripts/e2e_camera.py`.
 
 ## Architecture
 ```

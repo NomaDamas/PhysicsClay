@@ -1,8 +1,13 @@
 """Spatial understanding models.
 - YOLO11 segmentation (ultralytics) on the user's camera, in a background thread: labelled masks -> polygons.
+  Ultralytics is AGPL-3.0 and an optional extra (`pip install ultralytics`); without it the default is the
+  MediaPipe object detector below and the Settings list says YOLO isn't installed (no error label on the camera).
+- MediaPipe object detector (EfficientDet-Lite0, Apache-2.0, models/efficientdet_lite0.tflite from setup.sh), same
+  background thread: labelled boxes, no masks.
 - Gemini Robotics-ER 2 on demand: "what do you see / where is X" -> labelled points on a frame.
 """
 import base64
+import importlib.util
 import json
 import os
 import re
@@ -20,6 +25,16 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 API = "https://generativelanguage.googleapis.com/v1beta/models/"
 ER_MODEL = "gemini-robotics-er-2-preview"
+MODELS = ("yolo-seg", "mediapipe", "off")
+NO_YOLO = "YOLO isn't installed (optional extra: pip install ultralytics, AGPL-3.0)."
+
+
+def yolo_available():
+    """ultralytics importable (checked without importing it: torch is slow and heavy to load)."""
+    try:
+        return importlib.util.find_spec("ultralytics") is not None
+    except (ImportError, ValueError):
+        return False
 
 
 def byok():
@@ -58,20 +73,27 @@ def openai_key():
 
 class Spatial:
     def __init__(self):
-        self.model_name = "yolo-seg"
+        self.yolo_ok = yolo_available()
+        self.model_name = "yolo-seg" if self.yolo_ok else "mediapipe"
+        self.error = None          # the last detector problem, as a calm status line (never drawn as an object)
         self.objects = []
         self.er = None
         self._frame = None
         self._lock = threading.Lock()
         self._yolo = None
+        self._mp = None
         self._busy_er = False
         self.paused = False
         threading.Thread(target=self._loop, daemon=True).start()
 
     def set_model(self, name):
-        self.model_name = name if name in ("yolo-seg", "mediapipe", "off") else "yolo-seg"
-        if self.model_name != "yolo-seg":
+        name = name if name in MODELS else ("yolo-seg" if self.yolo_ok else "mediapipe")
+        if name == "yolo-seg" and not self.yolo_ok:
+            name = "mediapipe"
+        self.error = None
+        if name != self.model_name:
             self.objects = []
+        self.model_name = name
 
     def feed(self, frame_bgr):
         with self._lock:
@@ -80,11 +102,14 @@ class Spatial:
     def _loop(self):
         while True:
             time.sleep(0.6)
-            if self.model_name != "yolo-seg" or self.paused:
+            if self.model_name not in ("yolo-seg", "mediapipe") or self.paused:
                 continue
             with self._lock:
                 f, self._frame = self._frame, None
             if f is None:
+                continue
+            if self.model_name == "mediapipe":
+                self._mediapipe(f)
                 continue
             try:
                 if self._yolo is None:
@@ -106,10 +131,44 @@ class Spatial:
                         pts = [[round(1 - float(p[0]), 4), round(float(p[1]), 4)] for p in poly[::step]]
                     out.append({"label": label, "score": round(float(b.conf[0]), 2),
                                 "box": [round(1 - x2, 4), round(y1, 4), round(1 - x1, 4), round(y2, 4)], "poly": pts})
-                self.objects = out
-            except Exception as e:  # keep running; report once
-                self.objects = [{"label": f"yolo error: {str(e)[:40]}", "score": 0, "box": [0, 0, 0, 0], "poly": None}]
+                self.objects, self.error = out, None
+            except ImportError:      # ultralytics (or torch) missing / broken: the MediaPipe detector instead
+                self.yolo_ok, self.model_name, self.objects = False, "mediapipe", []
+            except Exception as e:  # keep running; a status line, not an object on the camera
+                self.objects, self.error = [], f"YOLO is unavailable right now ({str(e)[:60]})."
                 time.sleep(2)
+
+    def _mediapipe(self, f):
+        """MediaPipe object detector on one frame -> self.objects (boxes, mirrored like the YOLO path)."""
+        try:
+            if self._mp is None:
+                import mediapipe as mp
+                from mediapipe.tasks.python import vision
+                from mediapipe.tasks.python.core.base_options import BaseOptions
+                path = ROOT / "models" / "efficientdet_lite0.tflite"
+                if not path.exists():
+                    self.objects, self.error = [], "MediaPipe object model missing (run scripts/setup.sh)."
+                    time.sleep(5)
+                    return
+                self._mp = (mp, vision.ObjectDetector.create_from_options(vision.ObjectDetectorOptions(
+                    base_options=BaseOptions(model_asset_path=str(path)), running_mode=vision.RunningMode.IMAGE,
+                    max_results=8, score_threshold=0.4)))
+            mp, det = self._mp
+            h, w = f.shape[:2]
+            small = cv2.resize(f, (416, max(1, int(h * 416 / w))))
+            img = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(small, cv2.COLOR_BGR2RGB))
+            sh, sw = small.shape[:2]
+            out = []
+            for d in det.detect(img).detections:
+                b, c = d.bounding_box, d.categories[0]
+                x1, y1, x2, y2 = b.origin_x / sw, b.origin_y / sh, (b.origin_x + b.width) / sw, (b.origin_y + b.height) / sh
+                out.append({"label": c.category_name, "score": round(float(c.score), 2),
+                            "box": [round(1 - x2, 4), round(y1, 4), round(1 - x1, 4), round(y2, 4)], "poly": None})
+            if self.model_name == "mediapipe":
+                self.objects, self.error = out, None
+        except Exception as e:
+            self.objects, self.error = [], f"MediaPipe objects unavailable ({str(e)[:60]})."
+            time.sleep(2)
 
     # ------------------------------------------------------------------ Gemini Robotics-ER
     def ask_er(self, frame_bgr, target, query=None, mirrored=False, key=None):
@@ -157,4 +216,5 @@ class Spatial:
         return True
 
     def state(self):
-        return {"model": self.model_name, "objects": self.objects, "er": self.er, "busy": self._busy_er}
+        return {"model": self.model_name, "objects": self.objects, "er": self.er, "busy": self._busy_er,
+                "yolo": self.yolo_ok, "note": self.error or (None if self.yolo_ok else NO_YOLO)}

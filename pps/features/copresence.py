@@ -53,6 +53,8 @@ ANKLE_Z = 0.07
 RAY_R = 0.06             # m: objects this close to the pointing ray are candidates
 ARM_HOLD = 0.5           # s an extended arm must be held before the pointing is armed
 ARM_STILL = 0.06         # m the fingertip may drift while arming
+OPEN_ON = 0.45           # pinky (index) to wrist / forearm length for a hand to read open (see grip_open)
+OPEN_OFF = 0.40          # ...and to stay open once it is (hysteresis against real-camera flicker)
 EXTEND = 0.80            # straightness of an extended arm (shoulder-tip distance / arm length)
 FORWARD = 0.18           # m the fingertip must be in front of the shoulder (toward the robot)
 HISTORY_S = 1.5          # s of pointing history a "this"/"there" looks back over
@@ -248,9 +250,16 @@ def ray_candidates(tasks, ray, skip=()):
     return sorted(out)
 
 
-def grip_open(J, sd):
+def grip_open(J, sd, was=None):
     """Open hand: the pinky (or, without it, the index) landmark far from the wrist relative to the forearm. A
-    pointing hand has the index out but the pinky curled, so it does not count as open."""
+    pointing hand has the index out but the pinky curled, so it does not count as open.
+
+    Real camera (#37): MediaPipe Pose puts the pinky / index points at the knuckles, so on real footage the pinky
+    ratio sits at 0.15-0.39 for closed, relaxed and even open hands alike, with single-frame spikes to 0.42+; at the
+    old 0.40 threshold `hand_open` flickered (37 flips in 6 s of a palm wave, true on a barbell grip). Hence a
+    stricter OPEN_ON with hysteresis: a hand that was open (`was`) stays open down to OPEN_OFF. Synthetic people are
+    unaffected (open hands 0.49-0.57, others <= 0.37). The reliable open/closed on a real camera comes from MediaPipe
+    Hands in the browser (pps/human/model.py, which watch.py feeds back into `hand_open`)."""
     try:
         wr, el = J[f"{sd}_wrist"], J[f"{sd}_elbow"]
     except KeyError:
@@ -259,9 +268,9 @@ def grip_open(J, sd):
     if fore < 1e-3:
         return None
     if f"{sd}_pinky" in J:
-        return bool(np.linalg.norm(J[f"{sd}_pinky"] - wr) / fore >= 0.40)
+        return bool(np.linalg.norm(J[f"{sd}_pinky"] - wr) / fore >= (OPEN_OFF if was else OPEN_ON))
     if f"{sd}_index" in J:
-        return bool(np.linalg.norm(J[f"{sd}_index"] - wr) / fore >= 0.45)
+        return bool(np.linalg.norm(J[f"{sd}_index"] - wr) / fore >= (OPEN_OFF if was else OPEN_ON))
     return None
 
 
@@ -413,16 +422,19 @@ def _pointing(ctx, st, J, src, now):
 
 
 def _track_hands(st, J, now):
+    prev = st.get("pose_open") or {}         # the pose's own reading (watch.py may overwrite hand_open from Hands)
     st["hand_open"], st["offer"] = {}, None
     if J is None:
+        st["pose_open"] = {}
         return
     for sd in ("l", "r"):
-        st["hand_open"][sd] = grip_open(J, sd)
+        st["hand_open"][sd] = grip_open(J, sd, was=prev.get(sd))
         if f"{sd}_wrist" in J:
             pth = st["paths"][sd]
             pth.append((now, J[f"{sd}_wrist"].copy()))
             while pth and now - pth[0][0] > PATH_S:
                 pth.popleft()
+    st["pose_open"] = dict(st["hand_open"])
     st["offer"] = offered_hand(J)
     # wave: a hand above the shoulder swinging sideways (>= 2 direction changes in 1.5 s)
     up = [sd for sd in ("l", "r") if f"{sd}_wrist" in J and J[f"{sd}_wrist"][2] > J[f"{sd}_shoulder"][2] + 0.08]

@@ -255,6 +255,14 @@ class ActivityTracker:
             return "still", None
         return "moving", None
 
+    def _squat_range(self, now):
+        """The squat detector's depth conditions (knees bend > 30 deg, hips drop > 8 cm) still hold over the window,
+        without its 'two swings' condition: keeps an ongoing set a squat through slow reps and pauses."""
+        rows = self._win(now, WINDOW_S)
+        klo, khi = self._rng(rows, "knee")
+        hlo, hhi = self._rng(rows, "hip_h")
+        return khi - klo > 30 and hhi - hlo > 0.08
+
     def _active_sides(self, rows):
         """Arms ordered by how much the wrist moved in the window (the working hand first)."""
         out = []
@@ -350,6 +358,11 @@ class ActivityTracker:
         while self.hist and now - self.hist[0][0] > WINDOW_S + 2.0:
             self.hist.popleft()
         cand, side = self._detect(now, extra)
+        if cand is not None and cand != "squat" and self.activity == "squat" and self._squat_range(now):
+            # Mid-set the hips are still going up and down within the window. Real footage (#37): slow squats (~6 s a
+            # rep, a pause at the top and the bottom) with the arms held forward read as reach / point / weave for
+            # a second at the top, which used to switch the activity away and reset the count, so reps stayed at 1.
+            cand = "squat"
         if cand is not None:
             if cand == self.activity:
                 self.seen_t = now
