@@ -105,13 +105,17 @@ async def ws_handler(request):
     return ws
 
 
-async def _send_frame(ws, msgs):
-    for m in msgs:
-        await (ws.send_str(m) if isinstance(m, str) else ws.send_bytes(m))
+async def _send_frame(shared, ws, msgs):
+    try:
+        for m in msgs:
+            await (ws.send_str(m) if isinstance(m, str) else ws.send_bytes(m))
+    except Exception:
+        shared.clients.discard(ws)
 
 
 async def broadcaster(shared):
     last = -1
+    sending = {}   # ws -> the task still sending it a frame
     while True:
         await asyncio.sleep(1 / 30)
         cam, sim, state, fid = shared.get()
@@ -119,17 +123,15 @@ async def broadcaster(shared):
             continue
         last = fid
         msgs = (state, b"\x01" + cam, b"\x02" + sim) + (() if shared.pip is None else (b"\x03" + shared.pip,))
-
-        # A client that stops reading (a suspended phone tab, a page in the back/forward cache) must not freeze the
-        # others: every client is sent to concurrently and one that can't take a frame within 2 s is dropped (its
-        # page reconnects when it wakes up).
-        clients = list(shared.clients)
-        done = await asyncio.gather(*(asyncio.wait_for(_send_frame(ws, msgs), 2.0) for ws in clients), return_exceptions=True)
-        for ws, r in zip(clients, done):
-            if isinstance(r, BaseException):
-                shared.clients.discard(ws)
-                if not ws.closed:
-                    asyncio.ensure_future(ws.close())
+        # Every client gets its own send task. A client that stops reading (a suspended phone tab, a page in the
+        # back/forward cache, a busy script) only skips frames until it reads again; it never holds up the others.
+        # (The websocket heartbeat closes the ones that never come back.)
+        for ws in list(shared.clients):
+            t = sending.get(ws)
+            if t is None or t.done():
+                sending[ws] = asyncio.ensure_future(_send_frame(shared, ws, msgs))
+        for ws in [w for w, t in sending.items() if w not in shared.clients and t.done()]:
+            del sending[ws]
 
 
 async def upload(request):
