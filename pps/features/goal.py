@@ -353,7 +353,7 @@ def _blob_mask(hsv, prof):
     if prof[0] == "light":
         return ((s < 50) & (v > 150)).astype(np.uint8)
     if prof[0] == "dark":
-        return ((v < 55)).astype(np.uint8)
+        return (v < 55).astype(np.uint8)
     dh = np.abs(h - prof[1])
     dh = np.minimum(dh, 180 - dh)
     return ((dh <= 9) & (s > 90) & (v > 60)).astype(np.uint8)

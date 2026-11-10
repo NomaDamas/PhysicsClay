@@ -11,16 +11,14 @@ import importlib.util
 import json
 import os
 import re
+import ssl
 import threading
 import time
-import ssl
 import urllib.request
-
-import certifi
 from pathlib import Path
 
+import certifi
 import cv2
-import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 API = "https://generativelanguage.googleapis.com/v1beta/models/"

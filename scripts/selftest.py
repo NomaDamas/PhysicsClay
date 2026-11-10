@@ -1,5 +1,11 @@
 """End-to-end self test: starts an isolated server (synthetic input) and exercises every feature over the real protocol.
-Run: .venv/bin/python scripts/selftest.py        Prints PASS/FAIL per check and exits non-zero on any failure."""
+Run: .venv/bin/python scripts/selftest.py        Prints PASS/FAIL per check and exits non-zero on any failure.
+
+Environment:
+  PC_SELFTEST_PORT=8791      HTTP port of the test server (HTTPS uses the next one); give parallel runs their own ports.
+  PC_SELFTEST_OFFLINE=1      CI / no keys: the server runs with --byok (never reads .env keys) and the checks that need
+                             a key, the network or a local test clip are reported as SKIP instead of FAIL.
+  PC_SELFTEST_LOG=path       write the server's stdout/stderr there (default: discarded)."""
 import asyncio
 import json
 import os
@@ -15,12 +21,21 @@ import aiohttp
 ROOT = Path(__file__).resolve().parents[1]
 PORT = int(os.environ.get("PC_SELFTEST_PORT", "8791")); HTTPS = PORT + 1   # parallel runs: give each its own port
 BASE = f"http://127.0.0.1:{PORT}"
+OFFLINE = os.environ.get("PC_SELFTEST_OFFLINE") == "1"
+if OFFLINE:
+    os.environ["PC_BYOK"] = "1"   # checks in this process see what the --byok server sees: no server keys
 results = []
+skipped = []
 
 
 def check(name, ok, detail=""):
     results.append((name, bool(ok), detail))
     print(f"{'PASS' if ok else 'FAIL'}  {name}  {detail}", flush=True)
+
+
+def skip(name, why):
+    skipped.append(name)
+    print(f"SKIP  {name}  {why}", flush=True)
 
 
 async def main():
@@ -85,7 +100,7 @@ async def main():
     except Exception as e:
         check("https (phone mic)", False, str(e)[:60])
     await pump(1.5)
-    check("frames: camera / robot view / full body", all(k in bins for k in (1, 2, 3)), str(sorted(bins)))
+    check("frames: camera / robot view / full body", all(k in bins for k in (1, 2, 3)), f"{sorted(bins)} server {st.get('fps')} fps")
     keys = ("mode", "view", "feasibility", "markers", "path", "task", "holding", "scene_objects", "skills", "teach", "geom_poses", "say", "mock")
     check("state fields", all(k in st for k in keys), ",".join(k for k in keys if k not in st))
     names = sorted(o["name"] for o in st["scene_objects"])
@@ -178,7 +193,8 @@ async def main():
     await T(cmd="cancel"); await task("reset_scene", 1)
 
     # --- v3: phone frames, robot switch, spatial model, proxies, tts, demo autopilot
-    import cv2, numpy as np
+    import cv2
+    import numpy as np
     jpg = cv2.imencode(".jpg", np.full((360, 640, 3), 120, np.uint8))[1].tobytes()
     for _ in range(8):
         await ws.send_bytes(b"\x10" + jpg); await pump(0.15)
@@ -191,18 +207,23 @@ async def main():
     await send(type="spatial_model", name="mediapipe"); await pump(0.4)
     check("spatial model switch", st["spatial"]["model"] == "mediapipe")
     await send(type="spatial_model", name="yolo-seg"); await pump(0.3)
-    async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test."}) as r:
-        b = await r.read()
-        check("OpenAI TTS endpoint", r.status == 200 and len(b) > 1000, f"{r.status} {len(b)}B")
-    async def gemini_rest():
-        async with s.post(BASE + "/gemini/rest/gemini-3.8-flash:generateContent", json={"contents": [{"parts": [{"text": "Reply OK"}]}]}) as r:
-            return r.status, await r.text()
-    req = asyncio.ensure_future(gemini_rest())
-    while not req.done():          # keep reading the socket so the server heartbeat doesn't drop us (Google can take 35 s)
-        await pump(0.3)
-    status, txt = req.result()
-    check("Gemini REST proxy reaches Google", status in (200, 429) or "error" in txt, f"{status} {txt[:60]}")
-    check("server reports Gemini key", st.get("server_gemini") is True)
+    if OFFLINE:
+        for name in ("OpenAI TTS endpoint", "Gemini REST proxy reaches Google", "server reports Gemini key"):
+            skip(name, "offline: needs an API key and the network")
+    else:
+        async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test."}) as r:
+            b = await r.read()
+            check("OpenAI TTS endpoint", r.status == 200 and len(b) > 1000, f"{r.status} {len(b)}B")
+
+        async def gemini_rest():
+            async with s.post(BASE + "/gemini/rest/gemini-3.8-flash:generateContent", json={"contents": [{"parts": [{"text": "Reply OK"}]}]}) as r:
+                return r.status, await r.text()
+        req = asyncio.ensure_future(gemini_rest())
+        while not req.done():          # keep reading the socket so the server heartbeat doesn't drop us (Google can take 35 s)
+            await pump(0.3)
+        status, txt = req.result()
+        check("Gemini REST proxy reaches Google", status in (200, 429) or "error" in txt, f"{status} {txt[:60]}")
+        check("server reports Gemini key", st.get("server_gemini") is True)
     await send(type="demo", name="keyfeatures"); t0 = time.time(); kinds = set(); seen = None
     while time.time() - t0 < 120:
         await pump(0.3)
@@ -230,6 +251,8 @@ async def main():
         while st.get("video") is not None and time.time() - t0 < 20:
             await pump(0.5)
         check("video upload -> whole-body imitation -> skill", j["ok"] and playing and "selftest_clip" in st["skills"], j.get("name"))
+    elif OFFLINE:
+        skip("video upload -> whole-body imitation -> skill", "offline: no /tmp/pc_clip.mp4 test clip")
     else:
         check("video upload", False, "no /tmp/pc_clip.mp4 test clip")
 
@@ -253,8 +276,10 @@ async def main():
 
 
 if __name__ == "__main__":
-    srv = subprocess.Popen([str(ROOT / ".venv/bin/python"), "-m", "pps.app", "--fake", "--https", "--port", str(PORT), "--https-port", str(HTTPS)],
-                           cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log = open(os.environ["PC_SELFTEST_LOG"], "w") if os.environ.get("PC_SELFTEST_LOG") else subprocess.DEVNULL
+    srv = subprocess.Popen([str(ROOT / ".venv/bin/python"), "-m", "pps.app", "--fake", "--https", "--port", str(PORT),
+                            "--https-port", str(HTTPS)] + (["--byok"] if OFFLINE else []),
+                           cwd=ROOT, stdout=log, stderr=subprocess.STDOUT if log is not subprocess.DEVNULL else subprocess.DEVNULL)
     try:
         asyncio.run(main())
     finally:
@@ -270,5 +295,5 @@ if __name__ == "__main__":
             except OSError:
                 pass
     bad = [r for r in results if not r[1]]
-    print(f"\n{len(results) - len(bad)}/{len(results)} passed")
+    print(f"\n{len(results) - len(bad)}/{len(results)} passed" + (f", {len(skipped)} skipped (offline)" if skipped else ""))
     sys.exit(1 if bad else 0)

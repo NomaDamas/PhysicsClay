@@ -1,0 +1,69 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. **Never paste API keys or the contents of `.env`.** Security problems go through a private advisory (see SECURITY.md), not here.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+      placeholder: |
+        I said "put the mug on the left" with the UR5e at the kitchen counter. I expected a plan card, but the robot froze and the state stopped updating.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. make run ARGS="--mock"
+        2. Switch the robot to UR5e, scene "kitchen"
+        3. Say / type "put the mug on the left"
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Physics / IK / tasks
+        - Robots / scenes (world)
+        - Agent / voice / Gemini
+        - Pointing / gestures / co-presence
+        - Teach by showing / video imitation / skills
+        - Web UI / 3D view
+        - Setup / packaging / CI
+        - Other
+  - type: input
+    id: robot
+    attributes:
+      label: Robot and scene
+      placeholder: g1 @ table
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      description: OS, Python version, browser, how you started the server (flags), and the commit (`git rev-parse --short HEAD`).
+      placeholder: macOS 15, Python 3.10, Chrome 140, `python -m pps.app --https --mock`, a1b2c3d
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs and screenshots
+      description: Server output, the browser console, the failing self-test lines. Remove any keys first.
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: I removed any API keys or personal data from this report.
+          required: true

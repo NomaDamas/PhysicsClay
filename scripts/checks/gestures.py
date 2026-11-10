@@ -68,8 +68,8 @@ def frames(name, seconds, fps=20):
 def unit(check):
     """The classifier and debounce as pure functions: each gesture fires exactly once; rest and the --fake motion never."""
     sys.path.insert(0, str(ROOT))
-    from pps.features.gestures import Detector, classify_static
     from pps.fake import fake_landmarks
+    from pps.features.gestures import Detector, classify_static
     for name, want in (("rest", None), ("stop", "stop"), ("slower", "slower"), ("go_on", "go_on"), ("palm_forward", "go_on")):
         check(f"gestures: classify {name}", classify_static(pose(name)) == want, str(classify_static(pose(name))))
     for name, want in (("stop", "stop"), ("slower", "slower"), ("go_on", "go_on"), ("palm_forward", "go_on"), ("come_here", "come_here")):
