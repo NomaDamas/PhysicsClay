@@ -38,6 +38,7 @@ SURFACE_FRICTION = (0.6, 0.005, 0.0001)
 ADDED_GAINS = [(("hip", "knee", "ankle"), (400.0, 20.0, 120.0)), (("waist", "torso"), (300.0, 15.0, 88.0)),
                (("wrist",), (40.0, 2.0, 8.0)), (("base",), (4000.0, 600.0, 400.0)), ((), (150.0, 8.0, 30.0))]
 IMPEDANCE = {"kp": 0.2, "effort": 0.4}          # arm stiffness and effort cap in impedance mode (fractions)
+ARMATURE_MIN = 0.02                             # kg m^2: least reflected rotor inertia of a servoed robot hinge
 V_MAX = 2.0                                     # rad/s (m/s for slides): q_des is rate-limited, as in a real controller
 A_MAX = 10.0                                    # rad/s^2 (m/s^2 for slides): ... and acceleration-limited
 SETPOINT_TAU = 0.03                             # s: how fast the setpoint closes a gap to the plan (on top of its velocity)
@@ -236,13 +237,16 @@ def plant_spec(spec, profile, kinds):
     for j in spec.joints:
         if j.parent.name not in robot_names or j.type == mujoco.mjtJoint.mjJNT_FREE:
             continue
+        hinge = j.type == mujoco.mjtJoint.mjJNT_HINGE
         if j.name in acted:
             j.actgravcomp = True                          # gravity compensation counts against the actuator's limit
+            if hinge and j.armature < ARMATURE_MIN:       # geared joints have reflected rotor inertia; without it a light
+                j.armature = ARMATURE_MIN                 # wrist rattles against a stiff grasp at 2 ms
             continue
         if j.name.startswith("pc_") or any(k in j.name for k in profile.freeze):
             continue                                      # finger linkages, rubber tips: passive (driven by the gripper)
-        if j.armature == 0:
-            j.armature = 0.01                             # reflected rotor inertia (models without it are too light)
+        if j.armature < (ARMATURE_MIN if hinge else 0.01):
+            j.armature = ARMATURE_MIN if hinge else 0.01  # reflected rotor inertia (models without it are too light)
         kp, kv, eff = next(v for pats, v in ADDED_GAINS if not pats or any(k in j.name for k in pats))
         a = spec.add_actuator(name=f"pc_servo_{j.name}", target=j.name, trntype=mujoco.mjtTrn.mjTRN_JOINT)
         a.set_to_position(kp=kp, kv=kv)
@@ -429,7 +433,7 @@ class Plant:
                         for sz in (-1, 1):
                             corner = d.geom_xpos[k] + Rg @ (c + h * np.array([sx, sy, sz])) - p
                             reach = max(reach, float(np.dot(corner, ap)))
-                            if np.dot(corner, ap) > -0.12:     # the hand's footprint near the work (not the wrist above)
+                            if np.dot(corner, ap) > -0.06:     # the hand's footprint near the work (not the wrist above)
                                 span, depth = max(span, abs(float(np.dot(corner, ax)))), max(depth, abs(float(np.dot(corner, third))))
             g["tip"] = max(g["tip"], reach)
             g["span"], g["depth"] = span, depth             # half extents across / along the jaws (open), for placing

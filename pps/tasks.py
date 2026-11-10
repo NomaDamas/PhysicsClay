@@ -358,17 +358,58 @@ class Tasks:
         who = blocker_at(dest)
         if who is None:
             return dest, None
-        best = None
+        cands = []
         for rad in (0.08, 0.11, 0.14, 0.17):
             for ang in np.linspace(0, 2 * np.pi, 16, endpoint=False):
                 cand = np.array([dest[0] + rad * np.cos(ang), dest[1] + rad * np.sin(ang), dest[2]])
                 if self.on_table(cand) and blocker_at(cand) is None:
                     score = rad + 0.5 * max(0.0, cand[0] - 0.33) + 0.5 * max(0.0, abs(cand[1]) - 0.24)   # near, reachable
-                    if best is None or score < best[0]:
-                        best = (score, cand)
-            if best is not None:
+                    if self.plant is not None and moving in self.objs:   # physics: on its own side (no carrying it over)
+                        score += 0.3 * float(np.linalg.norm(cand[:2] - self.mug_center(moving)[:2]))
+                    cands.append((score, len(cands), cand))
+            if cands and self.plant is None:
                 break
-        return (None if best is None else best[1]), who
+        if not cands:
+            return None, who
+        cands.sort(key=lambda c: c[:2])
+        if self.plant is not None and moving in self.objs:   # physics: the nearest spot the hand can really set it down on
+            hh = self.objs[moving]["half_h"]
+            self.rt.set_obstacles((moving,))
+            for _, _, cand in cands[:8]:
+                p = np.array([cand[0], cand[1], TABLE_TOP + hh])
+                if self._reach_err(p, self.hand_for(p)) < CRIT_TOL:
+                    return cand, who
+        return cands[0][2], who
+
+    def _reach_err(self, p, palm, iters=50):
+        """Physics: how close (m) the planner gets the hand to p from where it is, holding its current target orientation
+        firmly (for hands that work from above: that, or turned 90° about the vertical, whichever fits)."""
+        import mink
+        rt = self.rt
+        task = rt.hand_tasks[rt.hands.index(palm)]
+        saved = task.transform_target_to_world
+        q0 = rt.data.mocap_quat[rt.hands_mid[palm]].copy()
+        quats = [q0]
+        if getattr(getattr(rt, "profile", None), "ee_down", False) and (rt.profile.physics or {}).get("grasp", rt.profile.grasp) == "top":
+            q90 = np.zeros(4)
+            mujoco.mju_mulQuat(q90, np.array([np.cos(np.pi / 4), 0, 0, np.sin(np.pi / 4)]), q0)
+            quats.append(q90)
+        rt.orient(True)
+        best = np.inf
+        for q in quats:
+            cfg = mink.Configuration(rt.configuration.model)
+            cfg.data.mocap_pos[:], cfg.data.mocap_quat[:] = rt.ik_data.mocap_pos, rt.ik_data.mocap_quat
+            cfg.update(rt.configuration.q.copy())
+            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(q), np.asarray(p, float)))
+            for _ in range(iters):
+                cfg.integrate_inplace(rt.solve(cfg, 0.05), 0.05)
+            best = min(best, float(np.linalg.norm(cfg.data.site_xpos[rt.palm_sid[palm]] - p)))
+            if best < CRIT_TOL:
+                break
+        rt.orient(False)
+        if saved is not None:
+            task.set_target(saved)
+        return best
 
     def on_table(self, p):
         return TABLE_X[0] + 0.03 < p[0] < TABLE_X[1] - 0.03 and TABLE_Y[0] + 0.03 < p[1] < TABLE_Y[1] - 0.03
@@ -421,6 +462,8 @@ class Tasks:
         for k0, k1 in loose or ():                # transit segments only need passing near (2x the reach tolerance)
             for j in range(idx_map[k0] + 1, idx_map[k1]):
                 ok[j] = dists[j] < 2 * rt.validator.reach_tol
+            if self.plant is not None and k1 == len(keypoints) - 1 and k0 > 0:
+                ok[-1] = True                     # physics: going home after the work: wherever it ends up near home is fine
         crit = [idx_map[k] for k, nm in events.items() if nm in ("grasp", "release")] if self.plant is not None else []
         short = [j for j in crit if dists[j] > CRIT_TOL]
         if short and all(ok):                     # physics: the jaws must get exactly there, not just near
@@ -551,7 +594,7 @@ class Tasks:
         need = -np.inf
         for c, rb, hb, _ in self._bodies(skip=(name,)):
             t = float(np.clip(np.dot(c[:2] - ca, ab) / (float(np.dot(ab, ab)) or 1.0), 0.0, 1.0))
-            if np.linalg.norm(c[:2] - (ca + t * ab)) < rb + r + 0.02:
+            if np.linalg.norm(c[:2] - (ca + t * ab)) < rb + r + 0.008:
                 need = max(need, float(c[2]) + hb + margin + hh + float(off[2]))
         return need
 
@@ -669,6 +712,7 @@ class Tasks:
                     self.cur = obj
                     self.ph = None
                     self._hold_path(False)
+                    rt.set_obstacles(())            # on the way back the hand keeps clear of what it just set down
                     if self.task:
                         self.task["step"] = "placed"
         for palm, h in list(self.held.items()):

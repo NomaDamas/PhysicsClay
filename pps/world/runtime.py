@@ -201,20 +201,29 @@ class BodyRuntime(Runtime):
         self.target_geoms = {h: [g for g in range(m.ngeom) if m.geom_bodyid[g] == m.body(f"{h}_target").id] for h in self.hands}
 
     def _collision_pairs(self, robot_bodies):
-        """Collision geoms on the last links of each arm vs the work surface (cheap: a handful of pairs)."""
+        """Collision geoms of each arm vs the work surface: the last links always; with physics the whole arm (an upper arm
+        that sweeps through the table edge stalls the real one), except links that already sit on or next to it."""
         m = self.model
         try:
             table = m.geom("table").id
         except KeyError:
             return []
         out = []
+        dist = None
+        if self.plant is not None and self.home_q is not None:
+            mi = self.configuration.model
+            di = mujoco.MjData(mi)
+            di.qpos[:] = self.home_q
+            mujoco.mj_forward(mi, di)
+            dist = lambda g: mujoco.mj_geomDistance(mi, di, g, table, 0.1, None)
         for h in self.hands:
             b, links = m.site_bodyid[m.site(self.ee_site[h]).id], []
-            while b != 0 and b in robot_bodies and len(links) < 4:
+            while b != 0 and b in robot_bodies and (len(links) < 4 or dist is not None):
                 links.append(b)
                 b = m.body_parentid[b]
             geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] in links and m.geom_group[g] == 3
-                     and (m.geom_contype[g] or m.geom_conaffinity[g])]
+                     and (m.geom_contype[g] or m.geom_conaffinity[g])
+                     and (dist is None or links.index(m.geom_bodyid[g]) < 4 or dist(g) > 0.04)]
             if geoms:
                 out.append((geoms, [table]))
         return out
