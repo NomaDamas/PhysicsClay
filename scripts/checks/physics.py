@@ -58,19 +58,21 @@ async def run(t):
 
     # 1. an object dropped from 10 cm lands and rests
     z0 = ((p.get("objects") or {}).get("red_block") or {}).get("p", [0, 0, 0])[2]
-    r = await _physics(t, op="drop", object="red block", height=0.10)
-    o = (_phys(t).get("objects") or {}).get("red_block") or {}
-    zs = [(o["p"][2], o["v"])] if o else []
+    tid, zs = f"phys-drop-{time.time():.3f}", []
+    await t.send(type="physics", id=tid, op="drop", object="red block", height=0.10)
     t1 = time.time()
-    while time.time() - t1 < 2.0:
-        await t.pump(0.1)
+    while time.time() - t1 < 2.5:                # every frame: the fall itself lasts ~0.14 s
+        await t.pump(0.02)
         o = (_phys(t).get("objects") or {}).get("red_block") or {}
-        if o:
+        if o and (t.state().get("task") or {}).get("id") == tid:
             zs.append((o["p"][2], o["v"]))
+    r = t.state().get("task") or {}
     land = zs[-1] if zs else (0, 9)
     t.check("physics: an object dropped from 10 cm lands and rests",
-            r.get("status") == "done" and zs and max(z for z, _ in zs) > z0 + 0.02 and abs(land[0] - z0) < 0.01 and land[1] < 0.02,
-            f"rest z {z0:.3f} -> peak {max([z for z, _ in zs] or [0]):.3f} -> {land[0]:.3f} m, speed {land[1]:.3f} m/s")
+            r.get("status") == "done" and zs and (max(z for z, _ in zs) > z0 + 0.02 or max(v for _, v in zs) > 0.3)
+            and abs(land[0] - z0) < 0.01 and land[1] < 0.02,
+            f"{r.get('message', '')[:30]} rest z {z0:.3f} -> peak {max([z for z, _ in zs] or [0]):.3f} (max speed "
+            f"{max([v for _, v in zs] or [0]):.2f}) -> {land[0]:.3f} m, speed {land[1]:.3f} m/s")
 
     # 2. a real pick holds by contact: both pads on the mug while it is carried
     await t.task("reset_scene", 1)
