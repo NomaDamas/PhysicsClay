@@ -752,7 +752,7 @@ class Tasks:
         if placed:
             o = self.objs[placed[0]]
             bodies.append((np.array([placed[1][0], placed[1][1], TABLE_TOP + o["half_h"]]), self._radius(placed[0]), o["half_h"], placed[0]))
-        for c, r, hh, n in bodies:
+        for c, r, hh, _n in bodies:
             if _seg_dist(np.asarray(c, float)[:2], np.asarray(a, float)[:2], np.asarray(b, float)[:2]) < r + foot + 0.01:
                 need = max(need, float(c[2]) + hh + hang + margin)
         return need
