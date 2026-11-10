@@ -22,8 +22,9 @@ import traceback
 
 _tls = threading.local()
 _MISSING = object()
-_frame = {"budget": None, "used": 0.0}
+_frame = {"budget": None, "used": 0.0, "stretch": 0.0}
 DEFAULT_BUDGET = 0.25
+STRETCH_DECAY = 0.95      # per slice: how fast the estimate of the longest stretch between pause points comes back down
 
 
 class Cancelled(BaseException):
@@ -55,6 +56,13 @@ def allowance():
 
 def used():
     return _frame["used"]
+
+
+def stretch():
+    """How far past its budget a slice may run (s): the longest recent stretch between two pause points, or from the
+    last one back to the server, decaying. A few ms of IK on an idle machine; hundreds of ms when the machine is so busy
+    that the planner's thread waits for a CPU (the server takes it off the next frames' planning time)."""
+    return _frame["stretch"]
 
 
 class Swap:
@@ -110,7 +118,8 @@ class Job:
         self._budget = allowance() if budget is None else float(budget)
         if budget is None and self._thread is not None and self._budget < 0.005:   # this frame's planning time is used up:
             return False                                                           # on the next one
-        self._t0 = time.time()
+        self._t0 = self._pt = time.time()
+        self._gap = 0.0
         theirs = self.swap.capture() if self.swap is not None else None
         if self._mine is not None:
             self.swap.apply(self._mine)
@@ -122,6 +131,7 @@ class Job:
         self._back.acquire()                      # (the planner runs; this thread waits)
         dt = time.time() - self._t0
         _frame["used"] += dt
+        _frame["stretch"] = max(self._gap, dt - self._budget, _frame["stretch"] * STRETCH_DECAY)
         self.slices += 1
         self.slice_max = max(self.slice_max, dt)
         self.busy += dt
@@ -153,7 +163,9 @@ class Job:
     def _point(self):                             # (planner thread)
         if self.cancelled:
             raise Cancelled()
-        if time.time() - self._t0 < self._budget:
+        now = time.time()
+        self._gap, self._pt = max(self._gap, now - self._pt), now
+        if now - self._t0 < self._budget:
             return
         self._back.release()
         self._go.acquire()

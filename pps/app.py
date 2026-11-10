@@ -691,9 +691,11 @@ def worker(args, shared):
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
     t_phys = time.time()
     # frame times (state.perf): planning jobs (pps/slicing.py) get what is left of FRAME_TARGET after the rest of a frame
-    # (rendering, physics, state), so a long plan never stalls the stream; {type: "perf", op: "reset"} restarts the maxima
-    perf = {"last_ms": 0.0, "max_ms": 0.0, "plan_ms": 0.0, "plan_max_ms": 0.0, "rest_ms": 100.0, "budget_ms": 0.0,
-            "frames": 0, "since": time.time()}
+    # (rendering, physics, state) and after how far a slice may run past its budget (stretch: a busy machine keeps the
+    # planner's thread waiting for a CPU), so a long plan never stalls the stream; {type: "perf", op: "reset"} restarts
+    # the maxima
+    perf = {"last_ms": 0.0, "max_ms": 0.0, "plan_ms": 0.0, "plan_max_ms": 0.0, "plan_frame_max_ms": 0.0, "plan_stalls": 0,
+            "rest_ms": 100.0, "stretch_ms": 0.0, "budget_ms": 0.0, "frames": 0, "since": time.time()}
     t_top = None
     ip = lan_ip()
     print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}\n  phone : http://{ip}:{args.port}"
@@ -705,11 +707,15 @@ def worker(args, shared):
         now = time.time()
         if t_top is not None:                     # the last frame, and how much of it went to planning
             fdt, pdt = (now - t_top) * 1000, slicing.used() * 1000
-            perf["rest_ms"] = 0.7 * perf["rest_ms"] + 0.3 * max(0.0, fdt - pdt)
+            perf["rest_ms"] = max(fdt - pdt, perf["rest_ms"] * 0.95)   # (the recent worst, decaying: budgets err short)
             perf.update(last_ms=fdt, plan_ms=pdt, max_ms=max(perf["max_ms"], fdt), plan_max_ms=max(perf["plan_max_ms"], pdt),
                         frames=perf["frames"] + 1)
+            if pdt > 0:                           # frames planning ran in: the longest, and how many it pushed past 0.5 s
+                perf["plan_frame_max_ms"] = max(perf["plan_frame_max_ms"], fdt)
+                perf["plan_stalls"] += int(fdt >= 500.0 > fdt - pdt)
         t_top = now
-        perf["budget_ms"] = float(np.clip(FRAME_TARGET * 1000 - perf["rest_ms"], 30.0, 250.0))
+        perf["stretch_ms"] = slicing.stretch() * 1000
+        perf["budget_ms"] = float(np.clip(FRAME_TARGET * 1000 - perf["rest_ms"] - perf["stretch_ms"], 10.0, 250.0))
         slicing.new_frame(perf["budget_ms"] / 1000)
         # ---------------- your camera (a phone/browser camera wins while it streams)
         phone = shared.phone if (shared.phone and time.time() - shared.phone[0] < 1.0 and video_job is None) else None
@@ -805,7 +811,7 @@ def worker(args, shared):
                 elif t == "physics":
                     physics_msg(rt, tasks, c)
                 elif t == "perf":                 # frame-time probe (scripts/checks/stalls.py): restart the maxima
-                    perf.update(max_ms=0.0, plan_max_ms=0.0, frames=0, since=time.time())
+                    perf.update(max_ms=0.0, plan_max_ms=0.0, plan_frame_max_ms=0.0, plan_stalls=0, frames=0, since=time.time())
                 elif t == "world":
                     try:
                         robot, spec = world_target(c, world)
