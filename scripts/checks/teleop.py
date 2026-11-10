@@ -99,13 +99,21 @@ async def run(t):
     tp, h2 = _tp(t), _hand(t)
     t.check("teleop: a target out of reach is clamped", tp.get("clamped") is True and h2["p"][0] < 1.2,
             f"asked x=2.6, target x={h2['p'][0]:.2f}")
-    low = [0.45, p0[1], 0.40]
+    mug0 = next((o["pos"] for o in t.state().get("scene_objects", []) if o["name"] == "mug"), None)
+    # (away from the mug: with physics the open G1 gripper is 15 cm wide, and parked at table height 1 cm from the mug's
+    # side any drift of the arm as it rises again pushes the mug over)
+    low = [0.45, min(p0[1], mug0[1] - 0.25) if mug0 else p0[1], 0.40]
     await _stream(t, "right", low, 1.5)
     h3 = _hand(t)
     top = (t.state().get("traj") or {}).get("surface") or 0.74
     t.check("teleop: a target under the table stays above it", h3["p"][2] >= top + 0.01, f"z {h3['p'][2]:.3f} (table {top})")
 
-    # grasp the mug, carry it up, put it down
+    # grasp the mug, carry it up, put it down: from a fresh scene (the probes above send the hand to extreme targets
+    # around the table on purpose; with physics the G1's open 15 cm gripper can brush the mug on the way), teleop again
+    await t.task("reset_scene", 1)
+    await t.send(type="teleop", op="start", role="right", id="tp-start-2")
+    await _until(t, lambda s: ((s.get("teleop") or {}).get("reply") or {}).get("id") == "tp-start-2", 4)
+    await t.pump(0.5)
     mug = next((o["pos"] for o in t.state().get("scene_objects", []) if o["name"] == "mug"), None)
     if mug is None:
         t.check("teleop: grasp the mug", False, "no mug in this world")
@@ -114,10 +122,14 @@ async def run(t):
         # operator turns the G1's palm gripper level, jaws across the table (approach forward), comes in from behind at
         # the mug's middle, closes, lifts, puts it back and opens: what a person in VR does.
         q = [0.7071, 0.0, 0.7071, 0.0]
+        cur, q0 = _hand(t).get("p") or [mug[0] - 0.10, mug[1] - 0.10, 0.95], _hand(t).get("q")
+        # up first, as the hand is held (a real hand would knock the mug over; turning the open 15 cm gripper 10 cm from
+        # the mug swings its jaws into it), then turn the wrist up there, clear of everything
+        await _stream(t, "right", [cur[0], cur[1], 0.95], 1.6, grip=0.0, q=q0)
+        await _stream(t, "right", [cur[0], cur[1], 0.95], 1.0, grip=0.0, q=q)
+        mug = next((o["pos"] for o in t.state().get("scene_objects", []) if o["name"] == "mug"), mug)   # where it is now
         at = [mug[0], mug[1], max(mug[2], 0.765)]
         pre = [at[0] - 0.10, at[1], at[2] + 0.03]
-        cur = _hand(t).get("p") or pre
-        await _stream(t, "right", [cur[0], cur[1], 0.95], 1.6, grip=0.0, q=q)     # up first: a real hand would knock it over
         await _stream(t, "right", [pre[0], pre[1], 0.95], 2.0, grip=0.0, q=q)
         await _stream(t, "right", pre, 1.6, grip=0.0, q=q)
         await _stream(t, "right", at, 2.0, grip=0.0, q=q)
