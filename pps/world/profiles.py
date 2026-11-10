@@ -77,10 +77,14 @@ LEGGED_NOTE = ("Physics: manipulation runs with the base welded in place and the
 
 
 # bodies whose contact pick & place isn't reliable yet with physics on: listed as experimental (physics only), with why
-# (xArm7, iiwa14, Apollo and TidyBot left this list in v1 P0b: >= 9/10 in scripts/bench_grasp.py)
+# (xArm7, iiwa14 and Apollo left this list in v1 P0b: >= 9/10 on both tasks in scripts/bench_grasp.py)
 _PICK = "contact pick & place isn't reliable with this gripper yet"
 STRETCH = (f"{_PICK}: the SG3's fingers are hinged and close at an angle, with the rubber tips on soft hinges, so a block "
            "or a mug is twisted out of the grip as they close (it needs a parallel, spring-loaded SG3 finger model).")
+TIDYBOT = ("contact pick & place of small blocks isn't reliable yet (8 in 10): the mug is picked and placed reliably, but "
+           "on the way to a block next to the mug the Kinova's forearm can bump the mug into it (the planner keeps only "
+           "the gripper and wrist clear of objects), and the 2F-85's fingertips then close on a block that is pressed "
+           "against the mug and it slips out.")
 SPOT = ("contact pick & place of the mug isn't reliable with this gripper yet: blocks are picked and placed reliably, but "
         "the mug is held by its rim between the moving "
         "finger and the fixed jaw, and the bulky jaw ends up inside the mug and drags it along when the hand lifts after "
@@ -176,7 +180,7 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         {"x": -0.30, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "pinch_site"}, "home", "mobile",
         ("pick_place", "reach", "follow_path", "drive_base"), base_joints=("joint_x", "joint_y", "joint_th"), base_cost=1.0,
         freeze=("driver", "coupler", "spring", "follower"), prompt="pps/world/prompts/tidybot.md",
-        physics={"payload": 4.0, "grip": {"right": _native("fingers_actuator", 0, 255, ("left_pad", "left_follower"), ("right_pad", "right_follower"), 0.085, axis=(1, 0, 0), boost=0.115)}}),
+        physics={"payload": 4.0, "experimental": TIDYBOT, "grip": {"right": _native("fingers_actuator", 0, 255, ("left_pad", "left_follower"), ("right_pad", "right_follower"), 0.085, axis=(1, 0, 0), boost=0.115)}}),
     RobotProfile(
         "spot", "Boston Dynamics Spot with arm", "quadruped_arm", EX + "boston_dynamics_spot/spot_arm.xml",
         {"x": -0.35, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "EE"}, "home", "legged",

@@ -66,9 +66,19 @@ def trial(rt, tk, obj, target, rng, verbose=False):
     t0 = pl.d.time
     palm = rt.path["palm"]
     ref, drift, wob = None, 0.0, 0.0           # in-hand stability while carried: drift (mm) and turn (deg) vs the hand
+    trace, last = os.environ.get("PC_BENCH_TRACE"), -1.0     # (debugging: a timeline of the trial)
     while tk.task["status"] == "running" and pl.d.time - t0 < LIMIT:
         rt.step(DT)
         tk.tick()
+        if trace and pl.d.time - last >= float(trace):
+            last = pl.d.time
+            role = tk.role(palm)
+            tcp = rt.data.site_xpos[rt.palm_sid[palm]]
+            ta, tb = pl.touching(role, name)
+            print(f"      t={pl.d.time - t0:5.2f} i={rt.path['i'] if rt.path else '-'} ph={(tk.ph or {}).get('phase')} "
+                  f"cmd={pl.grip[role]['cmd']} ctrl={pl.grip[role].get('ctrl', 0):.3f} obj-tcp={np.round((tk.mug_center(name) - tcp) * 100, 1)} "
+                  f"lag={np.linalg.norm(tcp - rt.data.mocap_pos[rt.hands_mid[palm]]) * 100:.1f}cm touch={int(ta)}{int(tb)} "
+                  f"held={tk.holding.get(palm)} obj={np.round(tk.mug_center(name)[:2] * 100, 1)} oc={sorted({pl._label(x) for x in pl.object_contacts(name)})}", flush=True)
         h = tk.held.get(palm)
         if h is not None and tk.ph is None and pl.d.time - h["t0"] > 0.3:
             R = rt.data.site_xmat[rt.palm_sid[palm]].reshape(3, 3)

@@ -804,7 +804,8 @@ class Tasks:
 
     def _regrasp_aim(self):
         """Physics, above a grasp: if the object has moved since the plan (nudged, or drooping in the other hand during a
-        handover), the way down follows it, by up to 5 cm (the robot looks before it reaches in)."""
+        handover, or bumped by the arm on its way), the way down follows it, by up to 8 cm (the robot looks before it
+        reaches in)."""
         path = self.rt.path
         if not path or path.get("anchor") is None:
             return
@@ -814,7 +815,7 @@ class Tasks:
             return
         pts = np.array(path["pts"], float)
         delta = self.obj_pos(name) + self.obj_mat(name) @ local - pts[gk]
-        if not 1e-4 < float(np.linalg.norm(delta)) < 0.05:
+        if not 1e-4 < float(np.linalg.norm(delta)) < 0.08:
             return
         w = np.zeros(len(pts))
         w[i + 1:gk + 1] = 1.0

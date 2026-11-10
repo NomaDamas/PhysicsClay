@@ -70,7 +70,7 @@ makes them free bodies with mass and friction (same names), adds grippers / serv
   alternative. Without `to` / `between_arms`, `handover` stays the co-presence handover to the person. Agent tool
   `handover_arms`; plan card with the steps.
 * With physics (V1 P0) every body but H2 does a real contact pick & place except where its note says otherwise (Stretch
-  3: the SG3 fingers; Spot: the mug by its rim); per-robot results in `docs/V1.md` "P0 as built" and
+  3: the SG3 fingers; Spot: the mug by its rim; TidyBot: small blocks 8/10); per-robot results in `docs/V1.md` "P0 as built" and
   `scripts/bench_grasp.py`. Physics-only profile tuning lives in `RobotProfile.physics` (gripper pads, servo stiffness,
   physics home pose, contact excludes, a riser under a mount: `mount.z`).
 
