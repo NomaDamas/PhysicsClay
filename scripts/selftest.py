@@ -207,13 +207,25 @@ async def main():
     await send(type="spatial_model", name="mediapipe"); await pump(0.4)
     check("spatial model switch", st["spatial"]["model"] == "mediapipe")
     await send(type="spatial_model", name="yolo-seg"); await pump(0.3)
+    for _ in range(10):
+        await ws.send_bytes(b"\x10" + jpg); await pump(0.07)
+    ci = st.get("cam_in") or {}
+    check("state.cam_in: a browser camera streaming, with its fps", ci.get("fps", 0) > 3 and ci.get("mobile") is False, str(ci))
+    async with s.get(BASE + "/phone") as r:
+        body = await r.text()
+        check("/phone serves the phone camera page", r.status == 200 and "getUserMedia" in body, f"{r.status} {len(body)}B")
+    async with s.get(BASE + "/phone/info") as r:
+        info = await r.json()
+        check("/phone/info gives the https address for the QR code", info.get("https_port") == HTTPS and str(info.get("url", "")).startswith("https://"), str(info))
+    async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test, quiet fallback."}, headers={"X-OpenAI-Key": ""}) as r:
+        check("/tts never answers with an error status (204 = use the browser voice)", r.status in (200, 204), f"{r.status} {r.headers.get('X-TTS', '')}")
     if OFFLINE:
         for name in ("OpenAI TTS endpoint", "Gemini REST proxy reaches Google", "server reports Gemini key"):
             skip(name, "offline: needs an API key and the network")
     else:
         async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test."}) as r:
             b = await r.read()
-            check("OpenAI TTS endpoint", r.status == 200 and len(b) > 1000, f"{r.status} {len(b)}B")
+            check("OpenAI TTS endpoint", r.status == 200 and len(b) > 1000, f"{r.status} {r.headers.get('X-TTS', '')} {len(b)}B")
 
         async def gemini_rest():
             async with s.post(BASE + "/gemini/rest/gemini-3.8-flash:generateContent", json={"contents": [{"parts": [{"text": "Reply OK"}]}]}) as r:

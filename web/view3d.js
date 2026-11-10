@@ -149,15 +149,40 @@ function frameScene(g) {
 function reload() { // robot body switched: /scene.json changed
   loadGen++; clearTimeout(retryTimer);
   if (scene) { const old = scene.getObjectByName("geoms"); if (old) { scene.remove(old); old.traverse((o) => { if (o.material) o.material.dispose(); if (o.geometry) o.geometry.dispose(); }); } }
-  geomObjs.clear(); meshCache.clear(); sceneState = "idle"; needs = true;
+  geomObjs.clear(); meshCache.clear(); floors.length = 0; sceneState = "idle"; needs = true;
   if (root && isActive) loadScene();
 }
+// Stage colours follow the app theme (CSS tokens --stage-bg / --stage-floor / --stage-grid / --stage-grid2).
+let hemi = null;
+const floors = [];
+function themeColors() {
+  const cs = getComputedStyle(document.documentElement), c = (k, d) => (cs.getPropertyValue(k) || "").trim() || d;
+  return { bg: c("--stage-bg", "#f5f5f7"), floor: c("--stage-floor", "#eceef2"), grid: c("--stage-grid", "#c4c7cf"), grid2: c("--stage-grid2", "#dcdfe5"),
+    dark: document.documentElement.dataset.theme === "dark" };
+}
+function makeGrid(z, t) {
+  const grid = new THREE.GridHelper(14, 56, new THREE.Color(t.grid), new THREE.Color(t.grid2)); grid.rotation.x = Math.PI / 2; grid.position.z = z + 0.001;
+  return grid;
+}
+function applyTheme() {
+  if (!scene) return;
+  const t = themeColors();
+  scene.background = new THREE.Color(t.bg); scene.fog.color.set(t.bg);
+  if (hemi) { hemi.groundColor.set(t.dark ? 0x3a3c44 : 0xd9dbe2); hemi.intensity = t.dark ? 1.0 : 1.15; }
+  for (const f of floors) {
+    f.pl.material.color.set(t.floor);
+    if (f.grid) { f.g.remove(f.grid); f.grid.geometry.dispose(); f.grid.material.dispose(); }
+    f.grid = makeGrid(f.z, t); f.g.add(f.grid);
+  }
+  needs = true;
+}
 function floor(gm) {
-  const g = new THREE.Group(), z = isXYZ(gm.pos) ? gm.pos[2] : 0;
+  const g = new THREE.Group(), z = isXYZ(gm.pos) ? gm.pos[2] : 0, t = themeColors();
   g.userData.floor = true;            // P2b: hidden in passthrough (MR), where the real floor is
-  const pl = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshStandardMaterial({ color: 0xeceef2, roughness: 0.95 }));
+  const pl = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshStandardMaterial({ color: new THREE.Color(t.floor), roughness: 0.95 }));
   pl.position.z = z; pl.receiveShadow = true; g.add(pl);
-  const grid = new THREE.GridHelper(14, 56, 0xc4c7cf, 0xdcdfe5); grid.rotation.x = Math.PI / 2; grid.position.z = z + 0.001; g.add(grid);
+  const grid = makeGrid(z, t); g.add(grid);
+  floors.push({ g, pl, grid, z });
   return g;
 }
 function applyPoses() {
@@ -218,9 +243,70 @@ const CAMS = { stage: [[1.9, -1.3, 1.15], [0.1, 0, 0.65]], orbit: [[2.6, 1.8, 2.
   reset: [[2.0, -1.6, 1.7], [0.3, 0, 0.75]], top: [[0.52, -0.001, 3.0], [0.52, 0, 0.74]],
   front: [[2.6, 0, 1.05], [0.45, 0, 0.82]], side: [[0.5, -2.5, 0.98], [0.5, 0, 0.84]],
 };
-function camPreset(k) {
+function camPreset(k, ms = 380) {
   const c = CAMS[k] || CAMS.reset; if (!camera) return; needs = true;
-  camera.position.set(...c[0]); orbit.target.set(...c[1]); camera.up.set(0, 0, 1); orbit.update();
+  zoomGoal = null; camera.up.set(0, 0, 1);
+  flyTo(new THREE.Vector3(...c[0]), new THREE.Vector3(...c[1]), ms);
+}
+// Smooth camera move (presets, focus on a proposed path). Any user input (wheel, drag) cancels it.
+let flyAnim = 0;
+function cancelFly() { if (flyAnim) { cancelAnimationFrame(flyAnim); flyAnim = 0; } }
+function flyTo(p1, t1, ms) {
+  cancelFly();
+  const p0 = camera.position.clone(), t0 = orbit.target.clone(), start = performance.now();
+  const step = (now) => {
+    const u = ms > 0 ? Math.min(1, (now - start) / ms) : 1, e = u * u * (3 - 2 * u);
+    camera.position.lerpVectors(p0, p1, e); orbit.target.lerpVectors(t0, t1, e); orbit.update(); needs = true;
+    flyAnim = u < 1 ? requestAnimationFrame(step) : 0;
+  };
+  if (ms > 0) flyAnim = requestAnimationFrame(step); else step(start);
+}
+
+// ------------------------------------------------------------------ wheel / pinch zoom
+// We zoom ourselves instead of OrbitControls: three r160 scales each wheel step by 1 / (devicePixelRatio | 0), which is
+// 1/0 on a page zoomed below 100 % on a standard display (every notch slams to the min or max distance: "two steps")
+// and half speed on Retina. Here a step is proportional to the wheel distance in CSS px (line / page deltas
+// normalised), the same on every display, eased over a few frames, and centred on the point under the pointer.
+const ZOOM = { min: 0.2, max: 8, perPx: 0.0011, pinchPerPx: 0.012, maxStep: 0.6, tau: 70 };
+let zoomGoal = null;                 // {r, t}: the distance and orbit target the camera eases toward
+const wheelCaptures = [];            // feature modules (a trajectory handle under the pointer) may take the wheel
+function wheelPx(ev) {
+  const k = ev.deltaMode === 1 ? 18 : ev.deltaMode === 2 ? (root && root.clientHeight) || 600 : 1;
+  return ev.deltaY * k;
+}
+function onWheel(ev) {
+  if (!renderer || ev.target !== renderer.domElement) return;       // panels over the stage keep their own wheel
+  if (wheelCaptures.some((fn) => { try { return fn({ ev, hit: tableHit(ev) }) === true; } catch (e) { console.error(e); return false; } })) {
+    ev.preventDefault(); ev.stopPropagation(); return;
+  }
+  ev.preventDefault(); ev.stopPropagation();                      // OrbitControls' own (broken) wheel zoom never runs
+  if (!orbit.enabled) return;
+  cancelFly();
+  const step = Math.max(-ZOOM.maxStep, Math.min(ZOOM.maxStep, wheelPx(ev) * (ev.ctrlKey ? ZOOM.pinchPerPx : ZOOM.perPx)));
+  zoomAt(Math.exp(step), ev);
+}
+// Scale the camera distance by f (>1 = out), keeping the point under the pointer where it is on screen.
+function zoomAt(f, ev) {
+  if (!camera) return;
+  const r0 = zoomGoal ? zoomGoal.r : camera.position.distanceTo(orbit.target);
+  const t0 = zoomGoal ? zoomGoal.t.clone() : orbit.target.clone();
+  const r1 = Math.min(ZOOM.max, Math.max(ZOOM.min, r0 * f)), s = r1 / r0;
+  let t1 = t0;
+  if (ev && Math.abs(s - 1) > 1e-6) {
+    raycaster.setFromCamera(ndc(ev), camera);
+    const p = new THREE.Vector3(), plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -t0.z);
+    if (raycaster.ray.intersectPlane(plane, p) && p.distanceTo(t0) < 2.5 * r0) t1 = p.clone().add(t0.clone().sub(p).multiplyScalar(s));
+  }
+  zoomGoal = { r: r1, t: t1 }; needs = true;
+}
+function easeZoom(dt) {
+  if (!zoomGoal) return false;
+  const a = 1 - Math.exp(-dt / ZOOM.tau), off = camera.position.clone().sub(orbit.target), r = off.length();
+  orbit.target.lerp(zoomGoal.t, a);
+  const nr = r + (zoomGoal.r - r) * a, done = Math.abs(nr - zoomGoal.r) < 1e-4 && orbit.target.distanceTo(zoomGoal.t) < 1e-4;
+  camera.position.copy(orbit.target).addScaledVector(off.normalize(), done ? zoomGoal.r : nr);
+  if (done) { orbit.target.copy(zoomGoal.t); zoomGoal = null; }
+  return true;
 }
 function clearAll() { clearLocal(); send({ type: "clear" }); }
 
@@ -310,6 +396,7 @@ function captured(type, ev) {
   return captures.some((fn) => { try { return fn({ type, ev, hit }) === true; } catch (e) { console.error(e); return false; } });
 }
 function onDown(ev) {
+  cancelFly();                                                     // grabbing the view stops a fly-to
   if (captured("down", ev)) { orbit.enabled = false; down = null; return; }
   gizmoPress = !!(tc.dragging || tc.axis); down = { x: ev.clientX, y: ev.clientY, b: ev.button };
 }
@@ -370,7 +457,7 @@ function buildUi(container) {
       <button type="button" class="seg-btn" data-cam="orbit">Orbit</button>
       <button type="button" class="seg-btn" data-cam="top">Top</button>
       <button type="button" class="seg-btn" data-cam="side">Side</button>
-      <button type="button" class="seg-btn" data-cam="reset" aria-label="Reset view">↺</button>
+      <button type="button" class="seg-btn" data-cam="reset" aria-label="Reset view" title="Reset view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg></button>
     </div>
     <div class="v3d-msg" hidden></div>`;
   msgEl = container.querySelector(".v3d-msg"); listEl = container.querySelector(".v3d-list");
@@ -412,9 +499,10 @@ function mount(container) {
   scene = new THREE.Scene(); scene.background = new THREE.Color(0xf5f5f7); scene.fog = new THREE.Fog(0xf5f5f7, 7, 16);
   camera = new THREE.PerspectiveCamera(42, 4 / 3, 0.02, 60); camera.up.set(0, 0, 1); camera.position.set(2.0, -1.6, 1.7);
   orbit = new OrbitControls(camera, renderer.domElement); orbit.target.set(0.3, 0, 0.75); orbit.enableDamping = true; orbit.dampingFactor = 0.12;
-  orbit.enableRotate = orbit.enablePan = orbit.enableZoom = true; orbit.screenSpacePanning = true;
-  orbit.minDistance = 0.25; orbit.maxDistance = 9; orbit.update(); // free orbit (left drag) · pan (right drag / shift) · zoom (wheel)
-  const hemi = new THREE.HemisphereLight(0xffffff, 0xd9dbe2, 1.15); hemi.position.set(0, 0, 1); scene.add(hemi);
+  orbit.enableRotate = orbit.enablePan = orbit.enableZoom = true; orbit.screenSpacePanning = true;   // enableZoom: touch pinch
+  orbit.minDistance = ZOOM.min; orbit.maxDistance = ZOOM.max; orbit.update(); // orbit (left drag) · pan (right drag / shift) · zoom (wheel: onWheel)
+  root.addEventListener("wheel", onWheel, { capture: true, passive: false });
+  hemi = new THREE.HemisphereLight(0xffffff, 0xd9dbe2, 1.15); hemi.position.set(0, 0, 1); scene.add(hemi);
   const dir = new THREE.DirectionalLight(0xffffff, 1.9); dir.position.set(1.6, -1.8, 4.2); dir.castShadow = true;
   dir.shadow.mapSize.set(1024, 1024); Object.assign(dir.shadow.camera, { left: -1.6, right: 1.6, top: 1.6, bottom: -1.6, near: 0.5, far: 10 }); dir.shadow.bias = -0.0004;
   scene.add(dir, dir.target);
@@ -441,6 +529,7 @@ function mount(container) {
   cv.addEventListener("contextmenu", (e) => e.preventDefault());
   document.addEventListener("keydown", onKey, true);
   new ResizeObserver(resize).observe(root); resize();
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] }); applyTheme();
   renderHud(); renderServer();
   if (isActive) { loadScene(); startLoop(); }
 }
@@ -451,10 +540,13 @@ function resize() {
 }
 function startLoop() {
   if (loopOn) return; loopOn = true;
-  const tick = () => {
+  let last = performance.now();
+  const tick = (now) => {
     if (!isActive || !root) { loopOn = false; return; }
     if (renderer.xr && renderer.xr.isPresenting) { needs = true; requestAnimationFrame(tick); return; }   // P2b: web/xr.js renders in VR
-    if (orbit.update() || needs) { needs = false; renderer.render(scene, camera); } // render on demand (cheap when idle)
+    const dt = Math.min(100, Math.max(0, (now || performance.now()) - last)); last = now || performance.now();
+    const zoomed = easeZoom(dt);
+    if (orbit.update() || needs || zoomed) { needs = false; renderer.render(scene, camera); } // render on demand (cheap when idle)
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -484,7 +576,6 @@ function layer(name) {
 }
 function capture(fn) { captures.push(fn); return () => { const i = captures.indexOf(fn); if (i >= 0) captures.splice(i, 1); }; }
 // Fly the camera to frame these world points, keeping the current viewing direction (P2: a proposed trajectory).
-let flyAnim = 0;
 function focus(points, opts = {}) {
   if (!camera || !orbit) return;
   const box = new THREE.Box3();
@@ -493,19 +584,28 @@ function focus(points, opts = {}) {
   const c = box.getCenter(new THREE.Vector3()), r = Math.max(opts.min || 0.22, box.getSize(new THREE.Vector3()).length() / 2);
   const vf = THREE.MathUtils.degToRad(camera.fov), hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
   const dir = new THREE.Vector3().subVectors(camera.position, orbit.target).normalize();
-  const dist = Math.min(6, r / Math.sin(Math.min(vf, hf) / 2) * (opts.pad || 1.1));
-  const p0 = camera.position.clone(), t0 = orbit.target.clone(), p1 = c.clone().addScaledVector(dir, dist);
-  const start = performance.now(), T = opts.ms == null ? 450 : opts.ms;
-  cancelAnimationFrame(flyAnim);
-  const step = (now) => {
-    const u = T > 0 ? Math.min(1, (now - start) / T) : 1, e = u * u * (3 - 2 * u);
-    camera.position.lerpVectors(p0, p1, e); orbit.target.lerpVectors(t0, c, e); orbit.update(); needs = true;
-    if (u < 1) flyAnim = requestAnimationFrame(step);
-  };
-  flyAnim = requestAnimationFrame(step);
+  const dist = Math.min(ZOOM.max, Math.max(ZOOM.min, r / Math.sin(Math.min(vf, hf) / 2) * (opts.pad || 1.1)));
+  zoomGoal = null;
+  flyTo(c.clone().addScaledVector(dir, dist), c, opts.ms == null ? 450 : opts.ms);
+}
+// Is every point on screen (inside a margin) and is the group big enough to work with? (callers skip a fly-to then)
+function inView(points, margin = 0.08, minSpan = 0.18) {
+  if (!camera) return false;
+  let x0 = 1, x1 = -1, y0 = 1, y1 = -1, n = 0;
+  for (const p of arr(points)) {
+    if (!isXYZ(p)) continue;
+    const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera); n++;
+    if (v.z > 1 || Math.abs(v.x) > 1 - margin || Math.abs(v.y) > 1 - margin) return false;
+    x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y);
+  }
+  return n > 0 && Math.max(x1 - x0, y1 - y0) / 2 >= minSpan;
 }
 window.PC3D = {
-  mount, setState, active, reload, editPath, get editing() { return editing; }, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE, focus,
+  mount, setState, active, reload, editPath, get editing() { return editing; }, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE, focus, inView,
+  // wheel: fn({ev, hit}) -> true to take the wheel (a trajectory handle under the pointer); zoomBy(f) scales the distance (tests, keys)
+  wheelCapture(fn) { wheelCaptures.push(fn); return () => { const i = wheelCaptures.indexOf(fn); if (i >= 0) wheelCaptures.splice(i, 1); }; },
+  zoomBy(f) { zoomAt(f, null); }, get zoomLimits() { return { min: ZOOM.min, max: ZOOM.max }; },
+  get orbitTarget() { return orbit ? orbit.target : null; }, get distance() { return camera && orbit ? camera.position.distanceTo(orbit.target) : null; },
   get scene() { return scene; }, get camera() { return camera; }, get mounted() { return !!root; }, get isActive() { return isActive; },
   get renderer() { return renderer; }, get geoms() { return scene ? scene.getObjectByName("geoms") : null; }, get sceneReady() { return sceneState === "ready"; },
   tableHit: (ev) => (renderer ? tableHit(ev) : null),

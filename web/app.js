@@ -116,10 +116,8 @@
     if (changed("speed", sp)) { el.speed.textContent = `×${sp.toFixed(sp < 1 && sp * 10 % 1 ? 2 : 1)}`; el.speed.hidden = Math.abs(sp - 1) < 1e-3; }
     const stats = connected ? `${num(s.fps).toFixed(0)} fps · IK ${Math.round(num(s.ik_hz))} Hz` : "offline · reconnecting";
     if (changed("stats", stats + connected)) { el.statsTxt.textContent = stats; el.stats.dataset.conn = connected ? "on" : "off"; }
-    if (changed("src", s.source || "")) el.source.textContent = s.source || "—";
     el.robotEmpty.hidden = el.robotImg.classList.contains("live");
-    el.camEmpty.hidden = el.camImg.classList.contains("live");
-    el.noPose.hidden = !gotState || !!s.pose_ok || s.source === "synthetic" || !el.camImg.classList.contains("live");
+    renderCam(s);
 
     const following = mode === "FOLLOW";
     el.followBadge.hidden = !following; camPanel.classList.toggle("following", following);
@@ -199,8 +197,6 @@
     const dm = s.demo && typeof s.demo === "object" ? s.demo : null;
     const dtxt = dm ? `DEMO · ${num(dm.step)}/${num(dm.total)} · ${dm.title || dm.name || ""}` : "";
     if (changed("demo", dtxt)) { $("demoPill").hidden = !dm; $("demoPillTxt").textContent = dtxt; }
-    const pcOn = !!phoneCam.stream;
-    if (changed("pcam", [pcOn, s.source])) { $("phoneCamChip").hidden = !pcOn; $("phoneCamChip").classList.toggle("live", s.source === "phone"); }
     const rlab = (arr(s.robots).find((r) => r && r.id === s.robot) || {}).label || (s.robot === "ur5e" ? "UR5e arm" : s.robot ? "Unitree G1" : "");
     if (rlab && changed("rlab", rlab)) $("robotLabel").textContent = rlab;
     if (el.dlg.open) renderSettingsLive();
@@ -318,8 +314,16 @@
     });
   }
   function drawCam() {
-    const { ctx, W, H } = fitCanvas(el.camOv), c = contentRect(el.camImg, W, H, 960, 540), s = state;
-    if (!el.camImg.classList.contains("live")) return;
+    const self = selfView(), s = state;
+    const { ctx, W, H } = fitCanvas(el.camOv);
+    // overlays use the server frame's uv: they map onto the live self-view the same way (both mirrored, same framing)
+    let c = self ? contentRect({ naturalWidth: self.videoWidth, naturalHeight: self.videoHeight }, W, H, 640, 480) : contentRect(el.camImg, W, H, 960, 540);
+    if (self) {   // the server's 16:9 frame holds the video with bars (camTick): place that frame around the video
+      const f = frameFit(self.videoWidth, self.videoHeight, 16, 9), sx = c.w / f.w, sy = c.h / f.h;
+      c = { x: c.x - f.x * sx, y: c.y - f.y * sy, w: 16 * sx, h: 9 * sy };
+    }
+    if (!self && !el.camImg.classList.contains("live")) return;
+    if (camOffState(s)) return;                       // camera off: no synthetic stand-in skeleton under the "Camera is off" card
     const P = (uv) => [c.x + uv[0] * c.w, c.y + uv[1] * c.h];
     for (const o of arr(s.objects)) {
       if (!Array.isArray(o) || o.length < 6) continue;
@@ -427,11 +431,24 @@
     schedule();
   }
   ov.addEventListener("pointerup", endPointer); ov.addEventListener("pointercancel", endPointer);
+  // Server-rendered views: wheel deltas are summed (never dropped) and sent at most every 30 ms as one proportional
+  // zoom factor, the same rate per pixel as the 3D stage. The Robot eye is the robot's own head camera: no zoom.
+  let wheelLog = 0, wheelT = 0, eyeHint = false;
   ov.addEventListener("wheel", (ev) => {
-    if (state.view !== "orbit" && state.view !== "stage") return; ev.preventDefault();
-    const now = performance.now(); if (now - lastCam < 30) return; lastCam = now;
-    send({ type: "camera", zoom: Math.exp(Math.max(-200, Math.min(200, ev.deltaY)) * 0.0015) });
+    if (state.view !== "orbit" && state.view !== "stage") {
+      if (!eyeHint && Math.abs(ev.deltaY) > 0) { eyeHint = true; toast("The Robot eye is the robot's own camera. Switch to 3D to zoom and look around."); }
+      return;
+    }
+    ev.preventDefault();
+    const px = ev.deltaY * (ev.deltaMode === 1 ? 18 : ev.deltaMode === 2 ? (el.robotFrame.clientHeight || 600) : 1);
+    wheelLog += Math.max(-0.6, Math.min(0.6, px * (ev.ctrlKey ? 0.012 : 0.0011)));
+    if (!wheelT) wheelT = setTimeout(flushWheel, Math.max(0, 30 - (performance.now() - lastCam)));
   }, { passive: false });
+  function flushWheel() {
+    wheelT = 0; if (!wheelLog) return;
+    const f = Math.exp(Math.max(-1.2, Math.min(1.2, wheelLog))); wheelLog = 0; lastCam = performance.now();
+    send({ type: "camera", zoom: f });
+  }
   function centroid() { let x = 0, y = 0; for (const p of pointers.values()) { x += p[0]; y += p[1]; } const n = pointers.size || 1; return [x / n, y / n]; }
   const round3 = (x) => Math.round(x * 1000) / 1000;
   function decimate(pts, max) { if (pts.length <= max) return pts; const out = []; for (let i = 0; i < max; i++) out.push(pts[Math.round(i * (pts.length - 1) / (max - 1))]); return out; }
@@ -709,7 +726,7 @@
     if (k === "user") { addLine("user", text); showOverlay("subtitle", text, 3000); return; }
     const d = addLine("robot", text);
     if (k === "vision") {
-      d.classList.add("vision"); const tag = document.createElement("span"); tag.className = "vtag"; tag.textContent = "VISION";
+      d.classList.add("vision"); const tag = document.createElement("span"); tag.className = "vtag"; tag.textContent = "Vision";
       d.querySelector(".txt").prepend(tag);
     }
     speak(text, "en-US");
@@ -795,56 +812,203 @@
     // may take it here; if it doesn't, the UX 2.0 rule parser below runs as before.
     if (!window.dispatchEvent(new CustomEvent("pc-intent", { detail: { text, source }, cancelable: true }))) return;
     const it = parseIntent(text);
-    if (!it) { const msg = "I didn't catch an action. Try “put the mug on the right”, “follow me”, or tap the table."; addLine("robot", msg); speak(msg); return; }
-    if (it[0] === "clear") { clearAll(); speak("Cleared."); return; }
+    const ko = /[\uac00-\ud7a3]/.test(text);   // answer in the language the person used
+    if (!it) {
+      const msg = ko ? "무엇을 할지 잘 못 알아들었어요. “머그를 오른쪽에 놓아줘”, “따라 해”처럼 말하거나 테이블을 눌러 보세요."
+        : "I didn't catch an action. Try “put the mug on the right”, “follow me”, or tap the table.";
+      addLine("robot", msg); speak(msg); return;
+    }
+    if (it[0] === "clear") { clearAll(); speak(ko ? "지웠어요." : "Cleared."); return; }
     const r = await runTask(it[0], it[1], source);
     if (r && r.message) { addLine("robot", r.message); speak(r.message); }
   }
   el.cmdForm.addEventListener("submit", (ev) => { ev.preventDefault(); const v = el.cmd.value; el.cmd.value = ""; handleText(v, "typed"); });
 
-  const ttsQ = []; let ttsBusy = false, ttsOK = true;
+  // ------------------------------------------------------------------ the robot's voice
+  // 1. OpenAI TTS through the server (/tts: the visitor's key in X-OpenAI-Key, or the server's own outside BYOK) for any
+  //    language. The server answers 204 when there is no working key, so the browser never logs an error; we then stop
+  //    asking for this visit (until a key is saved) and use 2.
+  // 2. The browser's speechSynthesis with the best voice of the language (detected per line: Hangul -> ko-KR): a voice
+  //    picked in Settings → Voice, else Premium / Enhanced / Neural / Google voices, never novelty voices. Markdown,
+  //    emoji and symbols are not read out; long text is spoken sentence by sentence (Chrome cuts long utterances).
+  const TTS_VOICE = { robot: "coral", narrator: "alloy" };
+  const voicePref = {
+    get on() { return LS.get("pc.speak", "1") === "1" && new URLSearchParams(location.search).get("nospeak") !== "1"; },
+    get(lang) { return LS.get("pc.voice." + lang.slice(0, 2), ""); },
+    set(lang, uri) { LS.set("pc.voice." + lang.slice(0, 2), uri || ""); },
+  };
+  function speechLang(text) {
+    const t = String(text || "");
+    if (/[가-힣ㄱ-ㆎ]/.test(t)) return "ko-KR";
+    if (/[぀-ヿ]/.test(t)) return "ja-JP";
+    if (/[一-鿿]/.test(t)) return "zh-CN";
+    return /^ko/i.test(settings.lang) && !/[a-z]{3,}/i.test(t) ? "ko-KR" : "en-US";
+  }
+  function speechText(text) {
+    return String(text || "")
+      .replace(/```[\s\S]*?```/g, " ").replace(/`([^`]*)`/g, "$1")
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/https?:\/\/\S+/g, " ").replace(/(^|\s)#{1,6}\s+/g, "$1")
+      .replace(/(\*\*|__|\*|_|~~)(?=\S)([^*_~]+?)\1/g, "$2").replace(/[*_~#>|]+/g, " ")
+      .replace(/\p{Extended_Pictographic}|\p{Regional_Indicator}|[\u{FE0F}\u{200D}\u{20E3}]/gu, "")
+      .replace(/\s*(→|->|⇒|➜|·|•|—|–)\s*/g, ", ").replace(/×\s?(\d)/g, "times $1").replace(/(\d)\s?×\s?(\d)/g, "$1 by $2")
+      .replace(/[“”«»„]/g, "\"").replace(/[‘’]/g, "'").replace(/[()[\]{}<>]/g, " ")
+      .replace(/\s*,\s*(,\s*)+/g, ", ").replace(/\s+([,.!?])/g, "$1").replace(/^[\s,.]+/, "").replace(/\s{2,}/g, " ").trim();
+  }
+  function speechChunks(text, max = 180) {
+    const parts = String(text).match(/[^.!?。！？]+[.!?。！？]+["')\]]*\s*|[^.!?。！？]+$/g) || [String(text)];
+    const out = [];
+    for (let p of parts) {
+      p = p.trim(); if (!p) continue;
+      while (p.length > max) { let k = p.lastIndexOf(", ", max); if (k < max / 3) k = p.lastIndexOf(" ", max); if (k < max / 3) k = max; out.push(p.slice(0, k + 1).trim()); p = p.slice(k + 1).trim(); }
+      if (out.length && out[out.length - 1].length + p.length < 90) out[out.length - 1] += " " + p; else if (p) out.push(p);
+    }
+    return out;
+  }
+  // voices: ranked per language; novelty voices never chosen automatically
+  const NOVELTY = /\b(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Deranged|Good News|Hysterical|Jester|Junior|Organ|Pipe Organ|Ralph|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Kathy|Princess|Grandma|Grandpa|Eddy|Flo|Reed|Rocko|Sandy|Shelley)\b/i;
+  const GOOD = /\b(Yuna|Sora|Ava|Zoe|Samantha|Allison|Susan|Joelle|Evan|Nathan|Noelle|Tom|Serena|Daniel|Karen|Moira|Tessa|Aria|Jenny|Guy|SunHi|InJoon|Hyunsu|Heami)\b/i;
+  function voiceScore(v, lang) {
+    const L = lang.toLowerCase(), vl = String(v.lang || "").toLowerCase().replace("_", "-");
+    if (!vl.startsWith(L.slice(0, 2))) return -1;
+    const n = v.name || "";
+    let s = vl === L ? 12 : 4;
+    if (/premium/i.test(n)) s += 60; else if (/enhanced/i.test(n)) s += 50;
+    if (/neural|natural|online/i.test(n)) s += 45;
+    if (/^Google\b/.test(n)) s += 35;
+    if (/siri/i.test(n)) s += 30;
+    if (GOOD.test(n)) s += 15;
+    if (/compact|eloquence/i.test(n)) s -= 25;
+    if (NOVELTY.test(n)) s -= 200;
+    if (v.default && s > 0) s += 2;
+    return s;
+  }
+  let voicesCache = [];
+  function allVoices() {
+    if (!("speechSynthesis" in window)) return [];
+    try { const v = speechSynthesis.getVoices(); if (v && v.length) voicesCache = v; } catch (e) { /* noop */ }
+    return voicesCache;
+  }
+  function rankedVoices(lang) {
+    return allVoices().map((v) => [voiceScore(v, lang), v]).filter((x) => x[0] >= 0).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
+  }
+  function pickVoice(lang) {
+    const want = voicePref.get(lang), all = allVoices();
+    if (want) { const v = all.find((x) => x.voiceURI === want); if (v) return v; }
+    const r = rankedVoices(lang); return r.length && voiceScore(r[0], lang) > 0 ? r[0] : r[0] || null;
+  }
+  if ("speechSynthesis" in window) {
+    allVoices();
+    try { speechSynthesis.addEventListener("voiceschanged", () => { allVoices(); if (el.dlg.open) renderVoiceSettings(); }); } catch (e) { /* old browsers */ }
+  }
+
+  const ttsQ = []; let ttsBusy = false, ttsOK = true, ttsWarned = false;
   function ttsNext() {
     if (ttsBusy || !ttsQ.length) return;
     const item = ttsQ.shift(); ttsBusy = true;
     const text = item.text;
     const a = new Audio();
     let settled = false, guard = 0, url = "";
-    const settle = (fallback, bad) => {
+    const settle = (fallback) => {
       if (settled) return; settled = true; clearTimeout(guard);
-      if (bad) ttsOK = false;
-      if (fallback) { try { a.pause(); } catch (e) { /* noop */ } speakBrowser(text); }
+      if (fallback) { try { a.pause(); } catch (e) { /* noop */ } speakBrowser(text, item.lang); }
       if (url) URL.revokeObjectURL(url);
       ttsBusy = false; ttsNext();
     };
     guard = setTimeout(() => settle(false), 30000); // a stalled stream must not block the queue
-    a.onended = () => settle(false); a.onerror = () => settle(true, true);
-    // BYOK: the visitor's OpenAI key rides in a header (never in the URL); no key -> cached lines or the browser voice
+    a.onended = () => settle(false); a.onerror = () => { ttsOK = false; settle(true); };
+    // BYOK: the visitor's OpenAI key rides in a header (never in the URL)
     const k = settings.openaiKey;
-    fetch("/tts?voice=" + item.voice + "&text=" + encodeURIComponent(text), { headers: k ? { "X-OpenAI-Key": k } : {} })
-      .then((r) => (r.ok ? r.blob() : Promise.reject(new Error("tts " + r.status))))
-      .then((b) => { if (settled) return; url = URL.createObjectURL(b); a.src = url; return a.play(); })
-      .catch(() => settle(true, !k && !state.byok ? true : false));
+    fetch("/tts?voice=" + item.voice + "&lang=" + item.lang + "&text=" + encodeURIComponent(text), { headers: k ? { "X-OpenAI-Key": k } : {} })
+      .then((r) => {
+        if (r.status === 200 && /audio/.test(r.headers.get("Content-Type") || "")) return r.blob();
+        ttsOK = false;                                          // 204: no working key here; the browser voice from now on
+        if (k && !ttsWarned) { ttsWarned = true; toast("Your OpenAI key didn't work for the voice, so the browser's voice speaks. Check it in Settings → AI."); }
+        return null;
+      })
+      .then((b) => { if (settled) return; if (!b) { settle(true); return; } url = URL.createObjectURL(b); a.src = url; return a.play(); })
+      .catch(() => { ttsOK = false; settle(true); });
   }
   function speak(msg, lang, voice) {
-    if (live.session || !msg) return;
-    if (ttsOK && (!lang || String(lang).startsWith("en"))) {
-      const short = String(msg).split(/(?<=[.!?])\s/).slice(0, 2).join(" ");
+    if (live.session || !msg || !voicePref.on) return;
+    const text = speechText(msg); if (!text) return;
+    const L = /^[a-z]{2}(-|$)/i.test(String(lang || "")) && !/[가-힣]/.test(text) && !/^en/i.test(String(lang)) ? lang : speechLang(text);
+    if (ttsOK) {
+      const short = speechChunks(text).slice(0, 3).join(" ");
       if (ttsQ.length > 2) ttsQ.splice(0, ttsQ.length - 2);
-      ttsQ.push({ text: short, voice: voice || "coral" }); ttsNext(); return;
+      ttsQ.push({ text: short, voice: voice || TTS_VOICE.robot, lang: L }); ttsNext(); return;
     }
-    speakBrowser(msg, lang);
+    speakBrowser(text, L);
   }
-  function speakBrowser(msg, lang) {
+  // browser voice: sentence-sized utterances in order; a new line waits for the current sentence, older backlog is dropped
+  const sayQ = []; let saying = false;
+  function speakBrowser(msg, lang, opts = {}) {
     if (!("speechSynthesis" in window) || !msg) return;
-    try {
-      speechSynthesis.cancel();
-      const short = String(msg).split(/(?<=[.!?])\s/).slice(0, 2).join(" ");
-      const u = new SpeechSynthesisUtterance(short); u.lang = lang || settings.lang; u.rate = 1.05;
-      if (rec.on) { rec.paused = true; try { rec.r.stop(); } catch (e) { /* noop */ } }
-      u.onend = u.onerror = () => { if (rec.on && rec.paused) { rec.paused = false; startRecognizer(); } };
-      speechSynthesis.speak(u);
-    } catch (e) { /* noop */ }
+    const text = speechText(msg); if (!text) return;
+    const L = lang || speechLang(text), v = opts.voice || pickVoice(L);
+    if (opts.now) { sayQ.length = 0; try { speechSynthesis.cancel(); } catch (e) { /* noop */ } saying = false; }
+    if (sayQ.length > 4) sayQ.splice(0, sayQ.length - 2);
+    for (const c of speechChunks(text).slice(0, 6)) sayQ.push({ text: c, lang: v ? v.lang : L, voice: v });
+    sayNext();
   }
+  function sayNext() {
+    if (saying || !sayQ.length) return;
+    const it = sayQ.shift(); saying = true;
+    try {
+      const u = new SpeechSynthesisUtterance(it.text);
+      u.lang = it.lang; if (it.voice) u.voice = it.voice;
+      u.rate = /^ko/i.test(it.lang) ? 1.0 : 1.0; u.pitch = 1.0; u.volume = 1.0;
+      if (rec.on && !rec.paused) { rec.paused = true; try { rec.r.stop(); } catch (e) { /* noop */ } }
+      let done = false;
+      const end = () => {
+        if (done) return; done = true; saying = false;
+        if (sayQ.length) { sayNext(); return; }
+        if (rec.on && rec.paused) { rec.paused = false; startRecognizer(); }
+      };
+      u.onend = u.onerror = end;
+      setTimeout(end, 4000 + it.text.length * 120);          // some engines never fire onend
+      speechSynthesis.speak(u);
+    } catch (e) { saying = false; }
+  }
+  // Settings → Voice: a voice per language + Test
+  const VOICE_LANGS = [["en-US", "English", "Hi, I'm your robot. Tell me, point at, or show me what to do."],
+    ["ko-KR", "한국어", "안녕하세요. 말로 하거나, 가리키거나, 직접 보여 주세요."]];
+  function renderVoiceSettings() {
+    const host = $("voicePickers"); if (!host) return;
+    if (!host.dataset.built) {
+      host.dataset.built = "1";
+      host.innerHTML = VOICE_LANGS.map(([L, name]) => `<label class="field voice-row"><span>${name}</span><span class="set-row">
+        <select data-voice-lang="${L}" aria-label="${name} voice"></select>
+        <button type="button" class="btn sm" data-voice-test="${L}">Test</button></span></label>`).join("");
+      host.querySelectorAll("select[data-voice-lang]").forEach((sel) => sel.addEventListener("change", () => { voicePref.set(sel.dataset.voiceLang, sel.value); }));
+      host.querySelectorAll("[data-voice-test]").forEach((b) => b.addEventListener("click", () => {
+        const L = b.dataset.voiceTest, sel = host.querySelector(`select[data-voice-lang="${L}"]`), text = VOICE_LANGS.find((x) => x[0] === L)[2];
+        voicePref.set(L, sel.value);
+        if (ttsOK && (settings.openaiKey || $("setOpenAI").value.trim() || state.tts_server)) { ttsOK = true; speak(text, L); }
+        else speakBrowser(text, L, { now: true });
+      }));
+    }
+    host.querySelectorAll("select[data-voice-lang]").forEach((sel) => {
+      const L = sel.dataset.voiceLang, list = rankedVoices(L), best = list[0], want = voicePref.get(L);
+      const sig = list.map((v) => v.voiceURI).join("|") + "#" + want;
+      if (sel.dataset.sig === sig) return; sel.dataset.sig = sig;
+      sel.innerHTML = "";
+      sel.add(new Option(best ? `Automatic: ${best.name}` : "Automatic (no voice installed for this language)", ""));
+      for (const v of list) sel.add(new Option(`${v.name}${v === best ? " (recommended)" : ""}${v.localService === false ? " · online" : ""}`, v.voiceURI));
+      sel.value = list.some((v) => v.voiceURI === want) ? want : "";
+    });
+    const note = $("voiceNote");
+    if (note) {
+      const ko = rankedVoices("ko-KR")[0], en = rankedVoices("en-US")[0];
+      const plain = (v) => !v || !/premium|enhanced|neural|natural|google|online/i.test(v.name);
+      note.textContent = (settings.openaiKey || state.tts_server) && ttsOK ? "The robot uses OpenAI's natural voice; the browser voices below are the fallback."
+        : "The robot speaks with your browser's voices. For a natural voice add an OpenAI key under AI." + (plain(ko) || plain(en)
+          ? (/Mac/.test(navigator.platform) ? " On a Mac, better voices are free: System Settings → Accessibility → Spoken Content → System voice → Manage Voices (e.g. Yuna Premium, Ava Premium)." : " Chrome's Google voices or your system's natural voices sound best.") : "");
+    }
+    if ($("setSpeak")) $("setSpeak").checked = voicePref.on;
+  }
+  if ($("setSpeak")) $("setSpeak").addEventListener("change", () => { LS.set("pc.speak", $("setSpeak").checked ? "1" : "0"); if (!$("setSpeak").checked) { sayQ.length = 0; try { speechSynthesis.cancel(); } catch (e) { /* noop */ } } });
+  window.PCVoice = { speechText, speechChunks, speechLang, voiceScore, pickVoice: (l) => pickVoice(l), get ttsOK() { return ttsOK; } };
 
   // ------------------------------------------------------------------ quick actions
   const acts = {
@@ -1195,7 +1359,7 @@
     $("setSendCam").checked = settings.sendCam; $("setSendRobot").checked = settings.sendRobot; $("setLang").value = settings.lang;
     $("geminiStatus").textContent = G() ? "gemini.js loaded · " + (settings.key ? "own key set → Talk uses Gemini Live" : state.server_gemini ? "server key → Talk uses Gemini Live (proxy)" : "no key → Talk uses browser speech") : "gemini.js not loaded → Talk uses browser speech";
     $("serverGemini").hidden = !state.server_gemini; $("byokNote").hidden = !state.byok;
-    $("setPhoneCam").checked = phoneCam.want; renderSettingsLive();
+    $("setPhoneCam").checked = phoneCam.want; renderSettingsLive(); renderVoiceSettings();
     if (typeof el.dlg.showModal === "function") el.dlg.showModal(); else el.dlg.setAttribute("open", "");
     if (section) { const sec = $(section); if (sec) { sec.scrollIntoView({ block: "start" }); sec.classList.add("flash"); setTimeout(() => sec.classList.remove("flash"), 1200); } }
   }
@@ -1217,7 +1381,6 @@
     addLine("sys", on ? "Mock AI on: offline gestures + scripted replies." : "Mock AI off.");
   });
   [$("settingsBtn"), $("settingsBtnM")].forEach((b) => b && b.addEventListener("click", () => openSettings()));
-  if ($("camBtnM")) $("camBtnM").addEventListener("click", () => openSettings("secCamera"));
   if ($("demoBtn")) $("demoBtn").addEventListener("click", () => openSettings("secDemo"));
   function renderSettingsLive() {
     const rb = String(state.robot || "g1");
@@ -1255,39 +1418,63 @@
   }
 
   // ------------------------------------------------------------------ this device's camera -> server (0x10 + JPEG)
+  // Off by default. "Turn on camera" starts it right away (the browser asks once); you see yourself at once (the local
+  // video, mirrored like the server's frame) while the server tracks your pose on the frames and puts you across the
+  // table. "Use my phone" shows a QR code for /phone (a light page that only streams its camera, over https).
   const IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (window.matchMedia && matchMedia("(pointer: coarse)").matches);
   const phoneCam = {
     get want() { return LS.get("pc.phoneCam", "0") === "1"; },
     facing: LS.get("pc.facing", IS_PHONE ? "environment" : "user"),
-    stream: null, video: null, canvas: null, timer: 0, busy: false, status: "off", sent: 0, gen: 0,
+    stream: null, video: null, canvas: null, timer: 0, busy: false, status: "off", error: "", sent: 0, gen: 0,
+  };
+  const CAM_ERR = {
+    insecure: "This page isn't https, so the browser won't share a camera here. Use “Use my phone”, or open the https address the server prints.",
+    NotAllowedError: "Camera blocked. Allow it from the camera icon in the address bar (site settings), then try again.",
+    SecurityError: "Camera blocked by the browser's settings for this site. Allow it, then try again.",
+    NotFoundError: "No camera found on this computer. Try “Use my phone”.",
+    OverconstrainedError: "No camera found on this computer. Try “Use my phone”.",
+    NotReadableError: "Another app is using the camera. Close it (Zoom, FaceTime, Meet…), then try again.",
+    AbortError: "The camera didn't start. Try again.",
   };
   async function camStart() {
-    camStop(); const gen = phoneCam.gen;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phoneCam.status = "camera not available (needs https)"; schedule(); return; }
+    camStop(); const gen = phoneCam.gen; phoneCam.error = "";
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phoneCam.status = "camera not available (needs https)"; phoneCam.error = CAM_ERR.insecure; schedule(); return; }
     phoneCam.status = "starting…"; schedule();
     try {
-      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: phoneCam.facing, width: 640 }, audio: false });
+      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: phoneCam.facing, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
       if (!phoneCam.want || gen !== phoneCam.gen) { st.getTracks().forEach((t) => t.stop()); return; }
       phoneCam.stream = st;
       const v = phoneCam.video || (phoneCam.video = Object.assign(document.createElement("video"), { muted: true, playsInline: true, autoplay: true }));
       v.setAttribute("playsinline", ""); v.srcObject = st; try { await v.play(); } catch (e) { /* autoplay */ }
       if (gen !== phoneCam.gen) return; // stopped / restarted while starting (camStop already stopped the tracks)
+      const self = $("camSelf"); if (self) { self.srcObject = st; self.play().catch(() => { /* autoplay policy: the frame still shows */ }); }
       phoneCam.canvas = phoneCam.canvas || document.createElement("canvas");
-      phoneCam.timer = setInterval(camTick, 100);
+      phoneCam.timer = setInterval(camTick, 66);                // ~15 fps (the server keeps the newest frame)
+      st.getVideoTracks().forEach((t) => t.addEventListener("ended", () => { if (gen === phoneCam.gen) { camStop(); phoneCam.error = "The camera stopped (unplugged or taken by another app)."; schedule(); } }));
       phoneCam.status = `streaming · ${phoneCam.facing === "user" ? "front" : "back"}`; schedule();
-    } catch (e) { if (gen === phoneCam.gen) { phoneCam.status = "camera blocked: " + (e && e.name || e); schedule(); } }
+    } catch (e) {
+      if (gen !== phoneCam.gen) return;
+      const name = (e && e.name) || String(e);
+      phoneCam.status = "camera blocked: " + name; phoneCam.error = CAM_ERR[name] || `The camera didn't start (${name}).`; schedule();
+    }
   }
   function camStop() {
     phoneCam.gen++; clearInterval(phoneCam.timer); phoneCam.timer = 0;
     if (phoneCam.stream) phoneCam.stream.getTracks().forEach((t) => t.stop());
+    const self = $("camSelf"); if (self) { try { self.pause(); } catch (e) { /* noop */ } self.srcObject = null; }
     phoneCam.stream = null; phoneCam.status = "off"; schedule();
+  }
+  function camEnable(on) {
+    LS.set("pc.phoneCam", on ? "1" : "0"); $("setPhoneCam").checked = on;
+    if (on) camStart(); else { camStop(); phoneCam.error = ""; }
   }
   function camTick() {
     const v = phoneCam.video; if (phoneCam.busy || !v || v.readyState < 2 || !v.videoWidth) return;
     if (!ws || ws.readyState !== 1 || ws.bufferedAmount > 300000) return;
-    const w = Math.min(640, v.videoWidth), h = Math.round(w * v.videoHeight / v.videoWidth), cv = phoneCam.canvas;
-    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-    cv.getContext("2d").drawImage(v, 0, 0, w, h);
+    // the server works on 16:9 frames (it stretches whatever arrives): fit the picture inside 640×360, black bars
+    const cv = phoneCam.canvas, W = 640, H = 360, f = frameFit(v.videoWidth, v.videoHeight, W, H);
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const g = cv.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.drawImage(v, f.x, f.y, f.w, f.h);
     phoneCam.busy = true;
     cv.toBlob(async (blob) => {
       try {
@@ -1298,16 +1485,79 @@
       } catch (e) { /* noop */ } finally { phoneCam.busy = false; }
     }, "image/jpeg", 0.6);
   }
-  $("setPhoneCam").addEventListener("change", () => {
-    LS.set("pc.phoneCam", $("setPhoneCam").checked ? "1" : "0");
-    if (phoneCam.want) camStart(); else camStop();
-  });
+  // where a vw×vh picture sits when fitted inside a W×H box (contain)
+  function frameFit(vw, vh, W, H) { const k = Math.min(W / vw, H / vh), w = vw * k, h = vh * k; return { x: (W - w) / 2, y: (H - h) / 2, w, h }; }
+  // the live self-view: this device's camera while it streams
+  function selfView() { const v = $("camSelf"); return v && phoneCam.stream && !v.hidden && v.videoWidth ? v : null; }
+  const realCam = (s) => s.source === "phone" || s.source === "webcam" || s.source === "video";
+  const camOffState = (s) => !phoneCam.stream && !realCam(s || {});
+  const SRC_LABEL = { phone: "browser camera", webcam: "server webcam", video: "video", synthetic: "no camera" };
+  function renderCam(s) {
+    const off = camOffState(s), starting = /starting/.test(phoneCam.status), cin = s.cam_in && typeof s.cam_in === "object" ? s.cam_in : null;
+    const self = $("camSelf"), selfOn = !!(phoneCam.stream && self);
+    if (self && self.hidden === selfOn) self.hidden = !selfOn;
+    el.camImg.style.visibility = selfOn ? "hidden" : "";
+    el.camEmpty.hidden = !off;
+    if (off) {
+      const t = starting ? "Starting your camera…" : phoneCam.error ? "Camera didn't start" : "Camera is off";
+      const sub = starting ? "Allow the camera if your browser asks." : phoneCam.error || "Turn it on so the robot can see you, where you point and your gestures.";
+      if ($("camEmptyTitle").textContent !== t) $("camEmptyTitle").textContent = t;
+      if ($("camEmptySub").textContent !== sub) $("camEmptySub").textContent = sub;
+      $("camBtnM").disabled = starting;
+      el.camEmpty.dataset.state = starting ? "starting" : phoneCam.error ? "error" : "off";
+    }
+    $("camOffBtn").hidden = !phoneCam.stream;
+    el.noPose.hidden = !gotState || off || !!s.pose_ok || s.source === "video";
+    const src = phoneCam.stream ? "this computer" : s.source === "phone" ? (cin && cin.mobile ? "phone" : "browser camera") : SRC_LABEL[s.source] || s.source || "—";
+    if (changed("src", src)) el.source.textContent = src;
+    // camera chip in the column head: who streams, and how fast
+    const chip = $("phoneCamChip"), txt = phoneCam.stream ? (cin ? `Camera on · ${Math.round(cin.fps)} fps` : "Camera on")
+      : cin && cin.mobile ? `Phone connected · ${Math.round(cin.fps)} fps` : cin ? `Camera · ${Math.round(cin.fps)} fps` : "";
+    if (changed("pcam", txt)) { chip.hidden = !txt; chip.textContent = txt; chip.classList.toggle("live", !!txt); }
+    if ($("phoneDlg").open) renderPhone(s);
+  }
+  $("setPhoneCam").addEventListener("change", () => camEnable($("setPhoneCam").checked));
+  $("camBtnM").addEventListener("click", () => camEnable(true));
+  $("camOffBtn").addEventListener("click", () => { camEnable(false); toast("Camera off."); });
   $("camFlip").addEventListener("click", () => {
     phoneCam.facing = phoneCam.facing === "user" ? "environment" : "user"; LS.set("pc.facing", phoneCam.facing);
     if (phoneCam.want) camStart(); else phoneCam.status = `off · next: ${phoneCam.facing === "user" ? "front" : "back"}`;
     schedule();
   });
   if (phoneCam.want) camStart();
+
+  // ------------------------------------------------------------------ "Use my phone": QR code for /phone
+  let phoneInfo = null;
+  async function openPhone() {
+    if (el.dlg.open) el.dlg.close("cancel");
+    if (phoneCam.stream) { camEnable(false); toast("Your phone will be the camera: this computer's camera is off."); }
+    const dlg = $("phoneDlg"), qr = $("phoneQr");
+    if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
+    try { const r = await fetch("/phone/info", { cache: "no-store" }); phoneInfo = r.ok ? await r.json() : null; } catch (e) { phoneInfo = null; }
+    // a server reached over its LAN address already knows the right host; prefer the address bar's host then
+    const host = /^(localhost|127\.|\[?::1)/.test(location.hostname) ? phoneInfo && phoneInfo.ip : location.hostname;
+    const url = phoneInfo && phoneInfo.https_port ? `https://${host}:${phoneInfo.https_port}/phone` : null;
+    $("phoneNoHttps").hidden = !!url || !phoneInfo; qr.hidden = !url;
+    const a = $("phoneUrl"); a.textContent = url || (phoneInfo ? "https is off on this server" : "couldn't reach the server"); a.href = url || "#";
+    $("phoneCopy").hidden = !url;
+    qr.innerHTML = "";
+    if (url && window.PCQR) { try { qr.innerHTML = window.PCQR.svg(url, { ecl: "M", border: 2, title: "Scan to open " + url }); } catch (e) { qr.textContent = ""; } }
+    renderPhone(state);
+  }
+  function renderPhone(s) {
+    const cin = s && s.cam_in && typeof s.cam_in === "object" ? s.cam_in : null, p = $("phoneStatus");
+    const st = cin && cin.mobile ? "live" : "wait";
+    const txt = st === "live" ? `Phone connected · streaming ${Math.round(cin.fps)} fps${s.pose_ok ? " · the robot sees you" : " · step back so your upper body is in view"}`
+      : "Waiting for the phone… (open the link on it and tap Start camera)";
+    p.dataset.state = st;
+    const span = p.querySelector("span"); if (span.textContent !== txt) span.textContent = txt;
+  }
+  $("camPhoneBtn").addEventListener("click", openPhone);
+  $("camPhoneBtn2").addEventListener("click", openPhone);
+  $("phoneCopy").addEventListener("click", async () => {
+    const t = $("phoneUrl").textContent;
+    try { await navigator.clipboard.writeText(t); toast("Link copied."); } catch (e) { toast(t); }
+  });
 
   // feed collapse (mobile mostly)
   el.feedToggle.addEventListener("click", () => {
@@ -1336,7 +1586,11 @@
   });
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => document.getElementById("pip").addEventListener(t, (ev) => ev.stopPropagation()));
   window.PC = { toast: (m) => toast(m), ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, setStageView, get view3d() { return view3d; }, get state() { return state; },
-    get camVideo() { return phoneCam.stream && phoneCam.video && phoneCam.video.readyState >= 2 ? phoneCam.video : null; } };   // this device's camera (web/ui/watch.js runs hand tracking on it)
+    get camVideo() { return phoneCam.stream && phoneCam.video && phoneCam.video.readyState >= 2 ? phoneCam.video : null; },   // this device's camera (web/ui/watch.js runs hand tracking on it)
+    // camera controls for feature modules (gestures guide, help): start/stop this device's camera, open the phone QR
+    camera: { start: () => camEnable(true), stop: () => camEnable(false), phone: () => openPhone(), get on() { return !!phoneCam.stream; },
+      get status() { return phoneCam.status; }, get error() { return phoneCam.error; } },
+    speak: (text, lang) => speak(text, lang) };
   if (P3()) mount3d();
 
   setTalk("off");

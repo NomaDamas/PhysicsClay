@@ -632,3 +632,18 @@ Method, math and results: `docs/calibration.md`.
   seconds}], params: {name: value} | null, per_param: [{name, value, default, lo, hi, unit, what, spread}], fit:
   {err_before, err_after, seconds, evals, budget, stages, logs: [{probe, before, after}]} | null, applied, defaults}`.
 - Agent tool `calibrate_here {budget?}` (physics only): probe + fit + apply, answers with `state.calib.summary`.
+
+## v11 · UX polish: camera in, phone camera, voice, view zoom
+
+* **Camera in.** `state.cam_in = {fps, mobile} | null`: a browser camera is streaming `0x10 + JPEG` frames to the server
+  (fps over the last 2 s; `mobile` when the last sender's user agent is a phone or tablet). The laptop UI shows
+  "Camera on · 15 fps" or "Phone connected · 15 fps" from it.
+* **Phone camera page.** `GET /phone` serves `web/phone.html`, a light page that only streams the phone's camera over
+  the same `/ws` (getUserMedia needs https on a phone: run with `--https`). `GET /phone/info` →
+  `{ip, port, https_port | null, url | null}` (`url` = `https://<lan-ip>:<https_port>/phone`, shown as a QR code).
+* **Voice.** `GET /tts?voice&lang&text` answers `200 audio/mpeg`, or `204` with `X-TTS: no-key | key-rejected |
+  upstream-<status> | upstream-unreachable` when there is no working OpenAI key (the browser then speaks with its own
+  voice; 204 keeps the console clean). `voice` is one of OpenAI's voices (default `coral`); a key OpenAI rejected is
+  not retried for the rest of the run. `state.tts_server`: the server has an OpenAI key (never with `--byok`).
+* **Server views zoom.** `{type: "camera", zoom}`: one proportional factor per message (the browser sums wheel deltas
+  and sends at most every 30 ms); the server clamps it to 0.25–4 and the distance to 0.35–8 m.

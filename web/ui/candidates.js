@@ -8,7 +8,7 @@
   const U = window.PCUI; if (!U) return;
 
   const SWATCH = { red: "#d6453a", green: "#1f8f55", blue: "#1da8e5" };
-  const ICON_Q = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.6"/><path d="M12 17h.01"/></svg>';
+  const ICON_Q = '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.6"/><path d="M12 17h.01"/></svg>';
 
   const css = document.createElement("style");
   css.textContent = `
@@ -19,31 +19,31 @@
 @keyframes cand-in { from { opacity: 0; transform: translateY(-6px); } }
 .cand-head { display: flex; gap: 10px; align-items: flex-start; }
 .cand-head svg { flex: none; color: var(--hot, #f59145); margin-top: 1px; }
-.cand-kicker { margin: 0 0 2px; font: 600 var(--fs-xs, 12px)/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--hot, #f59145); }
+.cand-kicker { margin: 0 0 2px; font: 600 var(--fs-xs, 12px)/1.2 var(--sans); color: var(--hot-ink); }
 .cand-q { margin: 0; font-weight: 500; }
 .cand-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
-.cand-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px 0 6px; border-radius: 999px;
+.cand-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px 0 6px; border-radius: var(--r-ctl, 10px);
   border: 1px solid var(--line2); background: var(--field, #f5f5f7); color: var(--t1); font: 500 var(--fs-md, 15px) var(--sans); cursor: pointer;
   transition: background var(--fast, .14s), border-color var(--fast, .14s); }
 .cand-chip:hover, .cand-chip.is-hot { background: var(--accent-tint); border-color: var(--accent); }
 .cand-chip:focus-visible, .cand-cancel:focus-visible, .cand-badge:focus-visible { outline: none; box-shadow: var(--ring); }
 .cand-num { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--on-accent, #fff);
   font: 600 15px var(--sans); }
-.cand-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--idle); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.cand-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--idle); box-shadow: inset 0 0 0 1px var(--line2); }
 .cand-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cand-hint { color: var(--t2); font-size: var(--fs-sm, 13px); }
-.cand-cancel { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border-radius: 999px; border: 0;
+.cand-cancel { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border-radius: var(--r-ctl, 10px); border: 0;
   background: transparent; color: var(--t2); font: 500 var(--fs-sm, 13px) var(--sans); cursor: pointer; }
 .cand-cancel:hover { background: var(--active); color: var(--t1); }
 .cand-eye { position: absolute; inset: 0; pointer-events: none; z-index: 5; }
 .cand-eye[hidden] { display: none; }
 .cand-badge { position: absolute; left: 0; top: 0; pointer-events: auto; width: 44px; height: 44px; margin: -60px 0 0 -22px; padding: 0;
-  border-radius: 50%; border: 3px solid var(--raised, #fff); background: var(--accent); color: var(--on-accent, #fff); font: 700 18px var(--sans);
+  border-radius: 50%; border: 3px solid var(--raised, #fff); background: var(--accent); color: var(--on-accent, #fff); font: 600 18px var(--sans);
   box-shadow: var(--shadow-md); cursor: pointer; display: grid; place-items: center; animation: cand-in var(--med, .26s) var(--ease, ease) both; }
 .cand-badge::after { content: ""; position: absolute; left: 50%; top: 100%; width: 2px; height: 14px; margin-left: -1px; background: var(--accent); }
 .cand-badge:hover, .cand-badge.is-hot { background: var(--hot, #f59145); }
 .cand-badge:hover::after, .cand-badge.is-hot::after { background: var(--hot, #f59145); }
-.cand-ring { position: absolute; left: 0; top: 0; width: 34px; height: 16px; margin: -8px 0 0 -17px; border-radius: 50%;
+.cand-ring { position: absolute; left: 0; top: 0; width: 34px; height: 16px; margin: -8px 0 0 -16px; border-radius: 50%;
   border: 2px solid var(--accent); pointer-events: none; animation: cand-pulse 1.4s ease-in-out infinite; }
 @keyframes cand-pulse { 50% { transform: scale(1.25); opacity: .55; } }
 .card[data-status="asking"] { --sc: var(--hot); }

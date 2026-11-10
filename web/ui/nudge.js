@@ -6,7 +6,7 @@
 (function () {
   const P = window.PCUI; if (!P) return;
   const STEP = 0.02;
-  const svg = (body, size = 20) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const svg = (body, size = 20) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ARROW = {
     up: '<path d="M12 19V5"/><path d="m6 11 6-6 6 6"/>', down: '<path d="M12 5v14"/><path d="m6 13 6 6 6-6"/>',
     left: '<path d="M19 12H5"/><path d="m11 6-6 6 6 6"/>', right: '<path d="M5 12h14"/><path d="m13 6 6 6-6 6"/>',
@@ -27,7 +27,7 @@
 .pcn[hidden] { display: none; }
 .pcn.pcn-fixed { position: fixed; right: 16px; bottom: 120px; }
 .pcn-head { display: flex; align-items: baseline; gap: 6px; margin: 0 2px 8px; }
-.pcn-head b { font-weight: 650; } .pcn-head span { color: var(--t2, rgba(29,29,31,.62)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pcn-head b { font-weight: 600; } .pcn-head span { color: var(--t2, rgba(29,29,31,.62)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pcn-grid { display: grid; grid-template-columns: repeat(3, 44px) 8px 44px; grid-template-rows: repeat(3, 44px); gap: 4px;
   grid-template-areas: ". u . . zu" "l c r . ." ". d . . zd"; justify-content: center; }
 .pcn button { display: inline-flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; border-radius: 14px; border: 1px solid var(--line, rgba(0,0,0,.1));

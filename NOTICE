@@ -96,3 +96,8 @@ MediaPipe models (models/, downloaded from storage.googleapis.com/mediapipe-mode
 
     The HUD and path-drawing interaction were inspired by CozyClay (https://github.com/HaD0Yun/CozyClay,
     AGPL-3.0). No CozyClay code is included in this repository.
+
+Design references
+    The interface's design pass (quiet chrome, one accent, 4 px spacing rhythm, sentence-case labels, radius by
+    size, no decorative glows or loops) followed the "unslop" method by Damir Sokolovsky
+    (https://heydamir.design/unslop, @heydamir), CC BY 4.0. No unslop images or code are included.

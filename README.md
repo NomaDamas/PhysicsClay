@@ -64,6 +64,10 @@ make run ARGS="--https --mock"     # + https://<lan-ip>:8443 so a phone can use 
 make run ARGS="--byok"             # public deployment: visitors bring their own API keys (see SECURITY.md)
 ./scripts/web.sh                   # the old launcher: same server on 8777, opens the browser
 ```
+New here? Press **?** (Help) in the top bar for the in-app guide, or read [docs/USAGE.md](docs/USAGE.md)
+([한국어](docs/USAGE.ko.md)): the three ways to instruct, the plan card, tools, Watch modes, camera and phone camera,
+gestures, packs, datasets, VR, safety and example commands.
+
 Open Settings in the page and paste a Gemini API key, which is stored only in the browser. You can also put server
 keys in `.env`, which is never committed. Without a key, the page falls back to browser speech recognition and a
 rule parser.

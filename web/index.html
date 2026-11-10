@@ -4,28 +4,36 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#fbfbfd">
+<meta name="color-scheme" content="light dark">
 <title>PhysicsClay · New Generation of interactive prompt for Physical AI</title>
+<link rel="icon" href="data:,">
+<script>/* theme before first paint: Settings → Appearance stores pc.theme = system | light | dark (web/shell.js) */
+(function () { var m = "system"; try { m = localStorage.getItem("pc.theme") || "system"; } catch (e) { /* storage blocked */ }
+  var dark = m === "dark" || (m !== "light" && !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches));
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light"); document.documentElement.setAttribute("data-theme-pref", m); })();</script>
 <link rel="stylesheet" href="/static/style.css">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="i-mic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
-  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></g></symbol>
-  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
-  <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M10.3 4.9 10.57 2.41h2.86l.27 2.49a7.3 7.3 0 0 1 2.11.88l1.96-1.58 2.03 2.03-1.58 1.96a7.3 7.3 0 0 1 .88 2.11l2.49.27v2.86l-2.49.27a7.3 7.3 0 0 1-.88 2.11l1.58 1.96-2.03 2.03-1.96-1.58a7.3 7.3 0 0 1-2.11.88l-.27 2.49h-2.86l-.27-2.49a7.3 7.3 0 0 1-2.11-.88l-1.96 1.58-2.03-2.03 1.58-1.96a7.3 7.3 0 0 1-.88-2.11l-2.49-.27v-2.86l2.49-.27a7.3 7.3 0 0 1 .88-2.11L4.2 6.23 6.23 4.2l1.96 1.58a7.3 7.3 0 0 1 2.11-.88z"/><circle cx="12" cy="12" r="3.1"/></g></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.85.85c0 1.75-2.45 2.1-2.45 3.75M12 17.1v.15"/></g></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></g></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></symbol>
-  <symbol id="i-cam" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.2" r="3.4"/></g></symbol>
-  <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 9l6 6 6-6"/></symbol>
-  <symbol id="i-send" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M13 6l6 6-6 6"/></symbol>
-  <symbol id="i-more" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></g></symbol>
-  <symbol id="i-video" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="m16 10.5 5-3v9l-5-3z"/></g></symbol>
-  <symbol id="i-x" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></symbol>
-  <symbol id="i-follow" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5.5" r="2"/><path d="M12 8v6m0 0-3 6m3-6 3 6M7 10.5l5-1.5 5 1.5"/></g></symbol>
-  <symbol id="i-reset" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></symbol>
-  <symbol id="i-export" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0-11-4 4m4-4 4 4M5 15v4h14v-4"/></symbol>
-  <symbol id="i-arm" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 20h8M9 20v-4l4-6 5 2M13 10l-2-5"/></symbol>
-  <symbol id="i-skill" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m16 15 4 2.5-4 2.5z"/></g></symbol>
+  <symbol id="i-cam" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.2" r="3.4"/></g></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></g></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="m16 10.5 5-3v9l-5-3z"/></g></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-follow" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5.5" r="2"/><path d="M12 8v6m0 0-3 6m3-6 3 6M7 10.5l5-1.5 5 1.5"/></g></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0-11-4 4m4-4 4 4M5 15v4h14v-4"/></symbol>
+  <symbol id="i-arm" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M5 20h8M9 20v-4l4-6 5 2M13 10l-2-5"/></symbol>
+  <symbol id="i-skill" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m16 15 4 2.5-4 2.5z"/></g></symbol>
 </svg>
 
 <header class="topbar">
@@ -56,7 +64,8 @@
     <span id="mockPill" class="chip mock-pill" title="Mock AI: offline gestures + scripted replies" hidden>Mock AI</span>
     <span id="demoPill" class="demo-pill" role="status" hidden><i></i><span id="demoPillTxt">Demo</span></span>
     <button id="demoBtn" class="pill-btn" type="button" title="Run the guided demo">Demo</button>
-    <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
+    <button id="helpBtn" class="icon-btn labelled" type="button" aria-label="Help: how to use PhysicsClay" title="How to use PhysicsClay" aria-haspopup="dialog"><svg aria-hidden="true"><use href="#i-help"/></svg><span class="btn-lbl">Help</span></button>
+    <button id="settingsBtn" class="icon-btn labelled" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog"><svg aria-hidden="true"><use href="#i-gear"/></svg><span class="btn-lbl">Settings</span></button>
   </div>
 </header>
 
@@ -66,23 +75,29 @@
     <div class="col-head">
       <h2 class="col-title">You</h2>
       <span class="grow"></span>
-      <span id="phoneCamChip" class="chip phone-cam-chip" title="This device's camera is the robot's view of you" hidden>Phone camera</span>
+      <span id="phoneCamChip" class="chip phone-cam-chip" title="The camera the robot sees you through" role="status" hidden></span>
       <span id="source" class="src-chip" title="Camera source">—</span>
     </div>
     <div class="panel cam" id="camPanel" aria-label="Your camera">
       <div class="frame cam-frame" id="camFrame">
         <img id="camImg" alt="Your camera" draggable="false">
+        <video id="camSelf" class="cam-self" muted playsinline autoplay hidden aria-label="You, from this computer's camera"></video>
         <canvas id="camOverlay" aria-hidden="true"></canvas>
         <div id="camEmpty" class="empty cam-empty">
-          <span>Camera is off</span>
-          <button id="camBtnM" class="btn sm cam-on" type="button">Turn on camera</button>
+          <span class="ce-title" id="camEmptyTitle">Camera is off</span>
+          <span class="ce-sub" id="camEmptySub">Turn it on so the robot can see you, where you point and your gestures.</span>
+          <div class="ce-btns">
+            <button id="camBtnM" class="cam-on" type="button"><svg aria-hidden="true"><use href="#i-cam"/></svg><span>Turn on camera</span></button>
+            <button id="camPhoneBtn" class="cam-on alt" type="button"><svg aria-hidden="true"><use href="#i-phone"/></svg><span>Use my phone</span></button>
+          </div>
         </div>
+        <button type="button" id="camOffBtn" class="cam-off-btn" title="Turn off this computer's camera" aria-label="Turn off camera" hidden><svg aria-hidden="true"><use href="#i-x"/></svg></button>
         <div class="cam-chips">
           <span id="followBadge" class="badge follow" hidden>Following you</span>
           <span id="recBadge" class="badge rec" hidden>REC 0.0s</span>
           <span id="gestureChip" class="ov-chip gesture-chip" hidden></span>
         </div>
-        <div id="noPose" class="toast" hidden>No person detected</div>
+        <div id="noPose" class="toast" hidden>I can't see you yet: step back so your upper body is in view</div>
         <div id="dropHint" class="drop-hint" hidden>Drop a video — the robot will imitate it</div>
         <div id="videoBar" class="video-bar" hidden><span id="videoName"></span><span class="vb-track"><span id="videoFill"></span></span><span id="videoPct"></span></div>
         <button type="button" id="videoBtn" class="cam-video-btn" title="Show a video: the robot imitates it"><svg aria-hidden="true"><use href="#i-video"/></svg><span>Show a video</span></button>
@@ -180,8 +195,8 @@
     <div class="plan-scroll">
       <div class="plan-slot" data-slot="plan">
         <article class="plan-idle" id="planIdle" data-shell="idle" aria-label="Nothing planned yet">
-          <p class="pi-title">Tell me, point, or show me.</p>
-          <p class="pi-sub">I'll show my plan here before I move.</p>
+          <p class="pi-title">Tell me, point, or show me</p>
+          <p class="pi-sub">I'll show my plan here before I move</p>
           <div class="pi-examples" role="group" aria-label="Examples">
             <button type="button" class="pi-ex" data-example="Put the mug on the right">“Put the mug on the right”</button>
             <button type="button" class="pi-ex" data-example="Stay away from the vase">“Stay away from the vase”</button>
@@ -257,6 +272,14 @@
   <form method="dialog" id="settingsForm">
     <header class="dlg-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" value="cancel" aria-label="Close settings"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
     <div class="dlg-body">
+      <section class="set-sec" id="secLook"><h3>Appearance</h3>
+        <div class="seg seg-lg" role="radiogroup" aria-label="Theme" id="themeSeg">
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="system" aria-checked="true" aria-pressed="true">System</button>
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="light" aria-checked="false" aria-pressed="false">Light</button>
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="dark" aria-checked="false" aria-pressed="false">Dark</button>
+        </div>
+        <small class="muted">System follows your computer's light or dark setting. Applies right away.</small>
+      </section>
       <section class="set-sec" id="secRobot"><h3>Robot</h3>
         <div class="seg seg-lg" role="group" aria-label="Robot body" id="robotSeg">
           <button type="button" class="seg-btn" data-robot="g1" aria-pressed="true">G1 humanoid</button>
@@ -266,7 +289,9 @@
       </section>
       <section class="set-sec" id="secCamera"><h3>Camera</h3>
         <label class="check"><input id="setPhoneCam" type="checkbox"><span>Use this device's camera</span></label>
-        <div class="set-row"><button type="button" class="btn sm" id="camFlip">Switch front / back</button><span id="camStatus" class="muted small"></span></div>
+        <div class="set-row"><button type="button" class="btn sm" id="camFlip">Switch front / back</button><button type="button" class="btn sm" id="camPhoneBtn2"><svg aria-hidden="true"><use href="#i-phone"/></svg>Use my phone instead…</button></div>
+        <small id="camStatus" class="muted" role="status"></small>
+        <small class="muted">Off by default. Frames go only to this PhysicsClay server, which runs pose tracking on them.</small>
       </section>
       <section class="set-sec" id="secSkills"><h3>Skills</h3>
         <div class="set-row">
@@ -320,10 +345,16 @@
         <label class="check"><input id="setSendCam" type="checkbox" checked><span>Send my camera to Gemini</span></label>
         <label class="check"><input id="setSendRobot" type="checkbox"><span>Send robot view to Gemini</span></label>
         <label class="check"><input id="setMock" type="checkbox"><span>Mock AI (offline demo: gestures + scripted replies)</span></label>
-        <label class="field"><span>Speech language (no-key fallback)</span>
+        <label class="field"><span>Talk language (speech recognition without a Gemini key)</span>
           <select id="setLang"><option value="en-US">English (en-US)</option><option value="ko-KR">한국어 (ko-KR)</option></select>
         </label>
         <p id="geminiStatus" class="muted small"></p>
+      </section>
+      <section class="set-sec" id="secVoice"><h3>Voice</h3>
+        <label class="check"><input id="setSpeak" type="checkbox" checked><span>Speak the robot's replies</span></label>
+        <div id="voicePickers" class="voice-pickers"></div>
+        <small id="voiceNote" class="muted"></small>
+        <small class="muted">The robot answers in the language you use: Korean in, Korean out.</small>
       </section>
       <section class="set-sec" id="secDemo"><h3>Demo</h3>
         <div class="set-row">
@@ -343,10 +374,32 @@
   </form>
 </dialog>
 
+<dialog id="phoneDlg" class="phone-dlg" aria-labelledby="phoneTitle">
+  <form method="dialog">
+    <header class="dlg-head"><h2 id="phoneTitle">Use your phone as the camera</h2><button class="icon-btn" value="cancel" aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <div class="dlg-body phone-body">
+      <div class="phone-qr-row">
+        <div class="qr-box" id="phoneQr" role="img" aria-label="QR code for the phone camera page"></div>
+        <ol class="phone-steps">
+          <li>Put the phone on the <b>same Wi-Fi</b> as this computer.</li>
+          <li><b>Scan the code</b> with the phone's camera, or open<br><a id="phoneUrl" class="phone-url" href="#" target="_blank" rel="noopener">…</a> <button type="button" class="btn sm ghost" id="phoneCopy">Copy</button></li>
+          <li>The phone warns that the connection isn't private: this server's certificate is self-signed. <b>Safari:</b> Show Details → visit this website. <b>Chrome:</b> Advanced → Proceed.</li>
+          <li>Tap <b>Start camera</b>, then prop the phone up facing you, 1–2 m away, upper body in view.</li>
+        </ol>
+      </div>
+      <p class="phone-warn" id="phoneNoHttps" hidden>Phones only share their camera over https, and this server is running without it. Restart it with <code>--https</code> (<code>scripts/run.sh</code> and <code>make run</code> do), then open this again.</p>
+      <p class="phone-status" id="phoneStatus" role="status" aria-live="polite"><i aria-hidden="true"></i><span>Waiting for the phone…</span></p>
+    </div>
+    <footer class="dlg-foot"><button class="btn primary" value="cancel">Done</button></footer>
+  </form>
+</dialog>
+
+<script src="/static/qr.js"></script>
 <script src="/static/gemini.js"></script>
 <script src="/static/app.js"></script>
 <script type="module" src="/static/view3d.js"></script>
 <script type="module" src="/static/xr.js"></script>
+<script src="/static/help-content.js"></script>
 <script src="/static/ui/core.js"></script>
 <script src="/static/shell.js"></script>
 </body>

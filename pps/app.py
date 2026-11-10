@@ -6,10 +6,12 @@ Browser talks to Gemini Live itself (key stays in the browser); intents arrive h
 Protocol: docs/PROTOCOL.md.   Run: .venv/bin/python -m pps.app [--video clip.mp4] [--objects] [--fake] [--https]
 """
 import argparse
+import collections
 import copy
 import os
 import asyncio
 import json
+import re
 import socket
 import ssl
 import subprocess
@@ -49,6 +51,8 @@ class Shared:
         self.lock = threading.Lock()
         self.cam = self.sim = self.pip = None
         self.phone = None          # (time, jpeg bytes) from a browser/phone camera
+        self.phone_ts = collections.deque(maxlen=64)   # arrival times of those frames (state.cam_in: fps)
+        self.phone_mobile = False  # the last sender was a phone / tablet (the /phone page or the app on a phone)
         self.state = "{}"
         self.fid = 0
         self.cmds = []
@@ -82,6 +86,7 @@ async def ws_handler(request):
     await ws.prepare(request)
     shared = request.app["shared"]
     shared.clients.add(ws)
+    mobile = bool(re.search(r"Android|iPhone|iPad|iPod|Mobile", request.headers.get("User-Agent", "")))
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
@@ -91,6 +96,8 @@ async def ws_handler(request):
                     pass
             elif msg.type == WSMsgType.BINARY and msg.data[:1] == b"\x10":
                 shared.phone = (time.time(), msg.data[1:])
+                shared.phone_ts.append(shared.phone[0])
+                shared.phone_mobile = mobile
             elif msg.type == WSMsgType.ERROR:
                 break
     finally:
@@ -98,23 +105,33 @@ async def ws_handler(request):
     return ws
 
 
+async def _send_frame(shared, ws, msgs):
+    try:
+        for m in msgs:
+            await (ws.send_str(m) if isinstance(m, str) else ws.send_bytes(m))
+    except Exception:
+        shared.clients.discard(ws)
+
+
 async def broadcaster(shared):
     last = -1
+    sending = {}   # ws -> the task still sending it a frame
     while True:
         await asyncio.sleep(1 / 30)
         cam, sim, state, fid = shared.get()
         if fid == last or cam is None:
             continue
         last = fid
+        msgs = (state, b"\x01" + cam, b"\x02" + sim) + (() if shared.pip is None else (b"\x03" + shared.pip,))
+        # Every client gets its own send task. A client that stops reading (a suspended phone tab, a page in the
+        # back/forward cache, a busy script) only skips frames until it reads again; it never holds up the others.
+        # (The websocket heartbeat closes the ones that never come back.)
         for ws in list(shared.clients):
-            try:
-                await ws.send_str(state)
-                await ws.send_bytes(b"\x01" + cam)
-                await ws.send_bytes(b"\x02" + sim)
-                if shared.pip is not None:
-                    await ws.send_bytes(b"\x03" + shared.pip)
-            except Exception:
-                shared.clients.discard(ws)
+            t = sending.get(ws)
+            if t is None or t.done():
+                sending[ws] = asyncio.ensure_future(_send_frame(shared, ws, msgs))
+        for ws in [w for w, t in sending.items() if w not in shared.clients and t.done()]:
+            del sending[ws]
 
 
 async def upload(request):
@@ -320,34 +337,69 @@ async def gemini_rest_proxy(request):
 TTS_DIR = ROOT / "recordings" / "tts"
 
 
+TTS_VOICES = {"alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse"}
+TTS_BAD_KEYS = set()   # sha1 of keys OpenAI rejected this run: don't ask again for every line
+
+
 async def tts_handler(request):
-    """OpenAI TTS with a disk cache; the browser plays the mp3 instead of the choppy built-in voice."""
+    """OpenAI TTS with a disk cache; the browser plays the mp3 instead of its built-in voice.
+    204 (not an error status) when there is no working key, so the browser falls back quietly to its own voice."""
     import hashlib
     text = (request.query.get("text") or "")[:600]
     voice = request.query.get("voice") or "coral"
+    voice = voice if voice in TTS_VOICES else "coral"
     if not text:
         raise web.HTTPNotFound()
     TTS_DIR.mkdir(parents=True, exist_ok=True)
     f = TTS_DIR / (hashlib.sha1((voice + "|" + text).encode()).hexdigest() + ".mp3")
     # BYOK: the visitor's own key comes in a header; it is used for this one request and never stored or logged
     key = (request.headers.get("X-OpenAI-Key") or "").strip() or openai_key()
-    if not f.exists() and not key:
-        raise web.HTTPNotFound()   # no key: the browser falls back to its built-in voice (cached lines still play)
+    kh = hashlib.sha1(key.encode()).hexdigest() if key else None
+    if not f.exists() and (not key or kh in TTS_BAD_KEYS):
+        return web.Response(status=204, headers={"X-TTS": "no-key" if not key else "key-rejected"})
     if not f.exists():
+        style = ("A friendly, natural humanoid robot assistant: warm, calm, clear and precise, at a relaxed conversational pace."
+                 if voice == "coral" else "A confident presenter giving a crisp product demo: warm and energetic.")
         body = {"model": "gpt-4o-mini-tts", "voice": voice, "input": text, "response_format": "mp3",
-                "instructions": "A friendly, natural humanoid robot assistant; calm, clear and precise." if voice == "coral"
-                else "A confident startup founder giving a crisp product demo; warm and energetic."}
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX)) as sess:
-            async with sess.post("https://api.openai.com/v1/audio/speech", json=body,
-                                 headers={"Authorization": "Bearer " + key}) as r:
-                if r.status != 200:
-                    raise web.HTTPBadGateway(text=(await r.text())[:200])
-                f.write_bytes(await r.read())
+                "instructions": style + " Speak in the language of the text (for Korean, natural standard Korean)."}
+        try:
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX), timeout=aiohttp.ClientTimeout(total=30)) as sess:
+                async with sess.post("https://api.openai.com/v1/audio/speech", json=body,
+                                     headers={"Authorization": "Bearer " + key}) as r:
+                    if r.status != 200:
+                        if r.status in (401, 403):
+                            TTS_BAD_KEYS.add(kh)
+                        return web.Response(status=204, headers={"X-TTS": f"upstream-{r.status}"})
+                    f.write_bytes(await r.read())
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return web.Response(status=204, headers={"X-TTS": "upstream-unreachable"})
     return web.FileResponse(f, headers={"Cache-Control": "max-age=86400", "Content-Type": "audio/mpeg"})
 
 
 async def index(request):
     return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
+
+
+async def phone_page(request):
+    """A phone as the robot's camera: a light page that only streams the camera (web/phone.html)."""
+    return web.FileResponse(WEB / "phone.html", headers={"Cache-Control": "no-store"})
+
+
+async def phone_info(request):
+    """Where a phone should open /phone (the laptop shows it as a QR code). Phones only share a camera over https."""
+    a = request.app
+    return web.json_response({"ip": lan_ip(), "port": a["http_port"], "https_port": a["https_port"] or None,
+                              "url": f"https://{lan_ip()}:{a['https_port']}/phone" if a["https_port"] else None})
+
+
+def cam_in_state(shared, now=None):
+    """state.cam_in: a browser or phone camera streaming to this server (fps over the last 2 s), or None."""
+    now = time.time() if now is None else now
+    ts = [t for t in list(shared.phone_ts) if now - t < 2.0]
+    if not ts or now - ts[-1] > 1.0:
+        return None
+    fps = (len(ts) - 1) / max(1e-3, ts[-1] - ts[0]) if len(ts) > 1 else 1.0
+    return {"fps": round(fps, 1), "mobile": bool(shared.phone_mobile)}
 
 
 def lan_ip():
@@ -392,6 +444,9 @@ def run_server(shared, port, https_port):
         app.router.add_get("/scene.json", scene_json)
         app.router.add_get("/mesh/{mid}.bin", mesh_bin)
         app.router.add_get("/ui/modules.json", ui_modules)
+        app.router.add_get("/phone", phone_page)
+        app.router.add_get("/phone/info", phone_info)
+        app["http_port"], app["https_port"] = port, https_port
         sm = mujoco.MjModel.from_xml_path(str(ROOT / "assets" / "unitree_g1" / "scene_pc.xml"))
         app["model"], app["scene"] = sm, scene_payload(sm)
         app.router.add_static("/static", WEB)
@@ -785,14 +840,12 @@ def worker(args, shared):
                     tasks.follow_me("video", True)
                     tasks.set_task("video", "video", "running", f"Imitating '{video_job['name']}' from your video, whole body.")
                 elif t == "camera":
-                    if view == "stage":
-                        stage.azimuth += float(c.get("dazimuth", 0.0))
-                        stage.elevation = float(np.clip(stage.elevation + float(c.get("delevation", 0.0)), -85, 10))
-                        stage.distance = float(np.clip(stage.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
-                        continue
-                    orbit.azimuth += float(c.get("dazimuth", 0.0))
-                    orbit.elevation = float(np.clip(orbit.elevation + float(c.get("delevation", 0.0)), -85, 10))
-                    orbit.distance = float(np.clip(orbit.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
+                    # zoom: a proportional factor per message (the browser sums wheel deltas); same range as the 3D stage
+                    cam_ = stage if view == "stage" else orbit
+                    cam_.azimuth += float(c.get("dazimuth", 0.0))
+                    cam_.elevation = float(np.clip(cam_.elevation + float(c.get("delevation", 0.0)), -85, 10))
+                    zf = float(np.clip(float(c.get("zoom", 1.0) or 1.0), 0.25, 4.0))
+                    cam_.distance = float(np.clip(cam_.distance * zf, 0.35, 8.0))
                 elif t == "task":
                     if not ext.intercept_task(ctx, c):
                         dispatch(tasks, rt, c, cam_params)
@@ -863,7 +916,9 @@ def worker(args, shared):
         st["world"] = world_state(world, world_rev[0])
         st["spatial"] = spatial.state()
         st["server_gemini"] = gemini_key() is not None
+        st["tts_server"] = openai_key() is not None     # the natural voice works without a browser key
         st["byok"] = byok()
+        st["cam_in"] = cam_in_state(shared)
         st["geom_poses"] = {str(g): [round(float(x), 4) for x in d.geom_xpos[g]] + [round(float(x), 4) for x in d.geom_xmat[g]] for g in dyn_geoms}
         st["physics"] = physics_state(rt, tasks)
         if st["path"] is not None:

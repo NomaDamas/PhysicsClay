@@ -31,37 +31,37 @@
 
   // ------------------------------------------------------------------ styles (existing tokens only)
   const css = `
-.pca-brain { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line);
+.pca-brain { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line);
   background: var(--raised); color: var(--t2); font: 500 11px var(--sans); white-space: nowrap; cursor: pointer; flex: 0 1 auto; min-width: 0; max-width: 170px; }
 .pca-brain .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .pca-brain:hover { color: var(--t1); border-color: var(--line2); }
 .pca-brain:focus-visible { outline: none; box-shadow: var(--ring); }
-.pca-brain .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--idle); flex: none; }
+.pca-brain .dot { width: 7px; height: 7px; border-radius: var(--lamp, 2px); background: var(--idle); flex: none; }
 .pca-brain[data-brain="llm"] { color: var(--accent-ink); border-color: color-mix(in srgb, var(--accent) 35%, transparent); background: var(--accent-tint); }
 .pca-brain[data-brain="llm"] .dot { background: var(--accent); }
 .pca-brain[data-busy="true"] .dot { animation: pulse 1s infinite; }
-.pca-reset { min-height: 28px; min-width: 28px; border-radius: 999px; border: 0; background: transparent; color: var(--t2); cursor: pointer; font: 500 11px var(--sans); }
+.pca-reset { min-height: 28px; min-width: 28px; border-radius: var(--r-ctl, 10px); border: 0; background: transparent; color: var(--t2); cursor: pointer; font: 500 11px var(--sans); }
 .pca-reset:hover { background: var(--active); color: var(--t1); }
 .pca-reset[hidden] { display: none; }
 .feed-list > .pca-tool { flex: none; align-self: flex-start; max-width: 92%; display: grid; grid-template-columns: auto 1fr auto; column-gap: 8px; row-gap: 2px; align-items: center;
-  padding: 7px 10px 7px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--field); font-family: var(--sans); animation: rise var(--med) var(--ease); }
+  padding: 8px 10px 8px 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--field); font-family: var(--sans); animation: rise var(--med) var(--ease); }
 .pca-tool .ic { width: 18px; height: 18px; border-radius: 6px; display: grid; place-items: center; background: var(--deep); color: var(--t2); font: 600 10px var(--mono); }
 .pca-tool .nm { font: 600 12px var(--mono); color: var(--t1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pca-tool .nm span { font-weight: 400; color: var(--t2); }
-.pca-tool .st { font: 600 10.5px var(--sans); padding: 1px 7px; border-radius: 999px; background: var(--deep); color: var(--t2); white-space: nowrap; }
+.pca-tool .st { font: 600 10.5px var(--sans); padding: 1px 8px; border-radius: var(--r-ctl, 10px); background: var(--deep); color: var(--t2); white-space: nowrap; }
 .pca-tool .rs { grid-column: 2 / 4; font-size: 12px; line-height: 1.4; color: var(--t2); overflow-wrap: anywhere; }
 .pca-tool .rs:empty { display: none; }
-.pca-tool[data-ok="true"] .ic { background: color-mix(in srgb, var(--ok) 16%, #fff); color: var(--ok-ink); }
-.pca-tool[data-ok="true"] .st { background: color-mix(in srgb, var(--ok) 14%, #fff); color: var(--ok-ink); }
-.pca-tool[data-ok="false"] .ic { background: color-mix(in srgb, var(--bad) 14%, #fff); color: var(--bad-ink); }
-.pca-tool[data-ok="false"] .st { background: color-mix(in srgb, var(--bad) 12%, #fff); color: var(--bad-ink); }
+.pca-tool[data-ok="true"] .ic { background: color-mix(in srgb, var(--ok) 16%, var(--raised)); color: var(--ok-ink); }
+.pca-tool[data-ok="true"] .st { background: color-mix(in srgb, var(--ok) 14%, var(--raised)); color: var(--ok-ink); }
+.pca-tool[data-ok="false"] .ic { background: color-mix(in srgb, var(--bad) 14%, var(--raised)); color: var(--bad-ink); }
+.pca-tool[data-ok="false"] .st { background: color-mix(in srgb, var(--bad) 12%, var(--raised)); color: var(--bad-ink); }
 .pca-tool[data-ok="false"] .rs { color: var(--bad-ink); }
-.pca-tool:not([data-ok]) .st::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--info); margin-right: 5px; vertical-align: 1px; animation: pulse 1s infinite; }
+.pca-tool:not([data-ok]) .st::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--info); margin-right: 4px; vertical-align: 1px; animation: pulse 1s infinite; }
 .feed-list > .pca-note { flex: none; font-size: var(--fs-xs); color: var(--t2); padding-left: 2px; }
 .feed-list > .pca-note.err { color: var(--bad-ink); }
-.feed-list > .pca-thinking { flex: none; align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px;
+.feed-list > .pca-thinking { flex: none; align-self: flex-start; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--r-ctl, 10px);
   background: var(--accent-tint); color: var(--accent-ink); font: 500 12px var(--sans); }
-.pca-thinking i { display: inline-flex; gap: 3px; }
+.pca-thinking i { display: inline-flex; gap: 4px; }
 .pca-thinking i b { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .35; animation: pca-dot 1.2s infinite; }
 .pca-thinking i b:nth-child(2) { animation-delay: .15s; } .pca-thinking i b:nth-child(3) { animation-delay: .3s; }
 @keyframes pca-dot { 0%, 60%, 100% { opacity: .25; transform: none; } 30% { opacity: 1; transform: translateY(-2px); } }

@@ -27,46 +27,46 @@
     help: '<circle cx="12" cy="12" r="8.5"/><path d="M9.8 9.5a2.3 2.3 0 0 1 4.4.9c0 1.6-2.2 1.9-2.2 3.4M12 16.8v.2"/>',
     focus: '<path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/><circle cx="12" cy="12" r="2.5"/>',
   };
-  const svg = (n, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n] || ""}</svg>`;
+  const svg = (n, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${IC[n] || ""}</svg>`;
 
   // ------------------------------------------------------------------ styles
   const CSS = `
 .tj-card { width: 100%; box-sizing: border-box; background: var(--raised, #fff); color: var(--t1, #1d1d1f); border: 1px solid var(--line, rgba(29,29,31,.1));
-  border-radius: var(--r3, 20px); box-shadow: var(--shadow-md, 0 12px 32px rgba(40,30,90,.1)); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
+  border-radius: var(--r3, 20px); box-shadow: var(--shadow-md, 0 12px 32px rgba(0,0,0,.1)); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px;
   font: 13px/1.4 var(--sans, system-ui); min-width: 0; }
 .tj-card[hidden], .tj-pop[hidden], .tj-prof[hidden] { display: none !important; }
 .tj-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.tj-ico { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--accent, #5c77df); background: var(--accent-tint, rgba(92,119,223,.12)); flex: none; }
+.tj-ico { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--accent-ink); background: var(--accent-tint, rgba(92,119,223,.12)); flex: none; }
 .tj-title { flex: 1; min-width: 0; }
-.tj-title b { display: block; font-size: 15px; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tj-title b { display: block; font-size: 15px; font-weight: 600; letter-spacing: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tj-title span { color: var(--t2, rgba(29,29,31,.64)); font-size: 12px; }
-.tj-state { --c: var(--accent, #5c77df); font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; color: var(--c); white-space: nowrap;
+.tj-state { --c: var(--accent, #5c77df); --ci: var(--accent-ink); font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: var(--r-ctl, 10px); color: var(--ci); white-space: nowrap;
   background: color-mix(in srgb, var(--c) 12%, transparent); }
-.tj-state[data-s="blocked"] { --c: var(--bad, #d6453a); } .tj-state[data-s="ready"] { --c: var(--ok, #1f8f55); } .tj-state[data-s="running"] { --c: var(--hot, #f59145); }
+.tj-state[data-s="blocked"] { --c: var(--bad, #d6453a); --ci: var(--bad-ink); } .tj-state[data-s="ready"] { --c: var(--ok, #1f8f55); --ci: var(--ok-ink); } .tj-state[data-s="running"] { --c: var(--hot, #f59145); --ci: var(--hot-ink); }
 .tj-sum { margin: 0; color: var(--t2, rgba(29,29,31,.64)); }
 .tj-sum.bad { color: var(--bad-ink, #b3342b); background: color-mix(in srgb, var(--bad, #d6453a) 8%, transparent); padding: 8px 10px; border-radius: 12px; }
 .tj-strip { display: flex; gap: 6px; overflow-x: auto; padding: 2px; scrollbar-width: thin; min-width: 0; }
-.tj-pt { flex: none; min-width: 36px; height: 36px; padding: 0 6px; border-radius: 999px; border: 1.5px solid var(--line2, rgba(29,29,31,.16)); background: var(--raised, #fff);
-  color: var(--t1, #1d1d1f); font: 600 13px var(--sans, system-ui); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+.tj-pt { flex: none; min-width: 36px; height: 36px; padding: 0 6px; border-radius: var(--r-ctl, 10px); border: 1.5px solid var(--line2, rgba(29,29,31,.16)); background: var(--raised, #fff);
+  color: var(--t1, #1d1d1f); font: 600 13px var(--sans, system-ui); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
 .tj-pt:hover { background: var(--active, #f0f0f3); }
 .tj-pt[data-bad="true"] { border-color: var(--bad, #d6453a); color: var(--bad-ink, #b3342b); }
 .tj-pt[aria-pressed="true"] { background: var(--hot, #f59145); border-color: var(--hot, #f59145); color: #fff; }
 .tj-pt i { width: 6px; height: 6px; border-radius: 50%; background: currentColor; opacity: .7; }
 .tj-pt:focus-visible, .tj-btn:focus-visible, .tj-chip:focus-visible { outline: none; box-shadow: var(--ring, 0 0 0 3px rgba(92,119,223,.28)); }
 .tj-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.tj-btn { min-height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line2, rgba(29,29,31,.16)); background: var(--raised, #fff);
+.tj-btn { min-height: 44px; padding: 0 14px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2, rgba(29,29,31,.16)); background: var(--raised, #fff);
   color: var(--t1, #1d1d1f); font: 600 13.5px var(--sans, system-ui); display: inline-flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; }
 .tj-btn:hover:not(:disabled) { background: var(--active, #f0f0f3); }
 .tj-btn:disabled { opacity: .45; cursor: default; }
 .tj-btn.primary { background: var(--accent, #5c77df); border-color: transparent; color: var(--on-accent, #fff); flex: 1; }
 .tj-btn.primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--accent, #5c77df); }
-.tj-btn.danger { color: var(--bad, #d6453a); }
+.tj-btn.danger { color: var(--bad-ink, #b3342b); }
 .tj-btn.icon { padding: 0; width: 44px; }
 .tj-tip { margin: 0; color: var(--t2, rgba(29,29,31,.64)); font-size: 12px; }
-.tj-tip kbd { font: 600 11px var(--mono, monospace); padding: 1px 5px; border-radius: 5px; background: var(--field, #f5f5f7); border: 1px solid var(--line, rgba(29,29,31,.1)); }
+.tj-tip kbd { font: 600 11px var(--mono, monospace); padding: 1px 4px; border-radius: 5px; background: var(--field, #f5f5f7); border: 1px solid var(--line, rgba(29,29,31,.1)); }
 /* popover next to the selected point (stage overlay) */
 .tj-pop { position: absolute; z-index: 9; width: 316px; max-width: calc(100% - 20px); box-sizing: border-box; padding: 8px 12px 12px; border-radius: 18px;
-  background: rgba(255,255,255,.97); color: var(--t1, #1d1d1f); box-shadow: 0 2px 6px rgba(0,0,0,.06), 0 18px 40px rgba(40,30,90,.18);
+  background: var(--glass-strong); color: var(--t1, #1d1d1f); box-shadow: var(--shadow-lg);
   border: 1px solid var(--line, rgba(29,29,31,.1)); font: 12.5px/1.35 var(--sans, system-ui); display: flex; flex-direction: column; gap: 8px; }
 .tj-pop header { display: flex; align-items: center; gap: 6px; }
 .tj-pop header b { flex: 1; font-size: 13.5px; }
@@ -75,17 +75,17 @@
 .tj-line { display: grid; grid-template-columns: 66px 1fr; align-items: center; gap: 6px; min-height: 32px; }
 .tj-line > span { color: var(--t2, rgba(29,29,31,.64)); font-size: 12px; }
 .tj-chips { display: flex; flex-wrap: nowrap; gap: 6px; align-items: center; min-width: 0; }
-.tj-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 999px; background: var(--field, #f5f5f7); min-width: 0; }
-.tj-chip { height: 28px; min-width: 28px; padding: 0 9px; border-radius: 999px; border: 0; background: transparent; white-space: nowrap;
+.tj-seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--r-ctl, 10px); background: var(--field, #f5f5f7); min-width: 0; }
+.tj-chip { height: 28px; min-width: 28px; padding: 0 8px; border-radius: var(--r-ctl, 10px); border: 0; background: transparent; white-space: nowrap;
   color: var(--t1, #1d1d1f); font: 500 12px var(--sans, system-ui); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
 .tj-chip:hover { background: var(--active, #e9e9ee); }
-.tj-chip[aria-pressed="true"] { background: var(--raised, #fff); color: var(--t1, #1d1d1f); font-weight: 650; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.tj-chip[aria-pressed="true"] { background: var(--raised, #fff); color: var(--t1, #1d1d1f); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
 .tj-chip.icon { padding: 0; width: 28px; }
 .tj-val { font: 600 12px/1 var(--mono, monospace); min-width: 46px; height: 28px; display: inline-flex; align-items: center; justify-content: center; white-space: nowrap; }
 .tj-pop footer { display: flex; gap: 6px; padding-top: 2px; }
 .tj-pop footer .tj-chip { flex: 1; height: 34px; border: 1px solid var(--line2, rgba(29,29,31,.16)); background: var(--raised, #fff); }
 .tj-pop footer .tj-chip:hover { background: var(--active, #f0f0f3); }
-.tj-pop footer .tj-chip.danger { color: var(--bad, #d6453a); }
+.tj-pop footer .tj-chip.danger { color: var(--bad-ink, #b3342b); }
 .tj-pop .tj-bad { color: var(--bad-ink, #b3342b); font-size: 12px; margin: 0; }
 /* 2D fallback: height profile for a stroke on the robot's view */
 .tj-prof { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs, 12px); font-weight: 500; color: var(--t2, rgba(29,29,31,.64)); }
@@ -107,7 +107,7 @@
   card.className = "tj-card"; card.hidden = true; card.setAttribute("aria-label", "Path in 3D");
   P.slot("side").prepend(card);           // right under the robot's plan
   const body = document.createElement("div"), popHost = document.createElement("div");
-  body.style.cssText = "display:flex;flex-direction:column;gap:10px;min-width:0";
+  body.style.cssText = "display:flex;flex-direction:column;gap: 10px;min-width:0";
   card.append(body, popHost);
   const phone = window.matchMedia ? matchMedia("(max-width: 760px)") : { matches: false };
   const pop = document.createElement("div");
@@ -347,11 +347,11 @@
     const rc = new T.Raycaster(); rc.setFromCamera(new T.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), V.camera);
     return rc;
   }
-  function pickHandle(ev) {
+  function pickHandle(ev, tol) {
     if (!g || tj.running) return -1;
     const hit = ray(ev).intersectObjects(handles, false)[0];
     if (hit) return hit.object.userData.handle;
-    let best = -1, bd = 22;                           // touch-friendly: near a handle on screen counts
+    let best = -1, bd = tol || (ev.pointerType && ev.pointerType !== "mouse" ? 22 : 12);   // a finger may land near a handle
     pts().forEach((_, i) => {
       const k = keyPos(i), s = V.project(k[0], k[1], k[2]), d = Math.hypot(s[0] - ev.clientX, s[1] - ev.clientY);
       if (d < bd) { bd = d; best = i; }
@@ -431,17 +431,23 @@
     return false;
   }
 
-  // wheel over a handle (or with one selected): height, 5 mm a notch (Shift: 2 cm)
-  let wheelTimer = 0;
-  function onWheel(ev) {
-    if (!g || tj.running || !V) return;
-    const i = hover >= 0 ? hover : (sel >= 0 && pickHandle(ev) === sel ? sel : -1);
-    if (i < 0) return;
-    ev.preventDefault(); ev.stopPropagation();
+  // wheel with the pointer on a handle: height, 5 mm a notch (Shift: 2 cm). Anywhere else the wheel zooms the view.
+  // The handle is picked fresh under the pointer (never a stale hover: after a fly-to the path sits where the pointer
+  // rests, and a remembered hover used to eat every wheel turn there).
+  let wheelTimer = 0, wheelAcc = 0;
+  function onWheel({ ev }) {
+    if (!g || tj.running || !V || ev.ctrlKey) return false;        // ctrl+wheel = trackpad pinch: always zoom
+    const i = pickHandle(ev, 10);
+    if (i < 0) return false;
+    if (hover !== i) { hover = i; paintDyn(); }
+    wheelAcc += ev.deltaMode === 1 ? ev.deltaY * 18 : ev.deltaY;   // trackpads send many small deltas: one step per ~50 px
+    if (Math.abs(wheelAcc) < 50 && ev.deltaMode === 0 && Math.abs(ev.deltaY) < 50) return true;
+    const dir = Math.sign(wheelAcc); wheelAcc = 0;
     const k = keyPos(i).slice(), step = ev.shiftKey ? 0.02 : 0.005;
-    k[2] = r3(Math.min(surfaceZ() + 0.8, Math.max(surfaceZ() - 0.03, k[2] - Math.sign(ev.deltaY) * step)));
+    k[2] = r3(Math.min(surfaceZ() + 0.8, Math.max(surfaceZ() - 0.03, k[2] - dir * step)));
     preview(i, k); sel = i; paintDyn(); renderPop(); render();
     clearTimeout(wheelTimer); wheelTimer = setTimeout(() => { if (pending.has(i)) edit({ index: i, point: { p: pending.get(i) } }); }, 380);
+    return true;
   }
 
   // ------------------------------------------------------------------ keyframes (the Path tool)
@@ -688,10 +694,14 @@
     if (document.activeElement !== A) { A.value = Math.round(pr.arch * 100); prof.querySelector('[data-o="arch"]').textContent = `${Math.round(pr.arch * 100)} cm`; }
   }
 
-  function focusPath() {
+  function focusPath(auto) {
     if (!g) return;
     if (window.PC && window.PC.setStageView && !(V && V.isActive)) window.PC.setStageView("3d");
-    P.with3D((v) => v.focus && v.focus(arr(g.pts).concat(arr(g.approach).slice(0, 1)), { pad: 1.6, min: 0.35 }));
+    const pts3 = arr(g.pts).concat(arr(g.approach).slice(0, 1));
+    P.with3D((v) => {
+      if (auto && v.inView && v.inView(pts3)) return;            // already on screen at a workable size: keep the user's view
+      if (v.focus) v.focus(pts3, { pad: 1.6, min: 0.35 });
+    });
   }
 
   // ------------------------------------------------------------------ server state
@@ -708,7 +718,7 @@
     }
     if (changedTraj && sel >= pts().length) sel = -1;
     if (g && tr && which === "proposed" && focused !== tr.id && ["language", "demo", "skill"].includes(tr.source) && V && V.isActive) {
-      focused = tr.id; setTimeout(focusPath, 120);     // a path from words: bring it into view once (handles are then big enough to grab)
+      focused = tr.id; setTimeout(() => focusPath(true), 120);   // a path from words: bring it into view once, only if it isn't already
     }
     if (!tr) { sel = -1; hover = -1; }
     if (sel >= pts().length) sel = pts().length - 1;
@@ -727,8 +737,7 @@
   });
   P.with3D((v) => {
     V = v; layer = v.layer("traj"); v.capture(onPointer);
-    const host = document.getElementById("view3d");
-    if (host) host.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    if (v.wheelCapture) v.wheelCapture(onWheel);
     ghostKey = ""; buildStatic(); paintDyn(); kick();
   });
   window.addEventListener("pc3d-ready", () => { ghostKey = ""; });

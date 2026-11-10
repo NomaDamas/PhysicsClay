@@ -42,7 +42,7 @@
     const t = s.task && typeof s.task === "object" ? s.task : null;
     if (t) {
       const key = `${t.id}|${t.status}`;
-      if (key !== lastTask) { lastTask = key; taskAt = Date.now(); }
+      if (key !== lastTask) { const first = !lastTask; lastTask = key; taskAt = first ? 0 : Date.now(); }   // an old result on page load isn't news
       if (t.status === "planning") return ["busy", "Thinking"];
       if (t.status === "proposed" || t.status === "asking") return ["wait", "Waiting for you"];
       if (t.status === "running") return ["busy", "Working"];
@@ -95,6 +95,27 @@
   }
   if (phone && phone.addEventListener) phone.addEventListener("change", onPhone);
   onPhone();
+
+  // ---------------------------------------------------------------- theme: Settings → Appearance (system / light / dark)
+  // The head script in index.html applies the stored choice before the first paint; this keeps it in step afterwards.
+  const darkMq = window.matchMedia ? matchMedia("(prefers-color-scheme: dark)") : null;
+  const themePref = () => { try { return localStorage.getItem("pc.theme") || "system"; } catch (e) { return "system"; } };
+  function applyTheme(pref) {
+    const p = ["light", "dark"].includes(pref) ? pref : "system";
+    const dark = p === "dark" || (p === "system" && !!(darkMq && darkMq.matches));
+    const root = document.documentElement;
+    root.setAttribute("data-theme", dark ? "dark" : "light"); root.setAttribute("data-theme-pref", p);
+    const meta = document.querySelector('meta[name="theme-color"]'); if (meta) meta.content = dark ? "#0f1013" : "#fbfbfd";
+    document.querySelectorAll("[data-theme-pick]").forEach((b) => { const on = b.dataset.themePick === p; b.setAttribute("aria-checked", String(on)); b.setAttribute("aria-pressed", String(on)); });
+  }
+  document.querySelectorAll("[data-theme-pick]").forEach((b) => b.addEventListener("click", () => {
+    try { localStorage.setItem("pc.theme", b.dataset.themePick); } catch (e) { /* storage blocked: applies for this visit */ }
+    applyTheme(b.dataset.themePick);
+  }));
+  if (darkMq) { const f = () => { if (themePref() === "system") applyTheme("system"); }; if (darkMq.addEventListener) darkMq.addEventListener("change", f); else if (darkMq.addListener) darkMq.addListener(f); }
+  applyTheme(themePref());
+  window.PCTheme = { set(p) { try { localStorage.setItem("pc.theme", p); } catch (e) { /* noop */ } applyTheme(p); }, get pref() { return themePref(); },
+    get dark() { return document.documentElement.getAttribute("data-theme") === "dark"; } };
 
   // ---------------------------------------------------------------- "Path" tool -> the 3D waypoint editor
   function registerPath() {
