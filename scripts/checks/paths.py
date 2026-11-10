@@ -40,6 +40,16 @@ async def run(t):
         return
     t.check("paths: a path through the mug is lifted over it (all reachable)", ok and all(ok) and "lifted over the mug" in msgs(),
             f"{sum(ok)}/{len(ok)} ok: {msgs()[:110]}")
+    # following it, on an arm (the G1's wrist, which carries its rubber hand, turns along a stroke run by the P2 follower
+    # and can brush the mug: docs/V1.md P0c limits)
+    rev = (st().get("world") or {}).get("rev", 0)
+    await t.send(type="world", id=f"paths-world-{rev}", op="set", robot="panda")
+    for _ in range(100):
+        await t.pump(0.25)
+        if (st().get("world") or {}).get("rev", 0) > rev:
+            break
+    await t.send(type="path3d", points=THROUGH_MUG, hand="right"); await t.pump(1.5)
+    lifted = "lifted over the mug" in msgs()
     m0 = _obj(t, "mug")
     r = await t.task("follow_path", 3)
     touched = set()
@@ -54,10 +64,16 @@ async def run(t):
     await t.pump(0.6)
     m1 = _obj(t, "mug")
     moved = math.hypot(m1["p"][0] - m0["p"][0], m1["p"][1] - m0["p"][1]) * 100 if m0 and m1 else 99
-    t.check("paths: following the lifted path leaves the mug standing where it was",
-            fin.get("status") == "done" and moved < 1.0 and _tilt(m1.get("q", [1, 0, 0, 0])) < 5,
+    t.check("paths: following the lifted path leaves the mug standing where it was (Panda)",
+            lifted and fin.get("status") == "done" and moved < 1.0 and _tilt(m1.get("q", [1, 0, 0, 0])) < 5,
             f"{fin.get('status')}: {fin.get('message', '')[:50]} mug moved {moved:.1f} cm, tilt {_tilt(m1.get('q', [1, 0, 0, 0])):.0f}°"
             + (f", touched by {sorted(touched)}" if touched else ""))
+    rev = (st().get("world") or {}).get("rev", 0)
+    await t.send(type="world", id=f"paths-world-{rev}", op="reset")
+    for _ in range(100):
+        await t.pump(0.25)
+        if (st().get("world") or {}).get("rev", 0) > rev:
+            break
     await t.task("home", 1.5)
 
     await t.send(type="path3d", points=BY_VASE, hand="right"); await t.pump(1.5)
