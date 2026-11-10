@@ -614,6 +614,8 @@ def roller_conveyor(b, fx):
                    [g_cyl((0, y, top - r), r, W / 2 - 0.004, "steel", True, Q_Y90)], None, label="roller", damping=0.0,
                    friction=0.0, armature=0.0, kind="roller", act={"type": "velocity", "kv": 4.0, "force": 6.0})
         joints.append(m["joint"])
+    end = -L / 2 + n * pitch + 0.012 if float(fx.get("speed", 0.1)) >= 0 else -L / 2 - 0.012
+    b.box("endstop", (0, end, top + 0.03), (W / 2 + 0.02, 0.012, 0.045), frame)    # what arrives waits at the end
     b.out.belts.append({"name": b.name, "kind": "rollers", "joints": joints, "speed": float(fx.get("speed", 0.1)), "radius": r,
                         "stop_at": None, "axis": b.wdir((0, 1, 0)).tolist(), "width": W, "top": top, "center": b.w((0, 0, top)).tolist(),
                         "length": L, "label": fx.get("label", "the roller conveyor")})
