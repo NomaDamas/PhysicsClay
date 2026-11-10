@@ -91,10 +91,25 @@ def _built(width, approach=(0, 0, 1), axis=(0, 1, 0), length=0.06, base=0.0):
     return {"build": True, "width": width, "approach": approach, "axis": axis, "len": length, "base": base}
 
 
-def _native(act, open_, close, a, b, width, tcp=(0, 0, 0), approach=(0, 0, 1), axis=(0, 1, 0), boost=1.0):
-    """The model's own gripper: actuator, open/closed commands, the bodies of each side's pads, TCP (site frame)."""
+def _native(act, open_, close, a, b, width, tcp=(0, 0, 0), approach=(0, 0, 1), axis=(0, 1, 0), boost=1.0, pads=None,
+            nocollide=(), nocollide_bodies=()):
+    """The model's own gripper: actuator, open/closed commands, the bodies of each side's pads, TCP (site frame).
+    pads: {"a": [{"body", "pos", "size", "quat"}], "b": [...]} flat pads added to the finger bodies (their frames);
+    nocollide: geom names on the pad bodies whose contact is replaced by those pads; nocollide_bodies: bodies whose geoms
+    don't touch things (hulls that don't match the real finger)."""
     return {"act": act, "open": open_, "close": close, "a": a, "b": b, "width": width, "tcp": tcp, "approach": approach,
-            "axis": axis, "boost": boost}
+            "axis": axis, "boost": boost, "pads": pads or {}, "nocollide": tuple(nocollide), "nocollide_bodies": tuple(nocollide_bodies)}
+
+
+def _aloha_grip(r):
+    """ViperX 300 fingers (ALOHA): the model's finger capsule sits ~1 cm inside the finger mesh near the tips, so a flat
+    3.6 x 1.4 cm pad on each fingertip's inner face (from the mesh) does the grasping; open = 0.041 (6.8 cm at the pads)."""
+    fl, fr = f"{r}/left_finger_link", f"{r}/right_finger_link"
+    pads = {"a": [{"body": fl, "pos": (0.01721, -0.07182, 0.0221), "quat": (0.5004, 0.5, -0.4996, -0.5), "size": (0.018, 0.004, 0.007)}],
+            "b": [{"body": fr, "pos": (0.01726, 0.07182, 0.0221), "quat": (-0.5, 0.5004, 0.5, -0.4996), "size": (0.018, 0.004, 0.007)}]}
+    hulls = [f"{r}_left_finger_coll", f"{r}_right_finger_coll"] + [f"{r}/{s}_g{i}" for s in ("left", "right") for i in range(3)]
+    return _native(f"{r}/gripper", 0.041, 0.002, (fl,), (fr,), 0.068, tcp=(0.005, 0, 0), approach=(1, 0, 0), boost=1.0,
+                   pads=pads, nocollide=hulls)
 
 
 PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
@@ -129,8 +144,7 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         {"x": 0.40, "y": 0.0, "yaw": -90, "on": "surface"}, {"right": "right/gripper", "left": "left/gripper"},
         "neutral_pose", "fixed", ("pick_place", "reach", "follow_path", "bimanual"), ee_axis=(1, 0, 0),
         freeze=("finger",), prompt="pps/world/prompts/aloha.md",
-        physics={"payload": 0.75, "grip": {r: _native(f"{r}/gripper", 0.037, 0.002, (f"{r}/left_finger_link",), (f"{r}/right_finger_link",),
-                                                      0.06, tcp=(0.005, 0, 0), approach=(1, 0, 0), boost=1.0) for r in ("right", "left")}}),
+        physics={"payload": 0.75, "grip": {r: _aloha_grip(r) for r in ("right", "left")}}),
     RobotProfile(
         "apollo", "Apptronik Apollo humanoid", "humanoid", EX + "apptronik_apollo/apollo.xml",
         {"x": 0.0, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "right_palm", "left": "left_palm"}, "stand", "legged",

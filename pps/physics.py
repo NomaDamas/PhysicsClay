@@ -30,12 +30,17 @@ OBJ = {"mug": (0.35, 0.9), "block": (0.08, 0.8), "box": (0.25, 0.7), "bowl": (0.
        "can": (0.35, 0.8), "bottle": (0.45, 0.8), "plate": (0.35, 0.8), "fruit": (0.18, 0.9), "vase": (0.60, 0.9)}
 MUG = {"R": 0.043, "t": 0.008, "z0": -0.068, "z1": 0.072, "cy": 0.004}   # the scanned mug: outer radius, wall, bottom/top, centre y
 PAD_FRICTION = (1.2, 0.02, 0.0001)
+# finger pads: stiff contact (2 timesteps) that wins the mix against the object's softer default (solmix), so a held object
+# neither creeps nor turns in the jaws; with impratio 1 (a larger ratio makes light objects wobble in the grasp at 2 ms)
+PAD_CONTACT = {"condim": 4, "solref": [0.004, 1.0], "solimp": [0.95, 0.99, 0.001, 0.5, 2.0], "solmix": 100.0}
 SURFACE_FRICTION = (0.6, 0.005, 0.0001)
 # position servos added for joints without an actuator: name pattern -> (kp, kv, effort)
 ADDED_GAINS = [(("hip", "knee", "ankle"), (400.0, 20.0, 120.0)), (("waist", "torso"), (300.0, 15.0, 88.0)),
                (("wrist",), (40.0, 2.0, 8.0)), (("base",), (4000.0, 600.0, 400.0)), ((), (150.0, 8.0, 30.0))]
 IMPEDANCE = {"kp": 0.2, "effort": 0.4}          # arm stiffness and effort cap in impedance mode (fractions)
 V_MAX = 2.0                                     # rad/s (m/s for slides): q_des is rate-limited, as in a real controller
+A_MAX = 10.0                                    # rad/s^2 (m/s^2 for slides): ... and acceleration-limited
+SETPOINT_TAU = 0.03                             # s: how fast the setpoint closes a gap to the plan (on top of its velocity)
 
 
 def velocity_limit(ik_model, robot_bodies, frozen=()):
@@ -143,6 +148,7 @@ def add_grippers(spec, profile):
         if not g.get("build"):
             tcp = sp + Rs @ np.asarray(g.get("tcp", (0, 0, 0)), float)
             body.add_site(name=f"{role}_tcp", pos=tcp.tolist(), quat=sq.tolist(), size=[0.006], rgba=[1, 0.6, 0.1, 0.0], group=5)
+            _native_pads(spec, role, g)
             continue
         w, L, base = float(g["width"]), float(g.get("len", 0.07)), float(g.get("base", 0.0))
         Rg = Rs @ _frame(g.get("approach", profile.ee_axis), g.get("axis", (0, 1, 0)))
@@ -162,11 +168,36 @@ def add_grippers(spec, profile):
             fb.add_geom(name=f"{role}_pad_{side}_vis", type=mujoco.mjtGeom.mjGEOM_BOX, size=size, pos=[0, 0, L / 2], rgba=pad_rgba,
                         contype=0, conaffinity=0, group=2, density=0)
             fb.add_geom(name=f"{role}_pad_{side}", type=mujoco.mjtGeom.mjGEOM_BOX, size=size, pos=[0, 0, L / 2], rgba=[0, 0, 0, 0],
-                        group=3, mass=0.08, contype=1, conaffinity=1, friction=list(PAD_FRICTION), condim=4, solref=[0.005, 1], solimp=[0.95, 0.99, 0.001, 0.5, 2])
+                        group=3, mass=0.08, contype=1, conaffinity=1, friction=list(PAD_FRICTION), **PAD_CONTACT)
         gb.add_site(name=f"{role}_tcp", pos=[0, 0, base + 2 * palm[2] + L - 0.022], size=[0.006], rgba=[1, 0.6, 0.1, 0.0], group=5)
         for side in ("a", "b"):
             spec.add_exclude(bodyname1=f"pc_{role}_finger_{side}", bodyname2=body.name)
         spec.add_exclude(bodyname1=f"pc_{role}_finger_a", bodyname2=f"pc_{role}_finger_b")
+
+
+def _native_pads(spec, role, g):
+    """A model's own fingers, made to grasp: flat pads where the fingers really touch things (g["pads"]: boxes in the finger
+    bodies' frames, from the finger meshes) when the model's collision hulls don't match the finger's inner face, those
+    hulls switched off for contact (g["nocollide"]: geom names), and the pad contact (friction, stiff, torsional) on every
+    geom the fingers grasp with. Planner and plant both get them (geom ids stay aligned)."""
+    off = set(g.get("nocollide", ()))
+    for side in ("a", "b"):
+        for i, pd in enumerate((g.get("pads") or {}).get(side, ())):
+            spec.body(pd["body"]).add_geom(name=f"{role}_pad_{side}{i}", type=mujoco.mjtGeom.mjGEOM_BOX, size=list(pd["size"]),
+                                           pos=list(pd["pos"]), quat=list(pd.get("quat", (1, 0, 0, 0))), rgba=[0, 0, 0, 0],
+                                           group=3, density=0, contype=1, conaffinity=1, friction=list(PAD_FRICTION), **PAD_CONTACT)
+    for side in ("a", "b"):
+        for bn in g[side]:
+            for geom in spec.body(bn).geoms:
+                if geom.name in off:
+                    geom.contype, geom.conaffinity = 0, 0
+                elif (geom.contype or geom.conaffinity) and not geom.name.startswith(f"{role}_pad_"):
+                    geom.friction = list(PAD_FRICTION)
+                    for k, v in PAD_CONTACT.items():
+                        setattr(geom, k, v)
+    for bn in g.get("nocollide_bodies", ()):
+        for geom in spec.body(bn).geoms:
+            geom.contype, geom.conaffinity = 0, 0
 
 
 # ------------------------------------------------------------------ plant-only changes
@@ -184,7 +215,7 @@ def plant_spec(spec, profile, kinds):
     harness for legged bodies, servos for joints without actuators, gravity compensation, options."""
     o = spec.option
     o.timestep, o.integrator = DT, mujoco.mjtIntegrator.mjINT_IMPLICITFAST
-    o.cone, o.impratio = mujoco.mjtCone.mjCONE_ELLIPTIC, 10.0
+    o.cone, o.impratio = mujoco.mjtCone.mjCONE_ELLIPTIC, 1.0
     for k in list(spec.keys):                             # keyframes: the plant has more qpos (free objects)
         spec.delete(k)
     legged = profile.base == "legged"
@@ -349,6 +380,13 @@ class Plant:
                                       "geoms": [g for g in range(m.ngeom) if m.geom_bodyid[g] == b and (m.geom_contype[g] or m.geom_conaffinity[g])]}
         self.geom_obj = {g: n for n, o in self.objects.items() for g in o["geoms"]}
         self.q_cmd = None                                 # rate-limited setpoint the servos see
+        self.v_cmd, self.q_tgt = None, None               # its velocity, the plan it follows
+        slide = np.zeros(self.nq_r, bool)
+        for j in range(m.njnt):
+            if m.jnt_type[j] == mujoco.mjtJoint.mjJNT_SLIDE and m.jnt_qposadr[j] < self.nq_r:
+                slide[m.jnt_qposadr[j]] = True
+        self.v_max = np.where(slide, 0.5 * V_MAX, V_MAX)
+        self.a_max = np.where(slide, 0.5 * A_MAX, A_MAX)
         self.q_prev = None
         self.lag = deque()
         self.acc = 0.0
@@ -378,8 +416,9 @@ class Plant:
         for r, g in self.grip.items():
             sid = self.site_ids[r]
             R, p = d.site_xmat[sid].reshape(3, 3), d.site_xpos[sid]
-            ap = R @ g["approach"]
-            reach = 0.0
+            ap, ax = R @ g["approach"], R @ g["axis"]
+            third = np.cross(ap, ax)
+            reach, span, depth = 0.0, 0.0, 0.0
             for k in range(m.ngeom):
                 if m.geom_bodyid[k] not in self.ee_bodies[r] or not (m.geom_contype[k] or m.geom_conaffinity[k]):
                     continue
@@ -388,9 +427,12 @@ class Plant:
                 for sx in (-1, 1):
                     for sy in (-1, 1):
                         for sz in (-1, 1):
-                            corner = d.geom_xpos[k] + Rg @ (c + h * np.array([sx, sy, sz]))
-                            reach = max(reach, float(np.dot(corner - p, ap)))
+                            corner = d.geom_xpos[k] + Rg @ (c + h * np.array([sx, sy, sz])) - p
+                            reach = max(reach, float(np.dot(corner, ap)))
+                            if np.dot(corner, ap) > -0.12:     # the hand's footprint near the work (not the wrist above)
+                                span, depth = max(span, abs(float(np.dot(corner, ax)))), max(depth, abs(float(np.dot(corner, third))))
             g["tip"] = max(g["tip"], reach)
+            g["span"], g["depth"] = span, depth             # half extents across / along the jaws (open), for placing
 
     def _pads(self, role, g):
         m = self.m
@@ -478,6 +520,7 @@ class Plant:
         d.qvel[:] = 0
         d.act[:] = 0
         self.q_cmd = np.array(q_robot, float).copy()
+        self.v_cmd, self.q_tgt = np.zeros(self.nq_r), self.q_cmd.copy()
         self.q_prev = self.q_cmd.copy()
         self.lag.clear()
         self._apply_ctrl(self.q_cmd, np.zeros(self.nq_r))
@@ -494,6 +537,7 @@ class Plant:
         d.qpos[:self.nq_r] = q_robot
         d.qvel[:self.nv_r] = 0
         self.q_cmd = np.array(q_robot, float).copy()
+        self.v_cmd, self.q_tgt = np.zeros(self.nq_r), self.q_cmd.copy()
         self.q_prev = self.q_cmd.copy()
         self.lag.clear()
         mujoco.mj_forward(self.m, d)
@@ -506,9 +550,10 @@ class Plant:
     # ---------------------------------------------------------------- control
     def _apply_ctrl(self, q, qd):
         m, d = self.m, self.d
-        for a, qa, _ in self.track:
-            # setpoint + velocity feed-forward: kp (q* - q) + kv (qd* - qd), so the servo's damping doesn't make it lag
-            kp, kv = m.actuator_gainprm[a, 0], -m.actuator_biasprm[a, 2]
+        for a, qa, da in self.track:
+            # setpoint + velocity feed-forward: kp (q* - q) + kv (qd* - qd) + b qd*, so neither the servo's damping nor the
+            # joint's own (b, friction-like) make it lag behind a moving plan
+            kp, kv = m.actuator_gainprm[a, 0], -m.actuator_biasprm[a, 2] + m.dof_damping[da]
             v = q[qa] + (kv / kp * qd[qa] if kp > 0 else 0.0)        # hinge/slide: qpos and velocity share the index
             lo, hi = m.actuator_ctrlrange[a] if m.actuator_ctrllimited[a] else (-1e9, 1e9)
             d.ctrl[a] = min(max(v, lo), hi)
@@ -549,14 +594,19 @@ class Plant:
             n, self.acc = self.sub_cap, 0.0
         if self.q_cmd is None:
             self.q_cmd = target.copy()
+        if self.v_cmd is None or self.q_tgt is None:
+            self.v_cmd, self.q_tgt = np.zeros_like(target), target.copy()
         self._harness(base_pose)
-        if n:                                            # setpoint ramps linearly over the tick, rate-limited
-            start = self.q_cmd.copy()
-            delta = np.clip(target - start, -V_MAX * n * DT, V_MAX * n * DT)
-            qd = delta / (n * DT)
+        if n:                                            # the setpoint follows the plan with velocity and acceleration limits
+            v_plan = (target - self.q_tgt) / (n * DT)    # (a real controller never jumps: a planner that changes its mind
+            self.q_tgt = target.copy()                   # quickly would otherwise jerk the arm, and what it holds)
             for s in range(n):
-                self.q_cmd = start + delta * ((s + 1) / n)
-                self._apply_ctrl(self.q_cmd, qd)
+                err = target - self.q_cmd
+                v_want = np.clip(v_plan + err / SETPOINT_TAU, -self.v_max, self.v_max)
+                v_want = np.sign(v_want) * np.minimum(np.abs(v_want), np.sqrt(2 * self.a_max * np.abs(err)) + np.abs(v_plan))
+                self.v_cmd = self.v_cmd + np.clip(v_want - self.v_cmd, -self.a_max * DT, self.a_max * DT)
+                self.q_cmd = self.q_cmd + self.v_cmd * DT
+                self._apply_ctrl(self.q_cmd, self.v_cmd)
                 mujoco.mj_step(m, d)
         cost = time.time() - t0
         self.step_cost = 0.9 * self.step_cost + 0.1 * (cost / max(n, 1))
@@ -645,6 +695,26 @@ class Plant:
             elif c.geom1 in geoms and m.geom_bodyid[c.geom2] in hand:
                 fz -= self._contact_force(i)[2]
         return fz
+
+    def support(self, name, role=None):
+        """Upward force (N) on the object from everything but the given hand: the surface (or whatever it rests on)."""
+        o = self.objects.get(name)
+        if o is None:
+            return 0.0
+        m, d, geoms = self.m, self.d, set(o["geoms"])
+        hand = self.ee_bodies.get(role, set())
+        fz = 0.0
+        for i in range(d.ncon):
+            c = d.contact[i]
+            if c.geom2 in geoms and c.geom1 not in geoms and m.geom_bodyid[c.geom1] not in hand:
+                fz += self._contact_force(i)[2]
+            elif c.geom1 in geoms and c.geom2 not in geoms and m.geom_bodyid[c.geom2] not in hand:
+                fz -= self._contact_force(i)[2]
+        return fz
+
+    def weight(self, name):
+        o = self.objects.get(name)
+        return 0.0 if o is None else float(self.m.body_mass[o["bid"]]) * abs(float(self.m.opt.gravity[2]))
 
     def grip_cmd(self, role, cmd):
         if role in self.grip:

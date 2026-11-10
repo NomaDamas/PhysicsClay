@@ -181,8 +181,8 @@ class Runtime:
         base = getattr(self, "_oc_base", None)
         if base is None:
             base = self._oc_base = [float(np.max(t.orientation_cost)) for t in self.hand_tasks]
-        for t, b in zip(self.hand_tasks, base):
-            t.set_orientation_cost(0.6 if on and b < 0.2 else b)    # arms keep their own weight
+        for t, b in zip(self.hand_tasks, base):   # arms hold the jaws square to the object (a few degrees off is a missed grasp)
+            t.set_orientation_cost((0.6 if b < 0.2 else max(b, 2.0)) if on else b)
 
     def solve(self, cfg, dt):
         """IK velocity. If the limits can't all hold at once (a joint starting outside its range, a contact the plant made),
@@ -250,9 +250,9 @@ class Runtime:
                 b = mi.body_parentid[b]
                 if b in pl.robot_bodies:
                     near.add(b)
-        hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and mi.geom_contype[g] and g not in hand]
+        hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and (mi.geom_contype[g] or mi.geom_conaffinity[g]) and g not in hand]
         if geoms and hand:
-            self._obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(hand, geoms)], minimum_distance_from_collisions=0.02,
+            self._obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(hand, geoms)], minimum_distance_from_collisions=0.012,
                                                                 collision_detection_distance=0.08)
             self.limits.append(self._obstacle_limit)
 
@@ -446,7 +446,9 @@ class Runtime:
             pts, cum = self.path["pts"], self.path["cum"]
             if not getattr(self, "follow_hold", False):  # physics: the path waits while the gripper closes / opens
                 slow = any(a <= self.path["i"] < b for a, b in self.path.get("slow", ()))   # the last few cm into a grasp
-                self.follow_s += dt * self.follow_speed * self.speed_scale * (0.35 if slow else 1.0)
+                sf = self.path.get("sf")                  # physics: segments where the hand turns a lot go slower
+                k = 1.0 if sf is None else float(sf[min(self.path["i"], len(sf) - 1)])
+                self.follow_s += dt * self.follow_speed * self.speed_scale * (0.35 if slow else 1.0) * k
             i = int(np.searchsorted(cum, self.follow_s, side="right")) - 1
             i = max(0, min(i, len(pts) - 2))
             seg = cum[i + 1] - cum[i]
