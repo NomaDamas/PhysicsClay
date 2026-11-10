@@ -35,6 +35,7 @@ from pathlib import Path
 import mujoco
 import numpy as np
 
+from .. import diskguard
 from .adapter import RobotAdapter
 from .lerobot import LeRobotWriter
 
@@ -162,6 +163,9 @@ class DatasetRecorder:
     def start(self, ctx, name=None, auto=True, fps=None, cameras=None, size=None):
         if self.recording:
             return False, f"Already recording '{self.name}'."
+        ok, why = diskguard.check(self.root, "datasets")
+        if not ok:
+            return False, why
         name = slug(name) or time.strftime("pc_%Y%m%d_%H%M%S")
         if fps:
             self.fps = int(np.clip(int(fps), 5, 60))
@@ -327,6 +331,10 @@ class DatasetRecorder:
             return self._end_episode(ctx, "failed", "timeout", f"Longer than {self.max_seconds:.0f} s.")
 
     def _start_episode(self, ctx, cur, now):
+        ok, why = diskguard.check(self.root, "datasets")
+        if not ok:                                       # disk nearly full (or the public cap): stop recording, say why
+            self.recording, self.message = False, why
+            return
         tid = cur["id"]
         text, src, args = self.lang.get(tid, ("", None, {}))
         if not text:
