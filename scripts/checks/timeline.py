@@ -24,11 +24,12 @@ async def run(t):
         return False
 
     async def practise(limit=70):
-        """Run practice; return the order in which steps were run (object, target)."""
+        """Run practice; return the order in which steps were run (object, target). `limit` is the robot's own (sim) time
+        when physics runs (a loaded machine runs the plant slower than real time; capped at 4x the limit of wall time)."""
         order = []
         await T(cmd="practice")
-        t0 = time.time()
-        while time.time() - t0 < limit:
+        t0, sim, last = time.time(), 0.0, None
+        while time.time() - t0 < 4 * limit:
             await t.pump(0.25)
             spec = tc()["spec"] or {}
             for s in spec.get("steps", []):
@@ -36,6 +37,15 @@ async def run(t):
                 if s["status"] in ("running", "done", "failed") and k not in order:
                     order.append(k)
             if tc()["phase"] != "practice" and time.time() - t0 > 1:
+                break
+            ph = t.state().get("physics") or {}
+            if ph.get("mode") == "dynamic":
+                now = float(ph.get("time") or 0.0)
+                sim += max(0.0, now - last) if last is not None and now >= last else 0.0
+                last = now
+                if sim >= limit:
+                    break
+            elif time.time() - t0 >= limit:
                 break
         return order
 

@@ -211,6 +211,11 @@ async def run(t):
     t.check("agent: 'put the mug in the center' -> pick_place -> plan proposed", ok,
             f"{time.time() - t0:.0f}s tools={[e.get('tool') for e in tools]} plan={plan.get('phase')} reply={reply[:70]!r}")
     print("      transcript:", json.dumps([{k: e.get(k) for k in ("kind", "tool", "args", "ok", "text") if e.get(k) is not None} for e in evs], ensure_ascii=False)[:1500], flush=True)
+    for _ in range(15):                  # the reply is spoken on the server tick after the turn ends (one frame later)
+        if (st.get("say") or {}).get("text") == reply:
+            break
+        await t.pump(0.2)
+        st = t.state()
     t.check("agent: reply spoken through state.say", bool(reply) and (st.get("say") or {}).get("text") == reply, str((st.get("say") or {}).get("text"))[:60])
     if plan.get("phase") == "proposing":
         await t.send(type="plan", op="cancel", id=plan.get("id"))

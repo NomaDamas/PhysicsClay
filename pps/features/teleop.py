@@ -109,6 +109,24 @@ def clamp_target(rt, tasks, palm, p):
     return p, clamped
 
 
+def over_edge(rt, palm, want):
+    """P0 physics: a hand below the table top that is sent over the table goes up beside the table first (and, when it is
+    already under the table, back out from under it): the planner keeps a real arm off the table, so a straight line
+    would leave it caught under the edge. -> the waypoint to head for now (want itself when the way is clear)."""
+    if getattr(rt, "plant", None) is None:
+        return want
+    x0, x1 = tasks_mod.TABLE_X
+    y0, y1 = tasks_mod.TABLE_Y
+    top = float(tasks_mod.TABLE_TOP)
+    over = x0 - 0.03 <= want[0] <= x1 + 0.03 and y0 - 0.03 <= want[1] <= y1 + 0.03 and want[2] > top
+    ee = np.asarray(rt.data.site_xpos[rt.palm_sid[palm]], float)
+    if not over or ee[2] >= top + 0.03:
+        return want
+    if ee[0] > x0 - 0.04 and y0 - 0.04 <= ee[1] <= y1 + 0.04:   # under the table: back out from under the edge
+        return np.array([x0 - 0.08, ee[1], min(ee[2], top - 0.04)])
+    return np.array([ee[0], ee[1], top + 0.08])                 # beside it: straight up, then over
+
+
 def safety_hold(ctx, palm, p):
     """None when the target may be taken, else why not (P5: protective stop, or a target inside the person)."""
     rt, tasks = ctx.rt, ctx.tasks
@@ -236,6 +254,7 @@ def command(ctx, s, msg):
         s["applied"][palm] = now
         return
     d, mid = rt.data, rt.hands_mid[palm]
+    want = over_edge(rt, palm, want)
     scale = float(np.clip(float(getattr(rt, "safety_scale", 1.0)), 0.0, 1.0))
     dt = float(np.clip(now - s["applied"].get(palm, now - 1 / 30), 1 / 120, 0.1))
     s["applied"][palm] = now
