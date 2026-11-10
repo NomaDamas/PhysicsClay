@@ -514,6 +514,13 @@ def tool_specs(st, confirm=True):
         T.append(_fn("follow_me", "Start or stop copying the user's body from their camera.", {"enabled": {"type": "boolean"}}, ["enabled"]))
     if "teach_by_showing" in caps:
         T.append(_fn("start_teaching", "Start teach-by-showing: the user demonstrates a task on camera and explains it."))
+    if (st.get("physics") or {}).get("mode") == "dynamic":
+        T.append(_fn("calibrate_here", "Recalibrate the simulator to this robot, table and objects: run a short probe routine (swing the "
+                                       "arm, press the table, lift an object, slide an object across the table), fit friction, object mass, "
+                                       "joint damping, servo stiffness and latency to what the robot did, and apply the fit. Use it when the "
+                                       "user says the table is slippery or sticky, things are heavier or lighter than expected, the robot "
+                                       "lags or overshoots, or asks to calibrate. Takes a few minutes (about 45 s of probing, then the fit); the arm moves on its own while probing.",
+                     {"budget": {"type": "string", "enum": ["quick", "normal"], "description": "quick (default) or normal (slower, a bit more precise)."}}))
     T += [
         _fn("set_robot", "Switch to another robot body." + ("" if has_world else " (Not available in this build yet.)"),
             {"id": {"type": "string", "enum": list((r.get("id") for r in (st.get("world") or {}).get("robots") or []) if has_world else ROBOT_IDS) or list(ROBOT_IDS)}}, ["id"]),
@@ -1285,6 +1292,21 @@ class Agent:
         r = w2.get("robot") or {}
         return {"ok": True, "robot": {k: r.get(k) for k in ("id", "label", "kind", "capabilities", "experimental", "note") if r.get(k) is not None},
                 "scene": w2.get("scene"), "objects": _objects(st)}
+
+    def t_calibrate_here(self, a, confirm):
+        """Probe + fit + apply (pps/features/calib.py op run); one sentence back: what changed and how much better."""
+        st = self.state_now()
+        if (st.get("physics") or {}).get("mode") != "dynamic":
+            return {"ok": False, "error": "Calibration needs physics; this server runs the kinematic fallback."}
+        tid = self._tid("calib")
+        self.push({"type": "calib", "op": "run", "id": tid, "budget": "normal" if a.get("budget") == "normal" else "quick"})
+        t, st = self._wait(lambda s: (s.get("task") or {}) if (s.get("task") or {}).get("id") == tid
+                           and (s.get("task") or {}).get("status") in ("done", "failed") else None, 420)
+        c = st.get("calib") or {}
+        if t is None:
+            return {"ok": False, "status": "timeout", "message": "Calibration is still running; I'll keep going in the background."}
+        return {"ok": t.get("status") == "done", "status": t.get("status"), "message": c.get("summary") or t.get("message"),
+                "params": c.get("params"), "fit": {k: (c.get("fit") or {}).get(k) for k in ("err_before", "err_after", "seconds")}}
 
     def t_set_robot(self, a, confirm):
         rid = str(a.get("id") or "").strip().lower()

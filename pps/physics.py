@@ -22,9 +22,11 @@ import numpy as np
 DT = 0.002
 LEGACY_KINDS = {"mug": "mug", "red_block": "block", "green_block": "block"}     # the UX 2.0 scene's movable bodies
 DEFAULTS = {"friction_scale": 1.0, "mass_scale": 1.0, "damping_scale": 1.0, "kp_scale": 1.0, "latency_ms": 0.0,
-            "gravity": -9.81, "grip_force": 40.0, "impedance": False, "force_limit": 20.0}
+            "gravity": -9.81, "grip_force": 40.0, "impedance": False, "force_limit": 20.0,
+            "armature_scale": 1.0, "frictionloss_scale": 1.0}           # P6: robot joints' rotor inertia / Coulomb friction
 LIMITS = {"friction_scale": (0.05, 5.0), "mass_scale": (0.05, 50.0), "damping_scale": (0.0, 10.0), "kp_scale": (0.05, 5.0),
-          "latency_ms": (0.0, 500.0), "gravity": (-30.0, 0.0), "grip_force": (0.0, 200.0), "force_limit": (1.0, 200.0)}
+          "latency_ms": (0.0, 500.0), "gravity": (-30.0, 0.0), "grip_force": (0.0, 200.0), "force_limit": (1.0, 200.0),
+          "armature_scale": (0.1, 10.0), "frictionloss_scale": (0.0, 10.0)}
 # kind -> (mass kg at the default size, sliding friction)
 OBJ = {"mug": (0.35, 0.9), "block": (0.08, 0.8), "box": (0.25, 0.7), "bowl": (0.30, 0.9), "cup": (0.12, 0.9),
        "can": (0.35, 0.8), "bottle": (0.45, 0.8), "plate": (0.35, 0.8), "fruit": (0.18, 0.9), "vase": (0.60, 0.9)}
@@ -300,7 +302,8 @@ class Plant:
         self.params = dict(DEFAULTS)
         self.base = {"gain": m.actuator_gainprm.copy(), "bias": m.actuator_biasprm.copy(), "frange": m.actuator_forcerange.copy(),
                      "flim": m.actuator_forcelimited.copy(), "fric": m.geom_friction.copy(), "mass": m.body_mass.copy(),
-                     "inertia": m.body_inertia.copy(), "damp": m.dof_damping.copy()}
+                     "inertia": m.body_inertia.copy(), "damp": m.dof_damping.copy(), "arm": m.dof_armature.copy(),
+                     "floss": m.dof_frictionloss.copy()}
         # actuators: joint position servos track q_des; velocity servos hold 0; gripper actuators get gripper commands
         grips = (profile.physics or {}).get("grip") or {}
         self.grip = {}
@@ -353,7 +356,7 @@ class Plant:
         self.q_cmd = None                                 # rate-limited setpoint the servos see
         self.hold_fingers = False                         # P5 protective stop: the finger ramps pause (commands kept)
         self.q_prev = None
-        self.lag = deque()
+        self.lag = deque(maxlen=int(LIMITS["latency_ms"][1] / 1000 / DT) + 2)   # setpoints per substep (latency_ms)
         self.acc = 0.0
         self.sub_cap = 60
         self.rtf, self._sim_w, self._wall_w, self._t_w = 1.0, 0.0, 0.0, time.time()
@@ -441,6 +444,8 @@ class Plant:
         m.body_mass[objs] *= P["mass_scale"]
         m.body_inertia[objs] *= P["mass_scale"]
         m.dof_damping[:] = b["damp"] * P["damping_scale"]
+        m.dof_armature[:self.nv_r] = b["arm"][:self.nv_r] * P["armature_scale"]
+        m.dof_frictionloss[:self.nv_r] = b["floss"][:self.nv_r] * P["frictionloss_scale"]
         m.opt.gravity[:] = (0.0, 0.0, P["gravity"])
         m.actuator_gainprm[:] = b["gain"]
         m.actuator_biasprm[:] = b["bias"]
@@ -535,16 +540,7 @@ class Plant:
         """Advance the plant by dt (wall seconds of this tick) toward q_des. Returns the number of substeps run."""
         m, d = self.m, self.d
         t0 = time.time()
-        lat = self.params["latency_ms"] / 1000.0
-        self.lag.append((d.time + dt, np.array(q_des, float)))
-        target = self.lag[0][1]
-        while len(self.lag) > 1 and self.lag[1][0] <= d.time + dt - lat:
-            self.lag.popleft()
-            target = self.lag[0][1]
-        if lat <= 0:
-            target = self.lag[-1][1]
-            self.lag.clear()
-            self.lag.append((d.time, target))
+        target = np.array(q_des, float)
         self.acc += dt
         n = int(self.acc / DT)
         self.acc -= n * DT
@@ -557,9 +553,15 @@ class Plant:
             start = self.q_cmd.copy()
             delta = np.clip(target - start, -V_MAX * n * DT, V_MAX * n * DT)
             qd = delta / (n * DT)
+            lat = self.params["latency_ms"] / 1000.0
+            if lat <= 0:
+                self.lag.clear()
             for s in range(n):
                 self.q_cmd = start + delta * ((s + 1) / n)
-                self._apply_ctrl(self.q_cmd, qd)
+                if lat > 0:                              # command latency: the servos see the setpoint of lat ago
+                    self._apply_ctrl(*self._delayed(self.q_cmd, qd, lat, start))
+                else:
+                    self._apply_ctrl(self.q_cmd, qd)
                 mujoco.mj_step(m, d)
         cost = time.time() - t0
         self.step_cost = 0.9 * self.step_cost + 0.1 * (cost / max(n, 1))
@@ -571,6 +573,20 @@ class Plant:
             self._sim_w, self._wall_w, self._t_w = 0.0, 0.0, now
         self._measure()
         return n
+
+    def _delayed(self, q, qd, lat, q0):
+        """Setpoint (and its velocity) as it was `lat` seconds ago: a buffer of one entry per 2 ms substep, linearly
+        interpolated between substeps (so the delay is continuous, not quantized to the server tick). Before there is
+        that much history the robot holds the oldest setpoint (q0 when the buffer starts empty: a reset)."""
+        if not self.lag:
+            self.lag.append((np.array(q0, float), np.zeros_like(qd)))
+        self.lag.append((q, qd))
+        k = lat / DT                                     # substeps back from the newest entry
+        i = int(k)
+        f = k - i
+        n = len(self.lag) - 1
+        a, b = self.lag[max(n - i, 0)], self.lag[max(n - i - 1, 0)]
+        return (1 - f) * a[0] + f * b[0], (1 - f) * a[1] + f * b[1]
 
     def budget(self, frame_budget):
         """Cap substeps so stepping uses at most frame_budget seconds per tick (called by the server loop)."""

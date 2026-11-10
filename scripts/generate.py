@@ -24,8 +24,9 @@ Randomization (--randomize, comma list):
                (an object named with a colour in the seed keeps it: the words must stay true), 0-2 distractors
     lighting   light directions and intensity of the dataset cameras        (strength --lighting, default 0.6)
     camera     camera position / angle jitter of the dataset cameras        (metres --camera-jitter, default 0.02)
-    physics    {type: "physics", op: "set", params: {friction_scale, mass_scale, damping_scale, kp_scale}} per
-               episode when the server has P0 physics (state.physics); skipped otherwise
+    physics    {type: "physics", op: "set", params: {friction_scale, mass_scale, damping_scale, kp_scale, latency_ms}} per
+               episode when the server has P0 physics (state.physics); skipped otherwise. Drawn by P6's shared
+               randomizer (pps/calib/randomize.py, the robot's ranges, seeded); the ranges go into each episode's metadata
 """
 import argparse
 import asyncio
@@ -44,6 +45,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from pps.calib.randomize import Randomizer  # noqa: E402
 from pps.world import profiles  # noqa: E402
 from pps.world import scene as world_scene
 
@@ -229,6 +231,7 @@ async def generate(a, kind, seed):
         ok = await c.until(lambda s: (s.get("dataset") or {}).get("recording"), 10)
         if not ok:
             raise SystemExit(f"could not start recording: {(c.ds().get('reply') or {}).get('message')}")
+        rnds = {}                                         # physics: P6's randomizer per robot (its ranges), seeded from --rng-seed
         rspec = {}
         if "lighting" in rand:
             rspec["lighting"] = a.lighting
@@ -257,12 +260,13 @@ async def generate(a, kind, seed):
                     variation = {"generator": "scripts/generate.py", "seed": a.seed or "inline", "i": i, "robot": robot,
                                  "scene": template, "randomize": sorted(rand)}
                     if "physics" in rand and has_physics:
-                        params = {"friction_scale": round(float(rng.uniform(0.7, 1.3)), 3),
-                                  "mass_scale": round(float(rng.uniform(0.8, 1.25)), 3),
-                                  "damping_scale": round(float(rng.uniform(0.8, 1.2)), 3),
-                                  "kp_scale": round(float(rng.uniform(0.85, 1.15)), 3)}
-                        await c.send(type="physics", op="set", params=params, id=f"gen-p{k}")
+                        if robot not in rnds:
+                            rnds[robot] = Randomizer(robot=robot, seed=int(rng.integers(1 << 30)))
+                        rnd = rnds[robot]
+                        params = rnd.physics(rnd.sample())
+                        await c.send(**rnd.message(params, f"gen-p{k}"))
                         variation["physics"] = params
+                        variation["physics_ranges"] = rnd.ranges()
                     await c.send(type="dataset", op="meta", data=variation, id=f"gen-m{k}")
                     words = str(rng.choice(language)) if language else None
                     n_before = c.ds().get("episodes", 0)
