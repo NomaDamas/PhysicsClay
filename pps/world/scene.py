@@ -437,7 +437,8 @@ def _arena_xml(profile, spec, s):
     parts = [_template_xml(s)]
     m = profile.mount
     if m.get("on") == "surface" and m.get("pedestal") and top > 0.05:
-        parts.append(f'<geom name="pedestal" type="cylinder" size="{_f(0.085, top / 2)}" pos="{_f(m["x"], m["y"], top / 2)}" '
+        ph = top + float(m.get("z", 0.0))                 # a riser lifts the arm above the surface
+        parts.append(f'<geom name="pedestal" type="cylinder" size="{_f(0.085, ph / 2)}" pos="{_f(m["x"], m["y"], ph / 2)}" '
                      f'rgba="0.42 0.44 0.48 1" contype="0" conaffinity="0"/>')
     targets = []
     if profile.base == "legged" and profile.feet:
@@ -573,7 +574,7 @@ def build(robot_id=None, spec=None, physics=None):
     for k in list(child.keys):
         child.delete(k)
     mnt = profile.mount
-    mz = s["top"] if mnt.get("on") == "surface" else 0.0
+    mz = s["top"] + float(mnt.get("z", 0.0)) if mnt.get("on") == "surface" else 0.0
     mpos = np.array([mnt.get("x", 0.0), mnt.get("y", 0.0), mz])
     yaw = float(mnt.get("yaw", 0.0))
     free = [j for j in child.joints if j.type == mujoco.mjtJoint.mjJNT_FREE]

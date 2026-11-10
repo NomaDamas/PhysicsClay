@@ -378,6 +378,13 @@ def tool_specs(st, confirm=True):
         T.append(_fn("pick_place", "Pick an object up and put it somewhere. Give exactly one of target, marker or xyz and leave the others out." + moving,
                      {"object": {"type": "string", "description": "Object name, e.g. 'mug', 'red block'."}, "target": TARGET,
                       "marker": {"type": "string", "description": "Marker letter the user placed (A-F, P)."}, "xyz": XYZ}, ["object"]))
+    if "bimanual" in caps or "handover" in caps:
+        T.append(_fn("handover_arms", "Pass an object from one of your hands to the other: one arm picks it up (by the end nearest it), both "
+                                      "arms meet in the middle, the other hand takes the free end, the first lets go, then (with a target) "
+                                      "the receiving hand puts it down. Long things work best (both grippers need room on it)." + moving,
+                     {"object": {"type": "string", "description": "Object to pass, e.g. 'bar'."},
+                      "to": {"type": "string", "enum": ["left", "right"], "description": "The hand that receives it (default: the other one)."},
+                      "target": TARGET}, ["object"]))
     if "reach" in caps:
         T.append(_fn("reach", "Move a hand over a spot (no grasp). Give one of target, marker or xyz." + moving,
                      {"target": TARGET, "marker": {"type": "string"}, "xyz": XYZ}))
@@ -882,6 +889,17 @@ class Agent:
         if target is None:
             return {"ok": False, "error": "give a target, marker or xyz"}
         return self._motion("pick_place", {"object": obj, "target": target}, confirm)
+
+    def t_handover_arms(self, a, confirm):
+        obj = str(a.get("object") or "").strip()
+        if not obj:
+            return {"ok": False, "error": "which object?"}
+        msg = {"object": obj, "between_arms": True}
+        if str(a.get("to") or "").lower() in ("left", "right"):
+            msg["to"] = str(a["to"]).lower()
+        if a.get("target"):
+            msg["target"] = str(a["target"])
+        return self._motion("handover", msg, confirm)
 
     def t_reach(self, a, confirm):
         target, err = self._resolve_target(a)

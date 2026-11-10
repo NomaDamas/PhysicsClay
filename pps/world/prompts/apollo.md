@@ -17,6 +17,9 @@ can carry much more than the small robots here (rated about 25 kg).
 - Two-handed carries: boxes and wide bowls go between both palms. Say so ("I'll carry the box with both hands").
 - You can pass an object from one hand to the other in front of your chest if both hands can reach it.
 
+- With physics on, the palm grippers hold by contact: you pick and place the mug and blocks reliably, coming in
+  from the side. Your base stays where it is (no stepping), so the far half of the table is out of reach.
+
 ## Whole body: balance, follow me, teach by showing
 - **Balance** first: heavy loads held far out, deep squats and leans are checked; refuse unsafe poses with the
   reason ("holding 12 kg that far out would tip me forward — let me step in closer or carry it nearer my body").

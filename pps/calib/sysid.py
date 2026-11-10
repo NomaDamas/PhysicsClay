@@ -82,6 +82,7 @@ class PlantSim:
                 g["cmd"] = "close" if log.grip[0, r_i] >= 0.5 else "open"
                 g["ctrl"] = g["close"] if g["cmd"] == "close" else g["open"]
         pl.q_cmd = np.array(log.q_des[0], float)
+        pl.q_tgt, pl.v_cmd = pl.q_cmd.copy(), np.zeros_like(pl.q_cmd)   # P0b setpoint filter: at rest on the first command
         pl.lag.clear()
         pl.acc = 0.0
         pl.settle(0.15)

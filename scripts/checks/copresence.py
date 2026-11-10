@@ -214,7 +214,7 @@ def _main():
             t0 = time.time()
             while time.time() - t0 < limit:
                 await pump(0.3)
-                if (st.get("task") or {}).get("status") != "running":
+                if (st.get("task") or {}).get("status") not in ("running", "planning"):
                     break
             return st.get("task") or {}
 

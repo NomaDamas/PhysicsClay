@@ -59,9 +59,11 @@ EXTEND = 0.80            # straightness of an extended arm (shoulder-tip distanc
 FORWARD = 0.18           # m the fingertip must be in front of the shoulder (toward the robot)
 HISTORY_S = 1.5          # s of pointing history a "this"/"there" looks back over
 TWO_POINT_S = 4.0        # s window for "put this there" (object first, then the spot)
-RELEASE_DIST = 0.12      # m: the robot lets go once the person's hand is this close to the object it offers
+RELEASE_DIST = 0.12      # m: the robot lets go once the person's hand has come this close to the object it offers ...
+GRAB_DIST = 0.07         # m: ... (or at the object) and stayed GRAB_HOLD_S, after presenting it for PRESENT_S
+GRAB_HOLD_S, PRESENT_S = 0.4, 0.8
 HANDOVER_GAP = 0.10      # m: the robot offers the object this far in front of your hand; you close the gap (P5 safety:
-                         #    without a force reading the robot never touches you)
+                         #    the robot never moves into you)
 OFFER_TIMEOUT = 15.0     # s the robot holds an offered object out before it gives up (and keeps holding it)
 PATH_S = 4.0
 SMOOTH = 0.5             # EMA factor for joints (calm avatar)
@@ -724,8 +726,8 @@ def copresence_tasks(ctx, msg):
     a = msg.get("action")
     if a == "pick_place" and msg.get("hold"):
         return _pick_hold(ctx, msg)
-    if a == "handover":
-        return _handover(ctx, msg)
+    if a == "handover" and not (msg.get("to") or msg.get("between_arms")):   # to the person (between a robot's two
+        return _handover(ctx, msg)                                            # hands: tasks.handover_arms)
     return None
 
 
@@ -866,10 +868,17 @@ def _handover_tick(ctx, st, J, now):
                 st["handover"] = None
                 _say(ctx, f"I'll keep holding {_pretty(tasks, ho['object'])} for now.")
             elif J is not None:
-                pp = rt.data.site_xpos[rt.palm_sid[palm]]
-                near = [(float(np.linalg.norm(hand_pos(J, sd) - pp)), sd) for sd in ("l", "r") if f"{sd}_wrist" in J]
+                # present it at the offered spot first, then let go once the person's hand has come to it and stays a
+                # moment (a hand that was already near when the arm stopped, e.g. 10 cm in front of it for safety, is not
+                # yet taking it): the person isn't simulated, so "it's in their hand" is their hand at the object
+                op = tasks.mug_center(ho["object"]) if ho["object"] in tasks.objs else rt.data.site_xpos[rt.palm_sid[palm]]
+                near = [(float(np.linalg.norm(hand_pos(J, sd) - op)), sd) for sd in ("l", "r") if f"{sd}_wrist" in J]
                 near = min(near) if near else None
-                if near is not None and near[0] < RELEASE_DIST:
+                if near is not None and ho.get("d0") is None:
+                    ho["d0"] = near[0]
+                came = near is not None and (near[0] < GRAB_DIST or (near[0] < RELEASE_DIST and ho["d0"] - near[0] > 0.04))
+                ho["near_t"] = (ho.get("near_t") or now) if came else None
+                if came and now - ho["t"] >= PRESENT_S and now - ho["near_t"] >= GRAB_HOLD_S:
                     obj = ho["object"]
                     tasks.holding[palm] = None
                     tasks.grasp_off = None

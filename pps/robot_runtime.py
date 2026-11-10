@@ -37,7 +37,8 @@ COLLISION_PAIRS = [
     (["left_hand_collision", "right_hand_collision", "left_wrist_collision", "right_wrist_collision",
       "left_elbow_yaw_collision", "right_elbow_yaw_collision"], ["table"]),
 ]
-BODY_GEOMS = ["torso_collision", "pelvis_collision", "head_collision", "left_hip_collision", "right_hip_collision",
+FOLLOW_LAG, FOLLOW_WAIT = 0.03, 2.0      # physics: m the hand may trail the moving target, s it waits for it to catch up
+BODY_GEOMS = ["torso_collision","pelvis_collision", "head_collision", "left_hip_collision", "right_hip_collision",
               "left_thigh_collision", "right_thigh_collision"]
 FEET = ["right_foot", "left_foot"]
 
@@ -187,8 +188,8 @@ class Runtime:
         base = getattr(self, "_oc_base", None)
         if base is None:
             base = self._oc_base = [float(np.max(t.orientation_cost)) for t in self.hand_tasks]
-        for t, b in zip(self.hand_tasks, base):
-            t.set_orientation_cost(0.6 if on and b < 0.2 else b)    # arms keep their own weight
+        for t, b in zip(self.hand_tasks, base):   # arms hold the jaws square to the object (a few degrees off is a missed grasp)
+            t.set_orientation_cost((0.6 if b < 0.2 else max(b, 2.0)) if on else b)
 
     def solve(self, cfg, dt):
         """IK velocity. If the limits can't all hold at once (a joint starting outside its range, a contact the plant made),
@@ -237,7 +238,7 @@ class Runtime:
         if self.plant is None:
             return
         if not getattr(self, "_safety_held", False):
-            self.configuration.update(self.plant.d.qpos[:self.plant.nq_r].copy())
+            self.configuration.update(self.plant.measured_q(self.configuration.model))
             self._safety_held = True
         self.plant.hold_fingers = True
         self.plant.step(dt, self.configuration.q, self.base_pose())
@@ -271,9 +272,9 @@ class Runtime:
                 b = mi.body_parentid[b]
                 if b in pl.robot_bodies:
                     near.add(b)
-        hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and mi.geom_contype[g] and g not in hand]
+        hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and (mi.geom_contype[g] or mi.geom_conaffinity[g]) and g not in hand]
         if geoms and hand:
-            self._obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(hand, geoms)], minimum_distance_from_collisions=0.02,
+            self._obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(hand, geoms)], minimum_distance_from_collisions=0.012,
                                                                 collision_detection_distance=0.08)
             self.limits.append(self._obstacle_limit)
 
@@ -281,7 +282,7 @@ class Runtime:
         """Stop where the robot is: the planner takes the measured pose so q_des doesn't keep pulling the arm."""
         if self.plant is None:
             return
-        self.configuration.update(self.plant.d.qpos[:self.plant.nq_r].copy())
+        self.configuration.update(self.plant.measured_q(self.configuration.model))
         for h in self.hands:
             self.mocap_to_site(f"{h}_target", self.ee_site[h])
 
@@ -431,7 +432,8 @@ class Runtime:
         quats: an orientation per waypoint (wxyz: grasps, P2 trajectories); default: the hand target's current one."""
         cfg = mink.Configuration(self.configuration.model)
         cfg.data.mocap_pos[:], cfg.data.mocap_quat[:] = self.ik_data.mocap_pos, self.ik_data.mocap_quat   # objects (physics)
-        cfg.update(self.configuration.q.copy())
+        cfg.update(self.plant.measured_q(cfg.model) if self.plant is not None else self.configuration.q.copy())   # physics: from
+        # where the arm really is (it may trail the plan)
         task = self.hand_tasks[self.hands.index(palm)]
         saved = task.transform_target_to_world
         mid = self.hands_mid[palm]
@@ -448,7 +450,11 @@ class Runtime:
                 cfg.integrate_inplace(self.solve(cfg, dt), dt)
         for k, p in enumerate(pts):
             task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[k]), p))
-            for _ in range(iters):
+            n = iters
+            if quats is not None and k > 0:       # the hand turns slower than it moves: more time where it turns a lot
+                ang = 2 * np.arccos(min(1.0, abs(float(np.dot(quats[k - 1], quats[k])))))
+                n = iters * (1 + int(ang / 0.25))
+            for _ in range(n):
                 v = self.solve(cfg, dt)
                 cfg.integrate_inplace(v, dt)
             dist = float(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p))
@@ -569,9 +575,16 @@ class Runtime:
             follow_step(self, dt)       # P2 trajectory: timed samples with orientation and gripper (pps/traj.py)
         elif self.mode == "FOLLOW" and self.path is not None:
             pts, cum = self.path["pts"], self.path["cum"]
-            if not getattr(self, "follow_hold", False):  # physics: the path waits while the gripper closes / opens
+            lag = 0.0
+            if self.plant is not None:                    # physics: the plan doesn't run away from the arm (it waits while
+                mid = self.hands_mid[self.path["palm"]]   # the hand is more than FOLLOW_LAG behind, up to FOLLOW_WAIT s)
+                lag = float(np.linalg.norm(d.site_xpos[self.palm_sid[self.path["palm"]]] - d.mocap_pos[mid]))
+                self.lag_t = (getattr(self, "lag_t", 0.0) + dt) if lag > FOLLOW_LAG else 0.0
+            if not getattr(self, "follow_hold", False) and (lag <= FOLLOW_LAG or self.lag_t > FOLLOW_WAIT):
                 slow = any(a <= self.path["i"] < b for a, b in self.path.get("slow", ()))   # the last few cm into a grasp
-                self.follow_s += dt * self.follow_speed * self.speed_scale * (0.35 if slow else 1.0)
+                sf = self.path.get("sf")                  # physics: segments where the hand turns a lot go slower
+                k = 1.0 if sf is None else float(sf[min(self.path["i"], len(sf) - 1)])
+                self.follow_s += dt * self.follow_speed * self.speed_scale * (0.35 if slow else 1.0) * k
             i = int(np.searchsorted(cum, self.follow_s, side="right")) - 1
             i = max(0, min(i, len(pts) - 2))
             seg = cum[i + 1] - cum[i]
