@@ -371,6 +371,11 @@ class FixtureTasks:
                     quats.append(qg)
                 kps.append(lead)
                 quats.append(qg)
+            elif not tall and pre[2] < T.TABLE_TOP + 0.10 and cur[2] > T.TABLE_TOP:
+                # from above, a knob under a counter's edge (a drawer): down in front of the edge, not diagonally across
+                # it (the fingers trailing the plan caught the edge there and the hand never got to the knob)
+                kps.append(np.array([pre[0], pre[1], T.TABLE_TOP + 0.10]))
+                quats.append(qg)
             k_in = len(kps)
             kps += [pre, g0]
             quats += [qg, qg]
@@ -387,7 +392,7 @@ class FixtureTasks:
             if tall and not front:                    # back out the way it came, not across the machine
                 kps += [ge + o0 * 0.18 + np.array([0, 0, 0.10]), far0]
                 quats += [qe, qe]
-            if front and back[2] < T.TABLE_TOP + 0.10:   # up in front of the furniture before going home over it
+            if (front or not tall) and back[2] < T.TABLE_TOP + 0.10:   # up in front of the furniture before going home over it
                 kps.append(np.array([back[0], back[1], T.TABLE_TOP + 0.10]))
                 quats.append(qe)
             kps.append(home)

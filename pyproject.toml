@@ -37,6 +37,7 @@ dependencies = [
     "imageio>=2.30",
     "imageio-ffmpeg>=0.4",
     "trimesh>=4.0",           # pps/recon: meshes from photos (watertight repair, inertia, convex hulls); pure Python
+    "networkx>=2.6",          # trimesh's hole filling (pps/recon watertight repair) needs it; pure Python
 ]
 
 [project.optional-dependencies]

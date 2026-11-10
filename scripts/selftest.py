@@ -6,7 +6,12 @@ Environment:
   PC_SELFTEST_OFFLINE=1      CI / no keys: the server runs with --byok (never reads .env keys) and the checks that need
                              a key, the network or a local test clip are reported as SKIP instead of FAIL.
   PC_SELFTEST_LOG=path       write the server's stdout/stderr there (default: discarded).
-  PC_SELFTEST_CHECKS=a,b     run only those scripts/checks/ files (no core section)."""
+  PC_SELFTEST_CHECKS=a,b     run only those scripts/checks/ files (no core section).
+
+The test client shows no pictures (hello streams: []), so the server renders the streamed views only for the check that
+asks for them ("frames: ...") and for the browser the xr check drives; the robot's behaviour doesn't depend on them.
+After each checks/ file a TIME line says how long it took, the server's frame rate and, with physics, how fast the
+simulation ran against the wall clock (slow machines: what a timing-sensitive check had to work with)."""
 import asyncio
 import json
 import os
@@ -50,9 +55,11 @@ async def main():
         except Exception:
             await asyncio.sleep(0.5)
     ws = await s.ws_connect(BASE + "/ws")
-    await ws.send_str(json.dumps({"type": "hello", "lang": "en", "client": "selftest"}))   # checks match English text
+    # checks match English text; no pictures (STREAMS in pps/app.py): the frames check below subscribes to them
+    await ws.send_str(json.dumps({"type": "hello", "lang": "en", "client": "selftest", "streams": []}))
     st = {}
     bins = {}
+    perf = {"fps": [], "sim": None}     # per checks/ file: the server's fps and (physics) sim clock, for the TIME line
 
     async def pump(sec):
         nonlocal st
@@ -62,6 +69,15 @@ async def main():
                                                              # dry run) can take seconds with physics on a loaded machine
             if m.type == aiohttp.WSMsgType.TEXT:
                 st = json.loads(m.data)
+                perf["fps"].append(float(st.get("fps") or 0.0))
+                ph = st.get("physics") or {}
+                if ph.get("mode") == "dynamic" and ph.get("time") is not None:
+                    w, sim = time.time(), float(ph["time"])
+                    a = perf["sim"]
+                    if a is None or sim < a[3]:                  # (the sim clock restarts on a reset / a new world)
+                        perf["sim"] = [w, sim, a[2] if a else 0.0, sim, a[4] if a else 0.0, w]
+                    else:
+                        a[2] += sim - a[3]; a[4] += w - a[5]; a[3], a[5] = sim, w
             elif m.type == aiohttp.WSMsgType.BINARY:
                 bins[m.data[0]] = len(m.data)
         return st
@@ -113,10 +129,16 @@ async def main():
                 continue
             spec = importlib.util.spec_from_file_location(f"checks_{f.stem}", f)
             mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+            t0 = time.time(); perf["fps"], perf["sim"] = [], None
             try:
                 await mod.run(t)
             except Exception as e:
                 check(f"checks/{f.name} ran", False, repr(e)[:120])
+            fps = sorted(x for x in perf["fps"] if x > 0) or [0.0]
+            sim = perf["sim"]
+            rtf = f", sim {sim[2] / sim[4]:.2f}x real time" if sim and sim[4] > 1.0 else ""
+            print(f"TIME  checks/{f.name}: {time.time() - t0:.0f} s, server {fps[len(fps) // 2]:.0f} fps "
+                  f"(10th percentile {fps[len(fps) // 10]:.0f}){rtf}", flush=True)
             await task("reset_scene", 1)
 
     if ONLY:                                    # PC_SELFTEST_CHECKS=gestures,handover: only those feature checks
@@ -142,8 +164,11 @@ async def main():
             check("https (phone mic)", r.status == 200)
     except Exception as e:
         check("https (phone mic)", False, str(e)[:60])
-    await pump(1.5)
+    await send(type="streams", streams=["cam", "robot", "pip"]); await pump(1.5)
     check("frames: camera / robot view / full body", all(k in bins for k in (1, 2, 3)), f"{sorted(bins)} server {st.get('fps')} fps")
+    await send(type="streams", streams=[]); await pump(0.3)
+    bins.clear(); await pump(0.6)
+    check("frames: nothing rendered for a client that shows no pictures", not bins, f"{sorted(bins)} server {st.get('fps')} fps")
     keys = ("mode", "view", "feasibility", "markers", "path", "task", "holding", "scene_objects", "skills", "teach", "geom_poses", "say", "mock")
     check("state fields", all(k in st for k in keys), ",".join(k for k in keys if k not in st))
     names = sorted(o["name"] for o in st["scene_objects"])

@@ -29,15 +29,12 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends libgl1 libglib2.0-0t64
 
-      - uses: astral-sh/setup-uv@v10.3.3   # setup-uv publishes no floating major tags
+      # the robot models too: the unit tests build worlds (Panda, UR5e, G1 ...) and run them for real
+      - name: Setup (core + dev + data, robot models)
+        uses: ./.github/actions/setup
         with:
-          enable-cache: true
-          cache-dependency-glob: pyproject.toml
-
-      - name: Install (core + dev)
-        run: |
-          uv venv .venv --python "$PYTHON_VERSION"
-          uv pip install --python .venv/bin/python -e ".[dev,data]"
+          extras: dev,data
+          python: ${{ env.PYTHON_VERSION }}
 
       - name: ruff check
         run: .venv/bin/python -m ruff check pps scripts tests
@@ -83,21 +80,12 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             libosmesa6 libgl1 libegl1 libgles2 libglib2.0-0t64 openssl
 
-      - uses: astral-sh/setup-uv@v10.3.3   # setup-uv publishes no floating major tags
+      # dev too: the self test runs unit test files (checks/teleop.py runs tests/test_teleop.py with pytest)
+      - name: Setup (extras vision + data + dev, robot models)
+        uses: ./.github/actions/setup
         with:
-          enable-cache: true
-          cache-dependency-glob: pyproject.toml
-
-      - name: Cache robot models and MediaPipe models
-        uses: actions/cache@v6
-        with:
-          path: |
-            vendor/mink
-            models
-          key: robot-assets-${{ hashFiles('scripts/setup.sh') }}
-
-      - name: Setup (scripts/setup.sh, extras vision + data)
-        run: PC_EXTRAS=vision,data PC_PYTHON="$PYTHON_VERSION" ./scripts/setup.sh
+          extras: vision,data,dev
+          python: ${{ env.PYTHON_VERSION }}
 
       - name: Offscreen rendering works
         timeout-minutes: 3

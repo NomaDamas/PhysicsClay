@@ -43,15 +43,28 @@ async def feed(t, kw=None, hold=60.0):
     await t.send(type="copresence_feed", frames=frames, fps=20, hold=hold)
 
 
-async def wait_for(t, pred, limit=6.0, step=0.15):
-    t0 = time.time()
-    while time.time() - t0 < limit:
+async def wait_for(t, pred, limit=6.0, step=0.15, sim=False):
+    """Poll the state until pred holds, for `limit` s. sim=True: when it needs the robot to move, `limit` is seconds of
+    the robot's own (sim) time while physics runs, since a loaded machine runs the plant slower than real time (capped
+    at 4x the limit of wall time). The person's side (feeds, safety's resume_s) is real time either way."""
+    t0, sim_s, last = time.time(), 0.0, None
+    while time.time() - t0 < (4 * limit if sim else limit):
         await t.pump(step)
         try:
             if pred(t.state()):
                 return True
         except Exception:
             pass
+        ph = t.state().get("physics") or {}
+        if not sim or ph.get("mode") != "dynamic":
+            if time.time() - t0 >= limit:
+                break
+            continue
+        now = float(ph.get("time") or 0.0)
+        sim_s += max(0.0, now - last) if last is not None and now >= last else 0.0
+        last = now
+        if sim_s >= limit:
+            break
     return False
 
 
@@ -82,7 +95,7 @@ async def run(t):
             f"{task.get('status')} {task.get('message')} scale={_sf(t).get('speed_scale')}")
 
     # paths start with a slow approach to their first point (P2): let the hand get onto the path before anyone leans in
-    await wait_for(t, lambda s: ((s.get("path") or {}).get("i") or 0) >= 1, 8.0)
+    await wait_for(t, lambda s: ((s.get("path") or {}).get("i") or 0) >= 1, 8.0, sim=True)
 
     # a person leans in: slower, not stopped
     await feed(t, SLOW)
@@ -118,7 +131,7 @@ async def run(t):
 
     # the person steps back: automatic resume (after resume_s), the task finishes
     await feed(t)
-    ok = await wait_for(t, lambda s: not (s.get("safety") or {}).get("stop") and (s.get("path") or {}).get("i", -1) != i1, 6.0)
+    ok = await wait_for(t, lambda s: not (s.get("safety") or {}).get("stop") and (s.get("path") or {}).get("i", -1) != i1, 6.0, sim=True)
     task = t.state().get("task") or {}
     t.check("safety: moving away resumes automatically (clear for resume_s, then a ramp)", ok and task.get("step") != "paused"
             and not str(task.get("message", "")).startswith("Paused"), f"stop={_sf(t).get('stop')} task={task.get('message')!r}")
@@ -166,7 +179,7 @@ async def run(t):
         c = f.get("closest") or {}
         return f.get("coop") and f.get("d_min") is not None and f["d_min"] < f.get("config", {}).get("d_stop", 0.12) \
             and c.get("region") in ("hand", "forearm")
-    ok = await wait_for(t, near_hands, 12.0)
+    ok = await wait_for(t, near_hands, 12.0, sim=True)
     sf = _sf(t)
     t.check("safety: assist lets the robot's hands come closer than d_stop to the person's hands (hand vs gripper is never a body stop)",
             ok and not seen["body"] and (not sf.get("stop") or sf.get("reason") == "no_force") and sf.get("speed_scale", 1) <= sf.get("config", {}).get("coop_scale", 0.3) + 1e-6,

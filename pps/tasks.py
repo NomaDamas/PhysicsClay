@@ -1063,7 +1063,8 @@ class Tasks(FixtureTasks):
     def _regrasp_aim(self):
         """Physics, above a grasp: if the object has moved since the plan (nudged, or drooping in the other hand during a
         handover, or bumped by the arm on its way), the way down follows it, by up to 8 cm (the robot looks before it
-        reaches in)."""
+        reaches in). Moved further than that, the pick is planned again from where the hand is, once per task: going
+        down to the empty spot closed the gripper on air (TidyBot's trailing arm pushed the mug into a block 8.4 cm)."""
         path = self.rt.path
         if not path or path.get("anchor") is None:
             return
@@ -1073,7 +1074,18 @@ class Tasks(FixtureTasks):
             return
         pts = np.array(path["pts"], float)
         delta = self.obj_pos(name) + self.obj_mat(name) @ local - pts[gk]
-        if not 1e-4 < float(np.linalg.norm(delta)) < 0.08:
+        moved = float(np.linalg.norm(delta))
+        call, task = getattr(self, "pick_call", None), self.task or {}
+        if moved >= 0.08 and call and call["tid"] == task.get("id") and name == self.cur and not call.get("again") \
+                and name not in self.holding.values():   # (not an object held out by the other hand: a handover)
+            again = dict(call, sliced=False)     # (planned right here: the old way down must not run meanwhile)
+            self.pick_place(**again)
+            self.pick_call["again"] = True
+            if (self.task or {}).get("status") in ("running", "planning"):
+                self.task["message"] = (f"{self.pretty(name)[:1].upper() + self.pretty(name)[1:]} moved {moved * 100:.0f} cm "
+                                        "before I could grasp it; picking it up where it is now. " + self.task["message"])
+            return
+        if not 1e-4 < moved < 0.08:
             return
         w = np.zeros(len(pts))
         w[i + 1:gk + 1] = 1.0
@@ -1298,6 +1310,8 @@ class Tasks(FixtureTasks):
         up and keep it in the hand (pick_from). Generated worlds set place_z / transit_z (pps/manip.py). sliced: the
         physics search runs a slice per server tick (search_tick)."""
         self.cur_action = action
+        self.pick_call = dict(tid=tid, obj=obj, target=target, target_uv=target_uv, cam=cam, aspect=aspect, via_pts=via_pts,
+                              grasp=grasp, sliced=sliced, dest=dest, hold=hold, action=action)   # (_regrasp_aim plans again)
         caps = getattr(self.rt, "capabilities", None)
         if caps is not None and "pick_place" not in caps:
             prof = getattr(self.rt, "profile", None)

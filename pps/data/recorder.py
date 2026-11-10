@@ -26,6 +26,7 @@ import copy
 import os
 import queue
 import re
+import sys
 import threading
 import time
 import traceback
@@ -42,6 +43,20 @@ DATASETS = Path(os.environ.get("PC_DATASETS_DIR") or ROOT / "datasets")
 NOT_EPISODES = ("follow_me", "video", "world", "demo", "teach")
 MOTION = ("pick_place", "reach", "follow_path", "play_skill", "drive", "handover", "traj")
 MAX_LIST = 30
+
+
+def _background():
+    """The dataset thread is background work: a lower scheduling priority, so on a machine with few cores its offscreen
+    rendering (all CPU without a GPU: OSMesa) waits for the server's real-time loop instead of slowing it down. Linux:
+    nice +10 for this thread only (and the renderer threads it starts, which inherit it); macOS: the utility QoS class."""
+    try:
+        if sys.platform.startswith("linux"):
+            os.setpriority(os.PRIO_PROCESS, threading.get_native_id(), 10)   # a thread id: this thread only
+        elif sys.platform == "darwin":
+            import ctypes
+            ctypes.CDLL(None).pthread_set_qos_class_self_np(0x11, 0)       # QOS_CLASS_UTILITY
+    except Exception:
+        pass
 
 
 def slug(s):
@@ -410,6 +425,7 @@ class DatasetRecorder:
         return w
 
     def _run(self):
+        _background()
         cams, cams_model, d2 = None, None, None
         while True:
             job = self.q.get()

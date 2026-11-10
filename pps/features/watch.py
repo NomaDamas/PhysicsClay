@@ -141,10 +141,23 @@ def watch_tick(ctx):
     ray = cp.get("point")
     held = [o for o in getattr(tasks, "holding", {}).values() if o]
     m = w["model"]
-    h = m.update(J, src, now, objects=_objects(tasks), robot_held=held,
-                 detected=(getattr(rt, "last_context", None) or {}).get("holding"), pointing=bool(ray and ray.get("armed")),
-                 offer=cp.get("offer"), hand_open=cp.get("hand_open"), pts=getattr(ctx, "pts", None),
-                 near_x=T.TABLE_X[1] + 0.15)
+    # every new reading of the person, in order and with its own time (a played feed can bring several per frame, or
+    # none when the loop runs faster than the feed); the learn recorder keeps them all
+    samples = cp.get("samples")
+    if samples is None or (not samples and w.get("human") is None):
+        samples = [(now, J)]
+    mode, rec, events = w["mode"], w["rec"], []
+    h = w.get("human")
+    objs = _objects(tasks)
+    for ts, Jk in samples:
+        h = m.update(Jk, src, ts, objects=objs, robot_held=held,
+                     detected=(getattr(rt, "last_context", None) or {}).get("holding"), pointing=bool(ray and ray.get("armed")),
+                     offer=cp.get("offer"), hand_open=cp.get("hand_open"), pts=getattr(ctx, "pts", None),
+                     near_x=T.TABLE_X[1] + 0.15)
+        events += m.events
+        if mode == "learn" and rec is not None:
+            rec.add(ts, h, [v for k, v in m.events if k == "rep"])
+    m.events = events
     w["human"] = h
     # Real camera (#37): the pose's hand points are knuckles, too coarse for open / closed; when MediaPipe Hands in the
     # browser sees a hand, its 21-point reading decides co-presence's hand_open too (state.copresence.hand_open).
@@ -152,22 +165,18 @@ def watch_tick(ctx):
         for side, hd in (h.get("hands") or {}).items():
             if hd.get("src") == "hands" and hd.get("open") is not None:
                 cp["hand_open"][side[0]] = bool(hd["open"])
-    for kind, val in m.events:
+    for kind, val in events:
         if kind == "activity" and val not in ("none", "moving", "still") and w["mode"] != "off":
             _event(w, "activity", f"{val}")
-    mode = w["mode"]
     if mode == "mirror":
         _mirror(ctx, w, h, now)
     elif mode == "learn":
-        rec = w["rec"]
-        if rec is not None:
-            rec.add(now, h, [v for k, v in m.events if k == "rep"])
-            if rec.seconds > demo_mod.MAX_S:
-                _set_mode(ctx, w, "off", {})
+        if rec is not None and rec.seconds > demo_mod.MAX_S:
+            _set_mode(ctx, w, "off", {})
     elif mode == "assist":
         _assist(ctx, w, h, now)
     elif mode == "coach":
-        _coach(ctx, w, h, m.events, now)
+        _coach(ctx, w, h, events, now)
     if mode in ("respond", "assist", "coach"):
         _rules(ctx, w, h, now)
     if mode != "off":
