@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 
 from . import depth as depthmod
-from . import library, physical, recognize, scale, segment
+from . import fit, library, physical, recognize, scale, segment
 from .base import ReconError, slug
 from .providers import get as get_provider
 
@@ -124,10 +124,11 @@ def import_object(job, images, hints=None, provider="primitive", keys=None, dept
                                                ([b["box"] for b in segment.detect(im)] if k else []))
         job.at("shape", 0.1)
         kw = {"progress": lambda step, f: job.at(step, f), "keys": keys} if prov.name != "primitive" else {}
+        pk = {"kind": desc["kind"] if desc.get("kind_source") != "default" else None}   # unknown things: let the shape decide
         if prov.name == "primitive":
-            r = prov.reconstruct(im, mask, {"kind": desc["kind"]}, depth=d_metric, disp=disp, K=K)
+            r = prov.reconstruct(im, mask, pk, depth=d_metric, disp=disp, K=K)
         else:
-            r = prov.reconstruct(im, mask, {"kind": desc["kind"]}, **kw)
+            r = prov.reconstruct(im, mask, pk, **kw)
         results.append((r, im, mask, msrc, rect, d_metric is not None))
     best = max(range(len(results)), key=lambda i: results[i][0].confidence)
     recon, im, mask, msrc, rect, had_metric = results[best]
@@ -150,6 +151,10 @@ def import_object(job, images, hints=None, provider="primitive", keys=None, dept
         notes.append(f"size clamped to {np.clip(ext.max(), 0.01, 0.6) * 100:.0f} cm (from {ext.max() * 100:.0f} cm)")
         ext = recon.extents
     recon.scale_m *= f
+    if desc.get("kind_source") == "default":              # nobody named it: its shape and size say what kind it is
+        desc["kind"] = fit.kind_from_dims(recon.shape, *[float(x) for x in ext])
+        if desc["kind"] in ("cup", "bowl", "box") and desc["material"] == "unknown":
+            desc["hollow"] = False
 
     job.at("physics")
     mass, mass_src = _mass_hint(hints, desc)

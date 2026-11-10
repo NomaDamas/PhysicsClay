@@ -49,12 +49,23 @@ PROMPT_OBJECT = (
     "Sizes are your best estimate of the real object in centimetres.")
 
 
-def classify(label, material=None):
-    """label words -> (scene kind, material, hollow)."""
+SHAPE_KIND = {"cylinder": "can", "sphere": "fruit", "bottle": "bottle", "bowl": "bowl", "plate": "plate", "box": "box"}
+
+
+def match(label):
+    """label words -> (scene kind, material, hollow) or None when the words name nothing known."""
     lab = str(label or "").lower()
     for words, (kind, mat, hollow) in LABELS:
         if any(re.search(rf"(^|[^a-z]){re.escape(w)}", lab) for w in words):
-            return kind, (material if material in MATERIALS else mat), hollow
+            return kind, mat, hollow
+    return None
+
+
+def classify(label, material=None):
+    """label words -> (scene kind, material, hollow); unknown words -> a box of unknown material."""
+    m = match(label)
+    if m:
+        return m[0], (material if material in MATERIALS else m[1]), m[2]
     return "box", (material if material in MATERIALS else "unknown"), False
 
 
@@ -146,11 +157,15 @@ def describe(img, hints=None, gemini_key=None, llm_cfg=None, boxes=()):
     if note and out["source"] in ("none", "detector", "you"):
         out["note"] = note
     kind, mat, hollow = classify(out["label"] or "", out["material"])
+    src = "label" if match(out["label"] or "") else "default"
+    if src == "default" and str(out.get("shape") or "").lower() in SHAPE_KIND:   # "a red cylinder": the VLM's shape
+        kind, src = SHAPE_KIND[str(out["shape"]).lower()], "shape"
+        hollow = kind in ("bowl",)
     if hints.get("kind") in KIND_SHAPES:
-        kind = hints["kind"]
+        kind, src = hints["kind"], "you"
     if isinstance(out.get("vlm"), dict) and isinstance(out["vlm"].get("hollow"), bool):
         hollow = out["vlm"]["hollow"]
-    out.update(kind=kind, material=mat, hollow=bool(hollow), name=slug(out["label"] or "thing") or "thing")
+    out.update(kind=kind, kind_source=src, material=mat, hollow=bool(hollow), name=slug(out["label"] or "thing") or "thing")
     return out
 
 

@@ -279,6 +279,26 @@ def test_imported_object_rests_on_the_table_under_gravity(lib):
     assert sim.MESHES.get("rc_my_bottle_vis") == meta["id"]
 
 
+def test_generator_draws_library_objects(lib):
+    import importlib.util
+    from pathlib import Path
+
+    from pps.world import scene
+    spec_ = importlib.util.spec_from_file_location("gen", Path(__file__).resolve().parents[1] / "scripts" / "generate.py")
+    gen = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(gen)
+    meta = _saved()
+    pool = gen.library_objects()
+    assert [m["id"] for m in pool] == [meta["id"]]
+    rng = np.random.default_rng(3)
+    seen = []
+    for _ in range(6):
+        sp = gen.randomize_scene("table", [{"name": "red_cup", "kind": "cup", "color": "red", "_named": True}], rng, True, pool, True)
+        n, _ = scene.normalize(sp)
+        seen += [o for o in n["objects"] if o.get("mesh")]
+    assert seen and all(o["mesh"] == meta["id"] and 0.9 <= o["scale"] <= 1.1 for o in seen)
+
+
 # ---------------------------------------------------------------------------------------------- providers (no network)
 def _glb_box():
     box = trimesh.creation.box(extents=[0.2, 0.4, 0.1])                  # y up in glTF: 0.4 tall, 0.1 deep
@@ -350,7 +370,7 @@ def test_triposr_adapter_with_a_stub_model(monkeypatch):
             return ["codes"]
 
         def extract_mesh(self, codes, has_vertex_color, resolution=256):
-            m = trimesh.creation.box(extents=[0.3, 0.5, 0.8])            # raw TripoSR frame: x away, -y across, z up
+            m = trimesh.creation.box(extents=[0.3, 0.5, 0.8])            # raw TripoSR frame: x to the camera, y across, z up
             m.visual = trimesh.visual.ColorVisuals(m, vertex_colors=np.tile([220, 40, 40, 255], (len(m.vertices), 1)))
             return [m]
 

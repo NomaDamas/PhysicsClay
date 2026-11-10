@@ -200,19 +200,9 @@ def measure_points(Z, plane, mask, kind=None):
     else:
         lo, hi = Q[:, :2].min(0), Q[:, :2].max(0)
         ex, ey, h_, xy = hi[0] - lo[0], 2 * (hi[1] - lo[1]), H, [(lo[0] + hi[0]) / 2, hi[1]]
-    return {"xy": np.asarray(xy, float), "front": False, "w": float(ex), "d": float(ey), "h": float(h_), "shape": shape}
-
-
-def _kind_from_dims(shape, w, d, h):
-    if shape == "box":
-        return "block" if max(w, d, h) < 0.07 else "box"
-    if h > 1.6 * max(w, d):
-        return "bottle" if h > 0.15 else "can"
-    if h < 0.3 * max(w, d):
-        return "plate" if shape in ("cylinder", "lathe") else "box"
-    if shape == "hull":
-        return "fruit" if h < 0.9 * max(w, d) else "box"
-    return "cup"
+    x0, x1 = np.percentile(Q[:, 0], [2, 98])               # straight across the photo: right even when depth bends
+    return {"xy": np.asarray(xy, float), "front": False, "w": float(ex), "d": float(ey), "h": float(h_), "shape": shape,
+            "lat": float(x1 - x0)}
 
 
 def _iou(a, b):
@@ -332,9 +322,13 @@ def scan(job, img, hints=None, depth=None, K=None, gemini_key=None, llm_cfg=None
         m = o.get("mask")
         label = o.get("label")
         kind, material, _ = recognize.classify(label or "")
-        meas = measure_points(Z, plane, m, kind if label else None) if use_points and m is not None and m.any() else None
-        if meas is not None and depth is None:          # relative depth: trust widths and heights, not the depth axis
-            meas.update(d=None, shape=None)
+        known = recognize.match(label or "") is not None    # "red cylinder" names no kind: its shape will
+        meas = measure_points(Z, plane, m, kind if known else None) if use_points and m is not None and m.any() else None
+        if meas is not None and depth is None:          # relative depth: trust widths across the photo and heights
+            meas.update(w=meas["lat"], d=None, shape=None)
+        shape_word = next((k for w_, k in recognize.SHAPE_KIND.items() if w_ in str(label or "").lower()), None)
+        if not known and shape_word:                    # "a red cylinder": a shape word is a kind too
+            kind, known = shape_word, True
         if meas is None:                                # rays: the lowest pixel meets the plane, the top projects up
             if m is not None and m.any():
                 ys, xs = np.nonzero(m)
@@ -348,7 +342,7 @@ def scan(job, img, hints=None, depth=None, K=None, gemini_key=None, llm_cfg=None
                 continue
             wid = float(np.linalg.norm(pr - pl))
             meas = {"xy": plane.table_xy(base), "front": True, "w": wid, "d": None, "h": float(plane.height(base, v0)), "shape": None}
-        out.append(dict(meas, label=label, kind=kind if label else None, material=material, box=[int(u0), int(v0), int(u1), int(v1)],
+        out.append(dict(meas, label=label, kind=kind if known else None, material=material, box=[int(u0), int(v0), int(u1), int(v1)],
                         mask=m, vlm=o.get("vlm") or {}, score=o.get("score", 0.5)))
     if not out:
         return {"surface": {"kind": "table", "from": plane.source, "confidence": plane.confidence}, "objects": [],
@@ -374,7 +368,7 @@ def scan(job, img, hints=None, depth=None, K=None, gemini_key=None, llm_cfg=None
     for o in out:
         wid, hei = o["w"] * f, o["h"] * f
         if o["kind"] is None:
-            o["kind"] = _kind_from_dims(o["shape"], wid, (o["d"] or wid) * f, hei) if o["shape"] else _kind_from_shape(o["mask"], wid, hei)
+            o["kind"] = fit.kind_from_dims(o["shape"], wid, (o["d"] or wid) * f, hei) if o["shape"] else _kind_from_shape(o["mask"], wid, hei)
         vd = o["vlm"].get("depth_cm") if isinstance(o["vlm"], dict) else None
         if o["d"] is not None:
             dep = o["d"] * f

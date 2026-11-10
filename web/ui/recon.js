@@ -12,6 +12,7 @@
   const LS = { get(k) { try { return localStorage.getItem(k) || ""; } catch (e) { return ""; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private */ } } };
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const arr = (x) => (Array.isArray(x) ? x : []);
+  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const svg = (body, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const ICON = {
     real: '<path d="M4 8.5h3l1.6-2h6.8l1.6 2h3V19H4z"/><path d="m12 10.2 3 1.7v3.4l-3 1.7-3-1.7v-3.4z"/><path d="m9 11.9 3 1.7 3-1.7M12 13.6V17"/>',
@@ -185,7 +186,7 @@
   }
   function setOpen(on) {
     open = !!on; card.hidden = !open;
-    if (open) { loadInfo(); setMode(mode); }
+    if (open) { loadInfo(); setMode(mode); requestAnimationFrame(() => card.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" })); }
   }
   PCUI.tool({ id: "real", label: "Real", icon: svg(ICON.real, 20), title: "Bring a real object or your table into the simulation from a photo",
     onSelect: () => setOpen(true), onDeselect: () => setOpen(false) });
@@ -361,6 +362,8 @@
       detail[which] = await r.json(); shown[which] = id;
       if (which === "object") showObject(detail.object); else showSpace(detail.space);
       render();
+      const res = card.querySelector(`[data-res="${which}"]`);
+      if (open && res && !res.hidden) res.scrollIntoView({ block: "nearest", behavior: reduce ? "auto" : "smooth" });
     } catch (e) { /* try again on the next state */ }
   }
   function showObject(j) {
@@ -420,7 +423,7 @@
       g.setAttribute("position", new T.BufferAttribute(new Float32Array(buf.slice(8, 8 + nv * 12)), 3));
       g.setIndex(new T.BufferAttribute(new Uint32Array(buf.slice(8 + nv * 12, 8 + nv * 12 + nf * 12)), 1));
       const off = 8 + nv * 12 + nf * 12, hasCol = buf.byteLength >= off + nv * 3;
-      if (hasCol) g.setAttribute("color", new T.BufferAttribute(new Uint8Array(buf.slice(off, off + nv * 3)), 3, true));
+      if (hasCol) g.setAttribute("color", new T.BufferAttribute(srgbToLinear(new Uint8Array(buf.slice(off, off + nv * 3))), 3));
       g.computeVertexNormals(); g.computeBoundingSphere();
       if (tt.mesh) { tt.group.remove(tt.mesh); tt.mesh.geometry.dispose(); tt.mesh.material.dispose(); }
       tt.mesh = new T.Mesh(g, new T.MeshStandardMaterial({ vertexColors: hasCol, color: hasCol ? 0xffffff : 0xb8bcc6, roughness: 0.7, metalness: 0.02 }));
@@ -429,7 +432,12 @@
       if (!tt.raf) loop();
     }).catch(() => {});
   }
-  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // photo colours are sRGB; three.js lights vertex colours in linear space
+  function srgbToLinear(u8) {
+    const out = new Float32Array(u8.length);
+    for (let i = 0; i < u8.length; i++) { const v = u8[i] / 255; out[i] = v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    return out;
+  }
   function loop() {
     tt.raf = requestAnimationFrame(loop);
     if (card.hidden || card.querySelector('[data-res="object"]').hidden) return;
@@ -437,8 +445,8 @@
     if (!w || !h) return;
     if (c.width !== Math.round(w * tt.renderer.getPixelRatio())) { tt.renderer.setSize(w, h, false); tt.cam.aspect = w / h; tt.cam.updateProjectionMatrix(); }
     if (tt.drag == null && !reduce) tt.yaw += 0.006;
-    const d = tt.size * 3.4;
-    tt.cam.position.set(Math.cos(tt.yaw) * d, Math.sin(tt.yaw) * d, d * 0.55); tt.cam.lookAt(0, 0, 0);
+    const d = tt.size * 4.6;                         // the whole object in view at any turn (fov 32°, from 25° above)
+    tt.cam.position.set(Math.cos(tt.yaw) * d * 0.9, Math.sin(tt.yaw) * d * 0.9, d * 0.42); tt.cam.lookAt(0, 0, 0);
     tt.renderer.render(tt.scene, tt.cam);
   }
 

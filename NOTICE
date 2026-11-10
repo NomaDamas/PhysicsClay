@@ -48,6 +48,13 @@ Robot models used by pps/world/profiles.py, from vendor/mink/examples/ (most der
 MediaPipe models (models/, downloaded from storage.googleapis.com/mediapipe-models):
     pose_landmarker_full.task, efficientdet_lite0.tflite: Apache-2.0 per the MediaPipe model cards (not on disk).
 
+Depth Anything V2 Small (models/depth_anything_v2_small.onnx, fetched on first use by pps/recon/depth.py from
+huggingface.co/onnx-community/depth-anything-v2-small at a pinned revision, SHA-256 checked):
+    Apache-2.0 (verified, Hugging Face model card / API license tag). Only the Small model is used: the Base, Large
+    and Giant Depth Anything V2 weights are CC BY-NC 4.0 and are never downloaded by PhysicsClay.
+
+docs/recon/aruco_4x4_50_id0.svg: an ArUco marker generated with OpenCV (part of this repository, Apache-2.0).
+
 ======================================================================================================================
 3. Python dependencies (pyproject.toml; installed, not redistributed)
 ======================================================================================================================
@@ -63,6 +70,13 @@ MediaPipe models (models/, downloaded from storage.googleapis.com/mediapipe-mode
     opencv-python ......... Apache-2.0 (its wheels bundle FFmpeg and Qt under LGPL)              (verified)
     imageio, imageio-ffmpeg BSD-2-Clause (imageio-ffmpeg downloads/bundles an FFmpeg binary, GPL/LGPL) (verified)
     mediapipe [vision] .... Apache-2.0                                   (verified)
+    trimesh ............... MIT                                          (verified, package metadata)
+    onnxruntime [recon] ... MIT                                          (verified, package metadata)
+    coacd [recon] ......... MIT                                          (verified, package metadata)
+    scipy [recon] ......... BSD-3-Clause                                 (verified, package metadata)
+    torch, omegaconf, einops, transformers, Pillow [recon] (only for the opt-in TripoSR provider):
+                            torch: BSD-3-Clause AND Apache-2.0 AND MIT and others (package metadata); omegaconf: BSD;
+                            einops: MIT; transformers: Apache-2.0; Pillow: MIT-CMU       (verified, package metadata)
     pyarrow [data] ........ Apache-2.0
     ruff, pytest [dev] .... MIT
 
@@ -89,6 +103,19 @@ MediaPipe models (models/, downloaded from storage.googleapis.com/mediapipe-mode
 
     Google Gemini (Live, Robotics-ER) and OpenAI-compatible LLM/TTS endpoints are called only with a key from
     .env or one a visitor enters in the browser. Their terms of service apply to that use.
+
+    Photo -> 3D (pps/recon/providers, docs/RECON.md), only with a key the person brings:
+      fal.ai, model fal-ai/trellis ... Microsoft TRELLIS, model weights and most code MIT (github.com/microsoft/TRELLIS);
+                                       fal.ai's terms of service apply to the API use.
+      Meshy image-to-3d .............. Meshy terms of use: outputs made on the free plan are owned by Meshy and licensed
+                                       CC BY 4.0; on a paid plan the customer owns them; API outputs are deleted after
+                                       3 days; no training of competing models on outputs.
+    Opt-in, local (never downloaded unless PC_TRIPOSR=1):
+      TripoSR (Tripo AI & Stability AI) MIT, code (github.com/VAST-AI-Research/TripoSR, not redistributed here) and
+                                       weights (huggingface.co/stabilityai/TripoSR, 1.68 GB).
+    Deliberately NOT offered (license limits): Tencent Hunyuan3D 2.x (its community license excludes the EU, the UK
+    and South Korea and caps at 1 M monthly active users); Stability AI Stable Fast 3D / SPAR3D (Stability AI
+    Community License, free only under US$1 M annual revenue); Depth Anything V2 Base / Large / Giant (CC BY-NC 4.0).
 
 ======================================================================================================================
 6. Acknowledgements

@@ -88,7 +88,9 @@ async function addColors(geo, url) {
     const r = await fetch(url); if (!r.ok) return false;
     const c = new Uint8Array(await r.arrayBuffer());
     if (c.length !== geo.getAttribute("position").count * 3) return false;
-    geo.setAttribute("color", new THREE.BufferAttribute(c, 3, true));
+    const lin = new Float32Array(c.length);         // photo colours are sRGB; vertex colours are lit in linear space
+    for (let i = 0; i < c.length; i++) { const v = c[i] / 255; lin[i] = v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    geo.setAttribute("color", new THREE.BufferAttribute(lin, 3));
     return true;
   } catch (e) { return false; }
 }

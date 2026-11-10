@@ -226,6 +226,19 @@ def choose_shape(Q, kind=None):
     return "cylinder", cyl, conf
 
 
+def kind_from_dims(shape, w, d, h):
+    """Scene kind for a thing nobody named, from its fitted shape and size (metres)."""
+    if shape == "box":
+        return "block" if max(w, d, h) < 0.07 else "box"
+    if h > 1.6 * max(w, d):
+        return "bottle" if h > 0.15 else "can"
+    if h < 0.3 * max(w, d):
+        return "plate" if shape in ("cylinder", "lathe") else "box"
+    if shape in ("hull", "mesh"):
+        return "fruit" if h < 0.9 * max(w, d) else "box"
+    return "cup"
+
+
 # ------------------------------------------------------------------ meshes (z up, centred on the bounding box)
 def _tm():
     import trimesh

@@ -102,6 +102,7 @@ keyboard shortcuts act directly.
 | **Goal** | show the result | **Arrange in 3D**: drag ghost copies of the objects, then **Make it so**. **From a photo**: a photo of the layout you want. |
 | **Show** | teach a task | Starts *Teach by showing*: do the task on camera and say what matters, then "done". The robot lists the steps it understood, asks about anything unclear, practises in sim; you correct and save it as a skill. |
 | **Path** | draw a route | Click 2–5 spots: ghost grippers connect into a checked path. Drag them to adjust ([Trajectories](#trajectories)). |
+| **Real** | bring real things in | **An object**: photos of one thing (or the live phone camera), say how big it is, **Reconstruct**, check the 3D preview, **Add to scene**: a graspable object with its real size, mass and friction. **My table**: a photo of your table → **Use this layout**. ([docs/RECON.md](RECON.md)) |
 
 Some robots add **Handover** (pass an object between two arms) and **Drive** (mobile bases: point first, then
 Drive); both ask the LLM agent. Change the robot or the scene from the robot pill in the top bar.

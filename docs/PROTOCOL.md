@@ -647,3 +647,41 @@ Method, math and results: `docs/calibration.md`.
   not retried for the rest of the run. `state.tts_server`: the server has an OpenAI key (never with `--byok`).
 * **Server views zoom.** `{type: "camera", zoom}`: one proportional factor per message (the browser sums wheel deltas
   and sends at most every 30 ms); the server clamps it to 0.25–4 and the distance to 0.35–8 m.
+
+## v12 · Real photos → simulated objects and spaces (#50, `pps/recon/`, `pps/features/recon.py`, `web/ui/recon.js`; guide: `docs/RECON.md`)
+
+HTTP (multipart; keys in headers `X-Gemini-Key`, `X-Fal-Key`, `X-Meshy-Key`, used for that one job, never stored):
+
+* `POST /recon/import` — `photo` (1–4), `depth`? (16-bit PNG in mm or `.npy` in m, for photo 1), `meta` = JSON
+  `{provider: "primitive" | "triposr" | "fal_trellis" | "meshy", hints: {label?, size? ("9 cm tall"), material?,
+  crop? [u0, v0, u1, v1] 0–1, reference? "card" | "a4", mass_kg?, vlm? false}, K? [fx, fy, cx, cy], tag?}` →
+  `{ok, job}` (400 `{ok: false, message}` for a bad upload).
+* `POST /recon/scan` — `photo`, `depth`?, `meta` `{hints: {surface?, template?, vlm?}, K?, tag?}` → `{ok, job}`.
+* `GET /recon/job/<id>` → the job in full: `{id, kind: "object" | "space", status: queued | running | ready | failed |
+  added, step, progress, message, error, steps: [{id, label, state}], seconds, added, summary}`. Object summary:
+  `{label, kind, material, hollow, recognized_by, provider: {id, label, license}, shape, size_cm [x, y, z], mass_g,
+  mass_source, friction, scale: {source, label, confidence, factor}, scales [...], confidence, views, mask: {source,
+  rect}, depth: metric | relative | none, faces, hulls, collision, watertight, notes, marker?}`. Space summary:
+  `{count, surface, template, layout: {surface, scale, objects: [{name, label, kind, color, size_m [x, y, z], xy, box}]},
+  spec, spec_real?, objects_brief, notes}`.
+* `GET /recon/job/<id>/mesh.bin` (preview: `[nv, nf]` u32, verts f32, faces u32, then RGB u8 per vertex),
+  `/recon/job/<id>/overlay.jpg` (outline or boxes), `/recon/colors/<lib>.bin` (RGB u8 per visual vertex of a library
+  object), `/recon/library.json`, `/recon/library/<id>/photo.jpg`, `/recon/info.json` (providers with licenses, depth
+  model status, library, marker), `/recon/marker.png` (print-at-home ArUco, DICT_4X4_50 id 0, 5 cm).
+
+Websocket:
+
+* `{type: "recon", op: "import", source: "camera", provider?, hints?, keys?: {gemini, fal, meshy}, tag?, add?}` — the
+  freshest phone / browser camera frame (else the laptop webcam); `add: true` adds it to the scene when ready (agent).
+* `{type: "recon", op: "scan", source: "camera", hints?, keys?, use?, shapes?}` — `use: true` builds the scene when ready.
+* `{type: "recon", op: "add", job, height_m?, name?, movable?}` — save to the library, then `{type: "world", op:
+  "add_object", object: {name, kind, mesh: <lib id>, scale, movable}}`.
+* `{type: "recon", op: "use_layout", job, shapes?: "primitive" | "real", template?}` — `world set` with the layout
+  (`real`: each object reconstructed and saved first).
+* `{type: "recon", op: "add_library", id, height_m?, name?}` · `{type: "recon", op: "delete_library", id}`.
+
+State: `recon = {jobs: [last 3 job summaries], providers: {id: usable}, depth: "ready" | "on first use" | "downloading"
+| "off", library: <count>, reply: {id, ok, op, message, job?, lib?, name?}}`.
+
+Scene specs: an object may carry `mesh: <library id>` and `scale` (its kind stays a scene kind: cup, can, bottle, bowl,
+plate, fruit, vase, block, box). `/scene.json` mesh entries of imported objects add `colors: "/recon/colors/<lib>.bin"`.

@@ -19,9 +19,10 @@ from ..base import Recon, ReconError
 
 ROOT = Path(__file__).resolve().parents[3]
 LICENSE = "MIT (TripoSR code and weights, stabilityai/TripoSR)"
-# TripoSR's raw meshes are z-up with the input view looking along +x; this turns them so x runs across the photo
-# (the convention every provider follows: x across, y away from the camera, z up)
-TO_PC = np.array([[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+# TripoSR's frame (tsr/utils.py: "x back, y right, z up"; the input camera sits on +x looking at the origin) -> this
+# pipeline's (x across the photo, y away from the camera, z up). Checked on a real run: raw y across the photo matches
+# the object's outline with IoU 0.89, raw x only 0.67.
+TO_PC = np.array([[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
 _model = {"m": None, "device": None}
 _lock = threading.Lock()
 
