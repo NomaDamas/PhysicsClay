@@ -911,8 +911,21 @@ def physics_msg(rt, tasks, c):
         p = tasks.obj_pos(name) + np.array([0, 0, float(np.clip(float(c.get("height", 0.1)), 0.0, 0.5))])
         tasks.set_obj_pose(name, p)
         tasks.set_task(tid, "physics", "done", f"Dropped {tasks.pretty(name)} from {float(c.get('height', 0.1)) * 100:.0f} cm.")
+    elif op == "place":                   # a test probe: set an object down at rest at [x, y] (as if the person moved it)
+        name = tasks.obj_name(c.get("object")) if c.get("object") else None
+        try:
+            xy = [float(v) for v in (c.get("pos") or [])[:2]]
+        except (TypeError, ValueError):
+            xy = []
+        if name not in pl.objects or len(xy) != 2:
+            tasks.set_task(tid, "physics", "failed", "Say which object and where: {object, pos: [x, y]}.")
+            return
+        p = tasks.obj_pos(name)
+        p[0], p[1] = xy
+        tasks.set_obj_pose(name, p)
+        tasks.set_task(tid, "physics", "done", f"Put {tasks.pretty(name)} at ({xy[0]:.2f}, {xy[1]:.2f}).")
     else:
-        tasks.set_task(tid, "physics", "failed", f"Unknown physics op '{op}'. Use set, reset or drop.")
+        tasks.set_task(tid, "physics", "failed", f"Unknown physics op '{op}'. Use set, reset, drop or place.")
 
 
 def SKILL_FILE(key):
@@ -939,6 +952,8 @@ def dispatch(tasks, rt, c, cam):
         return
     if a == "pick_place":
         tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT)
+    elif a == "handover":                         # between a two-armed robot's hands (to the person: pps/features/copresence.py)
+        tasks.handover_arms(tid, c.get("object"), c.get("to"), c.get("target"), cam, ASPECT)
     elif a == "press":
         tasks.press(tid, c.get("target"), c.get("target_uv"), cam, ASPECT, c.get("force", 10.0), c.get("hold_s", 1.5))
     elif a == "reach":

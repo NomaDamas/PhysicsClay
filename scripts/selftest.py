@@ -58,10 +58,22 @@ async def main():
         return st.get("task") or {}
 
     async def until_done(limit=25):
-        t0 = time.time()
-        while time.time() - t0 < limit:
+        """Wait for the task to end: `limit` seconds of the robot's own (sim) time when physics runs, so a loaded machine
+        running the plant slower than real time doesn't fail a check (capped at 4x the limit of wall time)."""
+        t0, sim, last = time.time(), 0.0, None
+        while time.time() - t0 < 4 * limit:
             await pump(0.3)
             if st.get("task", {}).get("status") != "running":
+                break
+            ph = st.get("physics") or {}
+            if ph.get("mode") != "dynamic":
+                if time.time() - t0 >= limit:
+                    break
+                continue
+            now = float(ph.get("time") or 0.0)
+            sim += max(0.0, now - last) if last is not None and now >= last else 0.0   # (the clock restarts on a reset)
+            last = now
+            if sim >= limit:
                 break
         return st.get("task") or {}
 

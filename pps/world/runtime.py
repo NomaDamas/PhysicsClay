@@ -142,6 +142,18 @@ class BodyRuntime(Runtime):
         if pairs:
             self.limits.append(mink.CollisionAvoidanceLimit(model=mi, geom_pairs=pairs, minimum_distance_from_collisions=0.005,
                                                             collision_detection_distance=0.06))
+        if plant is not None and len(self.hands) == 2 and p.base != "legged":   # two arms (ALOHA): the hands keep apart
+            near = []
+            for h in self.hands:
+                b, links = m.site_bodyid[m.site(self.ee_site[h]).id], set()
+                for _ in range(3):
+                    links.add(b)
+                    b = m.body_parentid[b]
+                links |= {c for c in range(m.nbody) if self._under(c, m.site_bodyid[m.site(self.ee_site[h]).id])}
+                near.append([g for g in range(m.ngeom) if m.geom_bodyid[g] in links and (m.geom_contype[g] or m.geom_conaffinity[g])])
+            if near[0] and near[1]:
+                self.limits.append(mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(near[0], near[1])], minimum_distance_from_collisions=0.02,
+                                                                collision_detection_distance=0.10))
         if plant is not None and p.base == "legged":     # the hands (and grippers) keep off the robot's own torso and legs
             own = self._self_pairs(robot_bodies)
             if own:

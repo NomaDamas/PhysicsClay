@@ -150,12 +150,15 @@ async def run(t):
     tk = await t.task("pick_place", 3, object="mug", target="center")
     await t.pump(0.4)
     n0 = t.state().get("nudge") or {}
-    await t.send(type="nudge", dx=0.0, dy=0.02, dz=0.0)
+    # with physics, away from the vase: the G1's 18 cm wide side gripper doesn't fit 2 cm closer to it at that spot (the
+    # nudge says so); the kinematic hand was a point
+    dy = -0.02 if ((t.state().get("physics") or {}).get("mode")) == "dynamic" else 0.02
+    await t.send(type="nudge", dx=0.0, dy=dy, dz=0.0)
     await t.pump(0.6)
     n1 = t.state().get("nudge") or {}
     t.check("nudge: active while a task runs", tk.get("status") == "running" and n0.get("active") and n0.get("kind") == "running", str(n0))
     p0, p1 = n0.get("pos"), n1.get("pos")
-    t.check("nudge: moves the active target 2 cm", (n1.get("last") or {}).get("ok") and p0 and p1 and abs(p1[1] - p0[1] - 0.02) < 1e-3
+    t.check("nudge: moves the active target 2 cm", (n1.get("last") or {}).get("ok") and p0 and p1 and abs(p1[1] - p0[1] - dy) < 1e-3
             and abs(p1[0] - p0[0]) < 1e-3, f"{p0} -> {p1} {n1.get('offset')} {(n1.get('last') or {}).get('message')}")
     await t.send(type="speed", scale=1.0)
     done = await t.until_done(30)

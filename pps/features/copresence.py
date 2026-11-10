@@ -712,8 +712,8 @@ def copresence_tasks(ctx, msg):
     a = msg.get("action")
     if a == "pick_place" and msg.get("hold"):
         return _pick_hold(ctx, msg)
-    if a == "handover":
-        return _handover(ctx, msg)
+    if a == "handover" and not (msg.get("to") or msg.get("between_arms")):   # to the person (between a robot's two
+        return _handover(ctx, msg)                                            # hands: tasks.handover_arms)
     return None
 
 

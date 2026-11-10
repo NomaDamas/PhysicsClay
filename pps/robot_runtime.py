@@ -261,7 +261,7 @@ class Runtime:
         """Stop where the robot is: the planner takes the measured pose so q_des doesn't keep pulling the arm."""
         if self.plant is None:
             return
-        self.configuration.update(self.plant.d.qpos[:self.plant.nq_r].copy())
+        self.configuration.update(self.plant.measured_q(self.configuration.model))
         for h in self.hands:
             self.mocap_to_site(f"{h}_target", self.ee_site[h])
 
@@ -311,7 +311,8 @@ class Runtime:
         quats: an orientation per waypoint (else the hand target's current one)."""
         cfg = mink.Configuration(self.configuration.model)
         cfg.data.mocap_pos[:], cfg.data.mocap_quat[:] = self.ik_data.mocap_pos, self.ik_data.mocap_quat   # objects (physics)
-        cfg.update(self.configuration.q.copy())
+        cfg.update(self.plant.measured_q(cfg.model) if self.plant is not None else self.configuration.q.copy())   # physics: from
+        # where the arm really is (it may trail the plan)
         task = self.hand_tasks[self.hands.index(palm)]
         saved = task.transform_target_to_world
         mid = self.hands_mid[palm]
@@ -326,7 +327,11 @@ class Runtime:
                 cfg.integrate_inplace(self.solve(cfg, dt), dt)
         for k, p in enumerate(pts):
             task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[k]), p))
-            for _ in range(iters):
+            n = iters
+            if quats is not None and k > 0:       # the hand turns slower than it moves: more time where it turns a lot
+                ang = 2 * np.arccos(min(1.0, abs(float(np.dot(quats[k - 1], quats[k])))))
+                n = iters * (1 + int(ang / 0.25))
+            for _ in range(n):
                 v = self.solve(cfg, dt)
                 cfg.integrate_inplace(v, dt)
             dist = float(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p))

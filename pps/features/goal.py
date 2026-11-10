@@ -88,22 +88,26 @@ def _blocker(p, r, others, gap=GAP):
     return None
 
 
-def _free_near(p, r, others, reach_bias=True):
-    """Nearest point to p on the table that clears every (name, xy, r) in others."""
+def _free_near(p, r, others, reach_bias=True, ok=None):
+    """Nearest point to p on the table that clears every (name, xy, r) in others (and, given ok(xy), that ok accepts:
+    physics checks that the hand can really set it down there)."""
     if _on_table(p, r) and _blocker(p, r, others) is None:
         return np.asarray(p, float)
-    best = None
+    cands = []
     for rad in np.arange(0.03, 0.30, 0.02):
         for ang in np.linspace(0, 2 * np.pi, 24, endpoint=False):
             c = np.array([p[0] + rad * np.cos(ang), p[1] + rad * np.sin(ang)])
             if not _on_table(c, r) or _blocker(c, r, others) is not None:
                 continue
             score = rad + (0.6 * max(0.0, c[0] - 0.40) + 0.4 * max(0.0, abs(c[1]) - 0.30) if reach_bias else 0.0)
-            if best is None or score < best[0]:
-                best = (score, c)
-        if best is not None and rad > best[0] + 0.02:
+            cands.append((score, len(cands), c))
+        if cands and ok is None and rad > min(cands)[0] + 0.02:
             break
-    return None if best is None else best[1]
+    cands.sort(key=lambda x: x[:2])
+    for _, _, c in cands[:10] if ok is not None else []:
+        if ok(c):
+            return c
+    return cands[0][2] if cands else None
 
 
 def _obstacles(tasks):
@@ -158,7 +162,11 @@ def plan(tasks, targets):
         n0 = pending[0]
         b = occupant(n0, fixed[n0])
         others = obst + [(m, sim[m], rad[m]) for m in objs if m != b] + [(m, q, rad[m]) for m, q in fixed.items() if m != b]
-        aside = _free_near(sim[b], rad[b], others)
+        reach = None
+        if getattr(tasks, "plant", None) is not None:     # physics: a spot the hand can really reach to set it down
+            hh = tasks.objs[b]["half_h"]
+            reach = lambda c: tasks._reach_err(np.array([c[0], c[1], TABLE_TOP + hh]), tasks.hand_for(c)) < 0.015
+        aside = _free_near(sim[b], rad[b], others, ok=reach)
         if aside is None:
             notes.append(f"I can't make room: {_pretty(tasks, b)} sits on {_pretty(tasks, n0)}'s goal and there is no free spot to set it aside.")
             break

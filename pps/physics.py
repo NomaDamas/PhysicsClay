@@ -574,6 +574,17 @@ class Plant:
         self.lag.clear()
         mujoco.mj_forward(self.m, d)
 
+    def measured_q(self, ik_model):
+        """The robot's measured joint positions for the planner, inside the planner's joint ranges (soft joint limits and
+        fingers squeezing an object can sit a hair past them, which would make the planner's limits infeasible)."""
+        q = self.d.qpos[:self.nq_r].copy()
+        for j in range(ik_model.njnt):
+            if ik_model.jnt_limited[j] and int(ik_model.jnt_type[j]) in (int(mujoco.mjtJoint.mjJNT_HINGE), int(mujoco.mjtJoint.mjJNT_SLIDE)):
+                a = ik_model.jnt_qposadr[j]
+                lo, hi = ik_model.jnt_range[j]
+                q[a] = min(max(q[a], lo + 1e-4), hi - 1e-4)
+        return q
+
     def settle(self, sec=0.4):
         for _ in range(int(sec / DT)):
             self._apply_ctrl(self.q_cmd, np.zeros(self.nq_r))
