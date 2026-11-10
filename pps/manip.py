@@ -313,7 +313,13 @@ class FixtureTasks:
         if tall:
             kps.append(far0)
             quats.append(qg)
-        kps += [g0 + np.array([0, 0, 0.10]), g0]
+        hover = g0 + np.array([0, 0, 0.10])
+        if not tall and hover[2] < T.TABLE_TOP + 0.10 and cur[2] > T.TABLE_TOP:
+            # a knob under a counter's edge (a drawer): down in front of the edge, not diagonally across it (the fingers
+            # trailing the plan caught the edge there and the hand never got to the knob)
+            kps.append(np.array([hover[0], hover[1], T.TABLE_TOP + 0.10]))
+            quats.append(qg)
+        kps += [hover, g0]
         quats += [qg, qg]
         ev = {len(kps) - 1: "grasp_fx"}
         for hp, qq in samples[1:]:
@@ -321,11 +327,15 @@ class FixtureTasks:
             quats.append(qq)
         ev[len(kps) - 1] = "release_fx"
         ge, qe = samples[-1]
-        kps.append(ge + np.array([0, 0, 0.10]))
+        back = ge + np.array([0, 0, 0.10])
+        kps.append(back)
         quats.append(qe)
         if tall:                                    # back out the way it came, not across the machine
             kps += [ge + o0 * 0.18 + np.array([0, 0, 0.10]), far0]
             quats += [qe, qe]
+        elif back[2] < T.TABLE_TOP + 0.10:          # (under a counter: up in front of its edge before going home over it)
+            kps.append(np.array([back[0], back[1], T.TABLE_TOP + 0.10]))
+            quats.append(qe)
         kps.append(home)
         quats.append(self.home_quat[palm])
         if self.plant is not None:
