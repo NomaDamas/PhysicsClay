@@ -51,8 +51,9 @@ makes them free bodies with mass and friction (same names), adds grippers / serv
 * `state.robot` / `state.robots` (UX 2.0 keys) stay as aliases.
 
 ### As built (World workstream notes for Brain / Robot UX)
-* Robot ids: `g1, panda, ur5e, xarm7, iiwa14, aloha, apollo, stretch3, tidybot, spot, h2` (`h2` is experimental: no
-  standing keyframe, reach only, no pick & place). Unknown kinds/colours in a scene spec fall back sensibly; `kind`
+* Robot ids: `g1, panda, ur5e, xarm7, iiwa14, aloha, apollo, stretch3, tidybot, spot, h2` (`h2` was experimental until
+  v1's final pass: its model has no standing keyframe, so one is computed from it (`pps/world/stand.py`), and with
+  physics a two-pad gripper on each palm does its grasping). Unknown kinds/colours in a scene spec fall back sensibly; `kind`
   also accepts `vase`. An object without a name is called `<color>_<kind>` when a colour is given, else `<kind>`.
 * Every `world` op answers in `state.task` (`action: "world"`, `done` with a one-sentence summary, or `failed` with
   the reason). `reset` goes back to the default world (G1 + the UX 2.0 table). `set` keeps whatever it isn't given
@@ -69,7 +70,7 @@ makes them free bodies with mass and friction (same names), adds grippers / serv
   It needs a long object (about 20 cm or more, both grippers on it); shorter ones are refused with the set-down
   alternative. Without `to` / `between_arms`, `handover` stays the co-presence handover to the person. Agent tool
   `handover_arms`; plan card with the steps.
-* With physics (V1 P0) every body but H2 does a real contact pick & place except where its note says otherwise (Stretch
+* With physics (V1 P0) every body does a real contact pick & place except where its note says otherwise (Stretch
   3: the SG3 fingers; Spot: the mug by its rim; TidyBot: small blocks 8/10); per-robot results in `docs/V1.md` "P0 as built" and
   `scripts/bench_grasp.py`. Physics-only profile tuning lives in `RobotProfile.physics` (gripper pads, servo stiffness,
   physics home pose, contact excludes, a riser under a mount: `mount.z`).
