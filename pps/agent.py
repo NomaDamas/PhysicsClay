@@ -43,6 +43,7 @@ MAX_OUTPUT_CHARS = 3500  # per tool result
 ROBOT_IDS = ("g1", "panda", "ur5e", "xarm7", "iiwa14", "aloha", "apollo", "stretch3", "tidybot", "spot", "h2")
 DEFAULT_CAPS = ["pick_place", "reach", "follow_path", "teach_by_showing", "imitate_video", "follow_me", "balance"]
 MOTION = ("pick_place", "reach", "follow_path", "play_skill")
+WATCH_MODES = ("off", "mirror", "learn", "respond", "assist", "coach")
 SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 UA = "PhysicsClay-agent/1.0"     # Cloudflare in front of some proxies rejects the default Python-urllib agent
 
@@ -237,6 +238,12 @@ def context(st, confirm=True):
         ctx["question_open"] = {"question": ch.get("question"), "options": [o.get("key") + "=" + str(o.get("label")) for o in ch.get("options") or []]}
     if st.get("skills"):
         ctx["skills"] = st.get("skills")
+    h, wt = st.get("human") or {}, st.get("watch") or {}
+    if h.get("visible") and h.get("src") != "synthetic":
+        ctx["person"] = {k: h.get(k) for k in ("activity", "phase", "reps", "holding", "offer", "summary") if h.get(k) not in (None, 0, "")}
+    if wt.get("mode") and (wt.get("mode") != "off" or wt.get("rules")):
+        ctx["watch"] = {"mode": wt.get("mode"), "rules": [f"{r.get('id')}: when {r.get('when') or r.get('expr')} -> {r.get('do')}"
+                                                          for r in wt.get("rules") or []]}
     return ctx
 
 
@@ -302,6 +309,37 @@ def tool_specs(st, confirm=True):
                               "the robot toward the table, +y to the robot's left. Small moves; the base will not drive into furniture.",
                      {"dx": {"type": "number", "description": "metres along x"}, "dy": {"type": "number", "description": "metres along y"},
                       "dyaw": {"type": "number", "description": "turn in degrees, left positive"}}))
+    T += [
+        _fn("set_watch_mode", "Watch the person and act on what they do. mirror = copy them live (whole body on the G1, the hand "
+                              "on arms: wrist position, palm turn, pinch -> gripper); learn = record a demonstration (stop it with "
+                              "learn_from_demo stop); respond = run the watch rules; assist = follow them and help when they stall "
+                              "(spotting); coach = count reps and correct their form; off = stop watching.",
+            {"mode": {"type": "string", "enum": list(WATCH_MODES)},
+             "hand": {"type": "string", "enum": ["auto", "left", "right"], "description": "Which of the person's hands a one-arm robot copies."},
+             "target": {"type": "string", "description": "assist: 'hands' (default, under their hands) or an object name to steady."}},
+            ["mode"]),
+        _fn("add_watch_rule", "Add a rule the robot keeps watching for: when the person does something, do something. Use the "
+                              "built-in conditions when they fit (combine with 'and' / 'not'): hand_open_near_robot, hand_out, "
+                              "hand_open, holding, holding:<tool>, not_holding, activity:<squat|curl|press|wave|weave|reach|point|still>, "
+                              "phase:<top|down|bottom|up>, reps>=<n>, stalled, still, pointing. For anything else compile the "
+                              "person's words into expr, a Python-like condition over state.human fields (activity, phase, reps, "
+                              "holding, speed, stalled, fatigue, offer, hands.right.open, hands.left.pinch, ...), e.g. "
+                              "'activity == \"squat\" and fatigue > 0.3'. do is what to do: 'give me the wrench' (hands the object to "
+                              "their hand), 'say ...', 'stop', 'help me' (assist), or an instruction for you.",
+            {"when": {"type": "string", "description": "Built-in condition(s), or the person's own words when you also give expr."},
+             "do": {"type": "string", "description": "The action, e.g. 'give me the wrench'."},
+             "expr": {"type": "string", "description": "Optional compiled condition over state.human (only when no built-in fits)."},
+             "cooldown": {"type": "number", "description": "Seconds before it may fire again (default 8)."}},
+            ["when", "do"]),
+        _fn("remove_watch_rule", "Remove a watch rule by id (R1, R2, ...), or 'all'.", {"id": {"type": "string"}}, ["id"]),
+        _fn("learn_from_demo", "Learn by watching: start recording the person's demonstration, stop it (saves it and reports the "
+                               "hand, tool, pattern such as a weave's width and frequency), or replay the last one as a proposed path "
+                               "on the object it was shown over.",
+            {"op": {"type": "string", "enum": ["start", "stop", "replay"]}, "name": {"type": "string", "description": "Name for the demonstration."}},
+            ["op"]),
+        _fn("mirror_person", "Start or stop copying the person live (shortcut for set_watch_mode mirror / off).",
+            {"enabled": {"type": "boolean"}}, ["enabled"]),
+    ]
     if "follow_me" in caps:
         T.append(_fn("follow_me", "Start or stop copying the user's body from their camera.", {"enabled": {"type": "boolean"}}, ["enabled"]))
     if "teach_by_showing" in caps:
@@ -549,6 +587,13 @@ class Agent:
             pt = cp.get("pointing") or {}
             out["person"] = {"pointing_at": pt.get("target"), "pointing_spot": pt.get("hit"), "hand_open": cp.get("hand_open"),
                              "attention": cp.get("attention")}
+        h = st.get("human") or {}
+        if h:   # P3: what the person is doing (without the 33-point pose, which only costs tokens)
+            out["human"] = {k: v for k, v in h.items() if k not in ("pose", "pose_filled")}
+        wt = st.get("watch") or {}
+        if wt:
+            out["watch"] = {"mode": wt.get("mode"), "rules": wt.get("rules"), "events": (wt.get("events") or [])[-5:],
+                            "last_demo": (wt.get("learn") or {}).get("last"), "coach": wt.get("coach"), "assist": wt.get("assist")}
         g = st.get("goal") or {}
         if g.get("status") and g.get("status") != "idle":
             out["goal"] = {"status": g.get("status"), "message": g.get("message"), "targets": g.get("targets")}
@@ -809,6 +854,57 @@ class Agent:
         self.push({"type": "teach", "cmd": "start"})
         ph, _ = self._wait(lambda s: (s.get("teach") or {}).get("phase") if (s.get("teach") or {}).get("phase") == "recording" else None, 3)
         return {"ok": ph is not None, "message": "Watching the user's camera now. They show the task, explain it, and say done."}
+
+    # ---- watching the person (P3: {type:"watch", ...}; state.human, state.watch)
+    def _watch(self, msg, timeout=4):
+        mid = self._tid("watch")
+        self.push(dict(msg, type="watch", id=mid))
+        r, st = self._wait(lambda s: (s.get("watch") or {}).get("reply") if ((s.get("watch") or {}).get("reply") or {}).get("id") == mid else None, timeout)
+        if r is None:
+            return {"ok": False, "message": "Watching isn't available on this server."}
+        out = {"ok": bool(r.get("ok")), "message": r.get("message"), "mode": (st.get("watch") or {}).get("mode")}
+        for k in ("rule", "demo"):
+            if r.get(k):
+                out[k] = r[k]
+        h = st.get("human") or {}
+        out["person"] = {k: h.get(k) for k in ("visible", "activity", "phase", "reps", "holding", "summary")}
+        return out
+
+    def t_set_watch_mode(self, a, confirm):
+        mode = str(a.get("mode") or "").lower()
+        msg = {"op": "mode", "mode": mode}
+        if a.get("hand"):
+            msg["hand"] = str(a["hand"])
+        if a.get("target"):
+            msg["target"] = str(a["target"])
+        return self._watch(msg)
+
+    def t_add_watch_rule(self, a, confirm):
+        msg = {"op": "rule", "when": str(a.get("when") or ""), "do": str(a.get("do") or "")}
+        if str(a.get("expr") or "").strip():
+            msg["expr"] = str(a["expr"]).strip()
+        if a.get("cooldown"):
+            msg["cooldown"] = float(a["cooldown"])
+        return self._watch(msg)
+
+    def t_remove_watch_rule(self, a, confirm):
+        rid = str(a.get("id") or "").strip()
+        return self._watch({"op": "rules_clear"} if rid.lower() == "all" else {"op": "rule_remove", "rule": rid.upper()})
+
+    def t_learn_from_demo(self, a, confirm):
+        op = str(a.get("op") or "start")
+        msg = {"op": {"start": "learn_start", "stop": "learn_stop", "replay": "replay"}.get(op, "learn_start")}
+        if a.get("name"):
+            msg["name"] = str(a["name"])
+        if op == "replay":
+            msg["preview"] = bool(confirm)
+        res = self._watch(msg, 8)
+        if op == "stop" and res.get("ok"):
+            res["next"] = "Tell the person what you learned in one sentence and offer to repeat it (learn_from_demo replay)."
+        return res
+
+    def t_mirror_person(self, a, confirm):
+        return self._watch({"op": "mode", "mode": "mirror" if a.get("enabled", True) else "off"})
 
     # ---- world (World workstream: {type:"world", ...}; state.world)
     def _world(self, msg, timeout=40):

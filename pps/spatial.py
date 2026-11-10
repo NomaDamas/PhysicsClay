@@ -41,6 +41,21 @@ def gemini_key():
     return None
 
 
+def openai_key():
+    """OPENAI_API_KEY from the environment or .env; None in BYOK mode (visitors bring their own)."""
+    if byok():
+        return None
+    k = os.environ.get("OPENAI_API_KEY")
+    if k:
+        return k.strip()
+    env = ROOT / ".env"
+    if env.exists():
+        for line in env.read_text().splitlines():
+            if line.startswith("OPENAI_API_KEY="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
 class Spatial:
     def __init__(self):
         self.model_name = "yolo-seg"
