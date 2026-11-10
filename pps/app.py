@@ -632,6 +632,10 @@ def worker(args, shared):
         if demo.steps:
             demo.stop()
         apply_surface(nw.surface, nw.regions)
+        tasks.search = None                               # planning jobs in the old world end (pps/slicing.py)
+        old_job = (ctx.store.get("goal") or {}).get("job") if isinstance(ctx.store.get("goal"), dict) else None
+        if old_job is not None:
+            old_job.cancel()
         old_keepout = tasks.keepout
         world, world_rev[0] = nw, world_rev[0] + 1
         rt = make_runtime(nw, mirror=not args.no_mirror)
