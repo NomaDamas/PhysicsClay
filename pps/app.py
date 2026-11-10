@@ -782,14 +782,12 @@ def worker(args, shared):
                     tasks.follow_me("video", True)
                     tasks.set_task("video", "video", "running", f"Imitating '{video_job['name']}' from your video, whole body.")
                 elif t == "camera":
-                    if view == "stage":
-                        stage.azimuth += float(c.get("dazimuth", 0.0))
-                        stage.elevation = float(np.clip(stage.elevation + float(c.get("delevation", 0.0)), -85, 10))
-                        stage.distance = float(np.clip(stage.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
-                        continue
-                    orbit.azimuth += float(c.get("dazimuth", 0.0))
-                    orbit.elevation = float(np.clip(orbit.elevation + float(c.get("delevation", 0.0)), -85, 10))
-                    orbit.distance = float(np.clip(orbit.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
+                    # zoom: a proportional factor per message (the browser sums wheel deltas); same range as the 3D stage
+                    cam_ = stage if view == "stage" else orbit
+                    cam_.azimuth += float(c.get("dazimuth", 0.0))
+                    cam_.elevation = float(np.clip(cam_.elevation + float(c.get("delevation", 0.0)), -85, 10))
+                    zf = float(np.clip(float(c.get("zoom", 1.0) or 1.0), 0.25, 4.0))
+                    cam_.distance = float(np.clip(cam_.distance * zf, 0.35, 8.0))
                 elif t == "task":
                     if not ext.intercept_task(ctx, c):
                         dispatch(tasks, rt, c, cam_params)

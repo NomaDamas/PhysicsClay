@@ -427,11 +427,24 @@
     schedule();
   }
   ov.addEventListener("pointerup", endPointer); ov.addEventListener("pointercancel", endPointer);
+  // Server-rendered views: wheel deltas are summed (never dropped) and sent at most every 30 ms as one proportional
+  // zoom factor, the same rate per pixel as the 3D stage. The Robot eye is the robot's own head camera: no zoom.
+  let wheelLog = 0, wheelT = 0, eyeHint = false;
   ov.addEventListener("wheel", (ev) => {
-    if (state.view !== "orbit" && state.view !== "stage") return; ev.preventDefault();
-    const now = performance.now(); if (now - lastCam < 30) return; lastCam = now;
-    send({ type: "camera", zoom: Math.exp(Math.max(-200, Math.min(200, ev.deltaY)) * 0.0015) });
+    if (state.view !== "orbit" && state.view !== "stage") {
+      if (!eyeHint && Math.abs(ev.deltaY) > 0) { eyeHint = true; toast("The Robot eye is the robot's own camera. Switch to 3D to zoom and look around."); }
+      return;
+    }
+    ev.preventDefault();
+    const px = ev.deltaY * (ev.deltaMode === 1 ? 18 : ev.deltaMode === 2 ? (el.robotFrame.clientHeight || 600) : 1);
+    wheelLog += Math.max(-0.6, Math.min(0.6, px * (ev.ctrlKey ? 0.012 : 0.0011)));
+    if (!wheelT) wheelT = setTimeout(flushWheel, Math.max(0, 30 - (performance.now() - lastCam)));
   }, { passive: false });
+  function flushWheel() {
+    wheelT = 0; if (!wheelLog) return;
+    const f = Math.exp(Math.max(-1.2, Math.min(1.2, wheelLog))); wheelLog = 0; lastCam = performance.now();
+    send({ type: "camera", zoom: f });
+  }
   function centroid() { let x = 0, y = 0; for (const p of pointers.values()) { x += p[0]; y += p[1]; } const n = pointers.size || 1; return [x / n, y / n]; }
   const round3 = (x) => Math.round(x * 1000) / 1000;
   function decimate(pts, max) { if (pts.length <= max) return pts; const out = []; for (let i = 0; i < max; i++) out.push(pts[Math.round(i * (pts.length - 1) / (max - 1))]); return out; }

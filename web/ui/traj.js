@@ -347,11 +347,11 @@
     const rc = new T.Raycaster(); rc.setFromCamera(new T.Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1), V.camera);
     return rc;
   }
-  function pickHandle(ev) {
+  function pickHandle(ev, tol) {
     if (!g || tj.running) return -1;
     const hit = ray(ev).intersectObjects(handles, false)[0];
     if (hit) return hit.object.userData.handle;
-    let best = -1, bd = 22;                           // touch-friendly: near a handle on screen counts
+    let best = -1, bd = tol || (ev.pointerType && ev.pointerType !== "mouse" ? 22 : 12);   // a finger may land near a handle
     pts().forEach((_, i) => {
       const k = keyPos(i), s = V.project(k[0], k[1], k[2]), d = Math.hypot(s[0] - ev.clientX, s[1] - ev.clientY);
       if (d < bd) { bd = d; best = i; }
@@ -431,17 +431,23 @@
     return false;
   }
 
-  // wheel over a handle (or with one selected): height, 5 mm a notch (Shift: 2 cm)
-  let wheelTimer = 0;
-  function onWheel(ev) {
-    if (!g || tj.running || !V) return;
-    const i = hover >= 0 ? hover : (sel >= 0 && pickHandle(ev) === sel ? sel : -1);
-    if (i < 0) return;
-    ev.preventDefault(); ev.stopPropagation();
+  // wheel with the pointer on a handle: height, 5 mm a notch (Shift: 2 cm). Anywhere else the wheel zooms the view.
+  // The handle is picked fresh under the pointer (never a stale hover: after a fly-to the path sits where the pointer
+  // rests, and a remembered hover used to eat every wheel turn there).
+  let wheelTimer = 0, wheelAcc = 0;
+  function onWheel({ ev }) {
+    if (!g || tj.running || !V || ev.ctrlKey) return false;        // ctrl+wheel = trackpad pinch: always zoom
+    const i = pickHandle(ev, 10);
+    if (i < 0) return false;
+    if (hover !== i) { hover = i; paintDyn(); }
+    wheelAcc += ev.deltaMode === 1 ? ev.deltaY * 18 : ev.deltaY;   // trackpads send many small deltas: one step per ~50 px
+    if (Math.abs(wheelAcc) < 50 && ev.deltaMode === 0 && Math.abs(ev.deltaY) < 50) return true;
+    const dir = Math.sign(wheelAcc); wheelAcc = 0;
     const k = keyPos(i).slice(), step = ev.shiftKey ? 0.02 : 0.005;
-    k[2] = r3(Math.min(surfaceZ() + 0.8, Math.max(surfaceZ() - 0.03, k[2] - Math.sign(ev.deltaY) * step)));
+    k[2] = r3(Math.min(surfaceZ() + 0.8, Math.max(surfaceZ() - 0.03, k[2] - dir * step)));
     preview(i, k); sel = i; paintDyn(); renderPop(); render();
     clearTimeout(wheelTimer); wheelTimer = setTimeout(() => { if (pending.has(i)) edit({ index: i, point: { p: pending.get(i) } }); }, 380);
+    return true;
   }
 
   // ------------------------------------------------------------------ keyframes (the Path tool)
@@ -688,10 +694,14 @@
     if (document.activeElement !== A) { A.value = Math.round(pr.arch * 100); prof.querySelector('[data-o="arch"]').textContent = `${Math.round(pr.arch * 100)} cm`; }
   }
 
-  function focusPath() {
+  function focusPath(auto) {
     if (!g) return;
     if (window.PC && window.PC.setStageView && !(V && V.isActive)) window.PC.setStageView("3d");
-    P.with3D((v) => v.focus && v.focus(arr(g.pts).concat(arr(g.approach).slice(0, 1)), { pad: 1.6, min: 0.35 }));
+    const pts3 = arr(g.pts).concat(arr(g.approach).slice(0, 1));
+    P.with3D((v) => {
+      if (auto && v.inView && v.inView(pts3)) return;            // already on screen at a workable size: keep the user's view
+      if (v.focus) v.focus(pts3, { pad: 1.6, min: 0.35 });
+    });
   }
 
   // ------------------------------------------------------------------ server state
@@ -708,7 +718,7 @@
     }
     if (changedTraj && sel >= pts().length) sel = -1;
     if (g && tr && which === "proposed" && focused !== tr.id && ["language", "demo", "skill"].includes(tr.source) && V && V.isActive) {
-      focused = tr.id; setTimeout(focusPath, 120);     // a path from words: bring it into view once (handles are then big enough to grab)
+      focused = tr.id; setTimeout(() => focusPath(true), 120);   // a path from words: bring it into view once, only if it isn't already
     }
     if (!tr) { sel = -1; hover = -1; }
     if (sel >= pts().length) sel = pts().length - 1;
@@ -727,8 +737,7 @@
   });
   P.with3D((v) => {
     V = v; layer = v.layer("traj"); v.capture(onPointer);
-    const host = document.getElementById("view3d");
-    if (host) host.addEventListener("wheel", onWheel, { capture: true, passive: false });
+    if (v.wheelCapture) v.wheelCapture(onWheel);
     ghostKey = ""; buildStatic(); paintDyn(); kick();
   });
   window.addEventListener("pc3d-ready", () => { ghostKey = ""; });
