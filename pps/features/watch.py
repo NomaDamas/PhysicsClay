@@ -304,6 +304,16 @@ def _clamp(rt, palm, p):
     return p
 
 
+def _up_first(cur, want):
+    """A hand down beside the table (the G1's home: arms down, hands below the edge of the table top) goes back a little
+    and up before it heads for a point over the table: the straight line from there runs through the table's edge, and
+    with physics the hand pressed on it (26-330 N, read as an end-effector force while assisting)."""
+    top = T.TABLE_TOP + 0.08
+    if cur[2] < top - 0.01 and cur[0] < T.TABLE_X[0] + 0.03 and want[0] > T.TABLE_X[0] and want[2] > T.TABLE_TOP:
+        return np.array([min(float(cur[0]), T.TABLE_X[0] - 0.05), float(cur[1]), top])
+    return want
+
+
 def _step_toward(cur, want, max_step=MAX_STEP):
     d = want - cur
     n = float(np.linalg.norm(d))
@@ -334,7 +344,7 @@ def _mirror(ctx, w, h, now):
             cal = w["cal"][(sd, palm)] = {"off0": off, "e0": d.mocap_pos[mid].copy(), "q0": d.mocap_quat[mid].copy(),
                                           "yaw0": _hand_yaw(J, sd)}
         want = _clamp(rt, palm, cal["e0"] + MIRROR_GAIN * (off - cal["off0"]))
-        p = _step_toward(d.mocap_pos[mid].copy(), want)
+        p = _step_toward(d.mocap_pos[mid].copy(), _up_first(d.mocap_pos[mid], want))
         turn = (_hand_yaw(J, sd) - cal["yaw0"] + math.pi) % (2 * math.pi) - math.pi
         dyaw = float(np.clip(-turn, -1.2, 1.2))          # a mirror image turns the other way
         q = _yaw_quat(dyaw, cal["q0"])
@@ -394,7 +404,8 @@ def _assist(ctx, w, h, now):
     ees = {}
     for palm in palms:
         want = _clamp(rt, palm, focus + np.array([0.0, spread.get(palm, 0.0), 0.0]))
-        p = _step_toward(d.mocap_pos[rt.hands_mid[palm]].copy(), want, 0.02)
+        cur = d.mocap_pos[rt.hands_mid[palm]].copy()
+        p = _step_toward(cur, _up_first(cur, want), 0.02)
         _drive_hand(ctx, palm, p)
         ees[palm.replace("_palm", "")] = _r(d.site_xpos[rt.palm_sid[palm]])
     mf = float(w["opts"].get("max_force") or 40.0)
