@@ -112,16 +112,29 @@ async def run(t):
         t.check("dataset: a stopped task is kept as a failed episode", ok and last.get("success") is False and last.get("outcome") == "failed"
                 and last.get("task") == "put the red block in the center of the table", str(last)[:140])
 
-        # wait for the dataset thread to write everything, then stop
-        await wait_for(t, lambda s: (s.get("dataset") or {}).get("pending") == 0 and all(
-            e.get("i") is not None for e in (s.get("dataset") or {}).get("list") or []), 20)
+        # wait for the dataset thread to write everything, then stop. It renders the cameras of every row (two 256 x 256
+        # views): ~170 ms a row with OSMesa on a 2-core runner, so it falls behind a 30 fps episode and catches up
+        # afterwards. Wait as long as its backlog keeps shrinking (20 s without progress = stuck), not a fixed 20 s.
+        def written(s):
+            ds = s.get("dataset") or {}
+            return ds.get("pending") == 0 and all(e.get("i") is not None for e in ds.get("list") or [])
+        left = None
+        while not await wait_for(t, written, 20):
+            now_left = _ds(t).get("pending")
+            if left is not None and (now_left is None or now_left >= left):
+                break
+            left = now_left
         cost = (_ds(t).get("cost_ms") or {})
         await t.send(type="dataset", op="stop", id="ds2")
         ok = await wait_for(t, lambda s: (s.get("dataset") or {}).get("recording") is False, 5)
         await t.pump(1.0)
         rec_fps = float(np.median(fps_rec)) if fps_rec else 0.0
+        # real time while recording: the loop keeps 80% of its frame rate, or at least the dataset's rate (every row a
+        # fresh frame) when it idles faster than that (a loop with nothing to draw idles at MAX_FPS: spare frames
+        # above the recording rate aren't real time lost)
+        need = min(0.8 * fps_idle, float(d.get("fps") or 30))
         t.check("dataset: stop; the server stays real time while recording",
-                ok and rec_fps >= 0.8 * fps_idle, f"loop {fps_idle:.0f} fps without, {rec_fps:.0f} with recording (same task); "
+                ok and rec_fps >= need, f"loop {fps_idle:.0f} fps without, {rec_fps:.0f} with recording (same task; needs {need:.0f}); "
                 f"snapshot {cost.get('snapshot')} ms (server loop), render {cost.get('render')} ms (dataset thread)")
 
         # ---- files on disk
@@ -160,7 +173,7 @@ async def run(t):
                 look = float(np.median(err)) < 0.05 and float(err.max()) < 0.6 and not np.allclose(act[:, :nj], stt[:, :nj], atol=1e-5)
             else:
                 look = np.allclose(act[:, :nj], np.array(nxt)[:, :nj], atol=1e-5)
-            moved = float(np.abs(stt[-1, :nj] - stt[0, :nj]).max()) > 0.05
+            moved = float(np.abs(stt[:, :nj] - stt[0, :nj]).max()) > 0.05   # (a pick & place ends where it started: at home)
             conds = {"rows": n == e["length"], "fps x duration": abs(n - expect) <= 0.1 * expect + 3,
                      "timestamps": np.allclose(ts, np.arange(n) / 30, atol=1e-4), "action": look, "moved": moved,
                      "done": tb.column("next.done").to_pylist()[-1] is True,
