@@ -123,16 +123,32 @@ Task actions (`docs/PROTOCOL.md` "v15 · Worlds"):
 Mobile bases move between stations with the existing `drive`. In kinematic mode (`--kinematic`) a grasped drawer or door
 follows the hand and what is inside rides along.
 
-## What works per robot (physics, headless runs and `scripts/checks/worlds.py`)
+## What works per robot (physics, `scripts/bench_worlds.py`, seeds 1–3, and `scripts/checks/worlds.py`)
 
-| Task | Panda | UR5e |
-|---|---|---|
-| kitchen: open the top drawer ≥ 60 % (to 78 %), take the spoon, put it in the sink, close it | seeds 1–3 | seeds 2–3 (seed 1: the spoon slides out of the jaws as it is lowered into the sink; reported as a slip) |
-| warehouse: pick the box out of the tote, put it in the empty tote | seeds 1–4 | seeds 1–3 |
-| assembly line: a part rides to the photo-eye, the arm picks it into the bin | seeds 1–3 | seeds 1–3 |
-| lab: a tube from the source rack into a free slot of the tube rack | seeds 1–3 | seeds 1–3 |
-| machine tending: open the CNC door, the part from the vise into the finished tray, close the door | seeds 1–3 | seed 1 |
-| a jammed drawer / a knob under another one | "stuck at 5 % open" / refused with the reason | same code |
+`scripts/bench_worlds.py <robots> -s 1 -s 2 -s 3` runs each scenario headless in sim time, the same task actions the
+server runs, and checks the outcome after every step (how far a drawer opened, which container an object is in). Cells:
+seeds that passed of 3; "refused" = the robot said it can't, before moving (with how far out of reach, or how far off
+the knob / the spot its jaws would be); the rest are physical failures it reported.
+
+| Scenario | Panda | UR5e | xArm7 | iiwa14 | TidyBot (mobile) |
+|---|---|---|---|---|---|
+| kitchen: open the top drawer, take the spoon, put it in the sink, close the drawer | **3/3** | **3/3** | **2/3** (s2 refused: the sink spot 5.9 cm off) | 0/3 (refused: the knob 2.4 cm off / 7 cm out of reach: it stands 12 cm further back) | 0/3 (the drawer opens; lifting the spoon clear of the counter is 10 cm out of reach; s2 the drawer 35 %) |
+| lower: open the second drawer (knob right under the top one's), close it | **3/3** | **3/3** | **2/3** (s2 refused, 5 cm) | 0/3 (refused, 12–19 cm) | **2/3** (s1: no grip on the knob closing it) |
+| bottom drawer (knob ~45 cm off the floor): open, close | 0/3 (refused, 10–15 cm) | **1/3** (s1, s3 refused: its arm can't push it shut past the drawers above, 2.7 cm off) | 0/3 (refused, 13–22 cm) | 0/3 (refused, 10–19 cm) | **3/3** |
+| dishwasher door (1.1 m to the side) | 0/3 (refused, 60 cm) | 0/3 (refused, 41 cm) | 0/3 (refused, 67 cm) | 0/3 (refused, 54 cm) | 0/3 (reaches it; the spring-loaded door pulls out of its grip) |
+| warehouse: the box out of the tote into the empty tote | **3/3** | **3/3** | **3/3** | **3/3** | 0/3 (refused: lifting over the tote's rim, 8–11 cm) |
+| assembly line: a part rides to the photo-eye, the arm puts it in the bin | **3/3** | **3/3** | **3/3** | **3/3** | 0/3 (slips, its arm trails the carry) |
+| lab: a tube from the source rack into a free slot of the tube rack | **3/3** | **3/3** | **3/3** | **3/3** | 0/3 (refused, 21–33 cm: the bench is high for its arm) |
+| machine tending: open the CNC door, the part from the vise into the finished tray, close the door | **1/3** (s2, s3 refused: the hand can't get under the machine's roof from that side) | **1/3** (s2, s3 refused, 11 cm: its forearm would rest on the machine's wall) | 0/3 (refused 12–44 cm; s2 slipped off the door's handle) | 0/3 (refused 12 cm; s1 no grip on the door's knob) | 0/3 (refused, 12–13 cm) |
+| a jammed drawer | "stuck at 0 % open" (`checks/worlds.py`) | same code | | | |
+
+Before this pass (the same benchmark at f06fbc2): Panda kitchen 2/3, lower 0/3 (refused: grasps came from above only),
+tending 0/3; UR5e kitchen 0/3 (no grip on the top drawer's knob: its wrist met the counter's edge in the plant), lower
+0/3, tending 1/3; xArm7 kitchen 0/3, assembly 0/3 (the spoon / blank pivoted out of its fingers); iiwa14 as now but
+lower refused as "knob under another"; TidyBot drawers 0/3 (it drove into the cabinets and swept the drawer shut).
+What changed: handles from the front (above), the planner keeping the arm, wrist and a mobile base off the furniture,
+the part being an obstacle but for its knob on the way in, a bow around the arm's own base for a carry it can't trace
+straight, furniture overhead (a machine's roof) kept off by the gripper, and the xArm7's flat fingertip pads.
 
 Other bodies build in every world they fit (`tests/test_worlds.py` checks one of each kind: arm, humanoid, two-arm rig,
 mobile base, quadruped) and stand clear of the furniture; their grasps are as reliable as on the table
