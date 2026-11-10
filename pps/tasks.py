@@ -1391,7 +1391,8 @@ class Tasks(FixtureTasks):
         if self.fx is not None:                   # a generated world: what's near the pick and the drop (drawer walls too);
             # things in the same bin / drawer as the one being picked are not kept away from (the fingers go in among them)
             co = tuple(self.contents(self.container_of(name), skip=name)) if self.container_of(name) is not None else ()
-            self.rt.set_obstacles((name,) + co, near=[c] + ([dest] if dest is not None else []), fixtures=True, static_arm=True)
+            self.rt.set_obstacles((name,) + co, near=[c] + ([dest] if dest is not None else []), fixtures=True, static_arm=True,
+                                  overhead=float(c[2] + self.vertical_half(name) + 0.01))
         else:
             self.rt.set_obstacles((name,))        # the planner keeps the gripper clear of everything else on the table
         palms = [palm] if held else [palm] + [h for h in self.hands if h != palm]   # two hands: the other one may get there

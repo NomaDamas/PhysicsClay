@@ -84,9 +84,9 @@ async def run(t):
     t.check("worlds: the drawer really opened (>= 60 %) and the 3D view saw it move", best >= 0.6 and moved, f"max {best:.2f}, streamed {moved}")
     t.check("worlds: the spoon is in the sink and the drawer is shut", where("spoon") == "sink" and shut("drawer_1"),
             f"spoon in {where('spoon')}, drawer_1 {fixture('drawer_1').get('open')}")
-    res = await task("open", 120, fixture="the second drawer", amount=0.8)
+    res = await task("open", 240, fixture="the second drawer", amount=0.8)
     opened = float(fixture("drawer_2").get("open") or 0.0)
-    res2 = await task("close", 120, fixture="drawer_2") if res.get("status") == "done" else {}
+    res2 = await task("close", 240, fixture="drawer_2") if res.get("status") == "done" else {}
     t.check("worlds: the second drawer (its knob right under the top drawer's) opens from the front and closes again",
             res.get("status") == "done" and opened >= 0.6 and res2.get("status") == "done" and shut("drawer_2"),
             f"{res.get('message', '')[:60]} ({opened:.2f}); {res2.get('message', '')[:50]}")

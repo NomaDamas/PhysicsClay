@@ -255,7 +255,8 @@ class Runtime:
                 di.mocap_pos[mid] = d.xpos[p["bid"]]
                 di.mocap_quat[mid] = d.xquat[p["bid"]]
 
-    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False, static=False, skip_geoms=(), static_arm=False):
+    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False, static=False, skip_geoms=(), static_arm=False,
+                      overhead=None):
         """Physics: the planner keeps the hand clear of the objects on the table (synced from the plant), except `exclude`
         (the one being picked). Objects are mocap bodies in the planner's model, so their poses are copied over.
         Generated worlds (issue #48): `fixtures` adds the walls of drawers / doors / bins nearby (their floors and the
@@ -266,7 +267,9 @@ class Runtime:
         drawer's knob must not put its wrist through the counter's edge or its forearm on the knob of the drawer above
         (the plant would stop it there). `skip_geoms`: geom names that never count (a handle the hand is coming for).
         `static_arm` (with `near`): the static furniture there for the arm links only, not the gripper (a pick reaching
-        into a machine: the forearm came to rest on the CNC's side wall, the hand 15 cm over the part)."""
+        into a machine: the forearm came to rest on the CNC's side wall, the hand 15 cm over the part). `overhead` (a
+        height, with `near`): static furniture there whose underside is above it counts for the gripper too (a machine's
+        roof over the part in its vise: the Panda's hand came to rest on it), never what things stand on or beside."""
         if self.plant is None:
             return
         mi, pl = self.configuration.model, self.plant
@@ -300,6 +303,13 @@ class Runtime:
         if skip_geoms:
             skipped = {mi.geom(n).id for n in skip_geoms if n}
             geoms = [g for g in geoms if g not in skipped]
+        if overhead is not None and not static and pts is not None:
+            named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            for g in range(mi.ngeom):
+                if mi.geom_bodyid[g] == 0 and mi.geom_contype[g] and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and named(g).startswith("fx_"):
+                    R = self.ik_data.geom_xmat[g].reshape(3, 3)
+                    if self.ik_data.geom_xpos[g][2] - float((np.abs(R) @ mi.geom_size[g])[2]) > overhead and keep(g):
+                        geoms.append(g)
         if static and pts is not None:
             named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
             geoms += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] == 0 and mi.geom_contype[g]
