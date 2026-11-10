@@ -139,13 +139,38 @@ body.pc-shared #camPanel { width: 78%; align-self: flex-start; transition: width
   const BALLS = { l_shoulder: 0.05, r_shoulder: 0.05, l_elbow: 0.045, r_elbow: 0.045, l_knee: 0.065, r_knee: 0.065, l_hip: 0.075, r_hip: 0.075,
     l_wrist: 0.038, r_wrist: 0.038, l_ankle: 0.05, r_ankle: 0.05, neck: 0.06 };
   let V = null, G = null, P = null;
+  // The 3D views frame the person beside the work surface (web/view3d.js frameScene); when the camera is turned so the
+  // person stands between it and the work area, the mannequin fades (and comes back when it no longer hides it).
+  const OPACITY = 0.62, FADED = 0.14, BODY_R = 0.3, BODY_TOP = 1.8;
+  let fade = 0;
+  function occlusion(J) {
+    const cam = V.camera, T = V.TABLE, base = J.pelvis || J.neck;
+    if (!cam || !T || !base) return 0;
+    const C = cam.position, ax = base[0], ay = base[1];
+    let hit = 0, n = 0;
+    for (const fx of [0.12, 0.5, 0.88]) for (const fy of [0.12, 0.5, 0.88]) {
+      const px = T.x0 + (T.x1 - T.x0) * fx, py = T.y0 + (T.y1 - T.y0) * fy, pz = T.z + 0.04;
+      const dx = px - C.x, dy = py - C.y, L2 = dx * dx + dy * dy; n++;
+      if (L2 < 1e-6) continue;
+      const t = ((ax - C.x) * dx + (ay - C.y) * dy) / L2;          // where the sight line passes the person's axis
+      if (t <= 0 || t >= 1) continue;                               // not between the camera and this spot
+      const qx = C.x + dx * t - ax, qy = C.y + dy * t - ay, z = C.z + (pz - C.z) * t;
+      if (qx * qx + qy * qy < BODY_R * BODY_R && z > 0 && z < BODY_TOP) hit++;
+    }
+    return n ? hit / n : 0;
+  }
+  function applyFade(J) {
+    const goal = J ? Math.min(1, occlusion(J) / 0.22) : 0;
+    fade += (goal - fade) * 0.35; if (Math.abs(goal - fade) < 0.01) fade = goal;
+    P.grey.opacity = OPACITY + (FADED - OPACITY) * fade;
+  }
   function build(v) {
     V = v; const T = v.THREE; G = v.layer("copresence");
     // soft grey, a little translucent: the person is there, but never hides the table from the 3D camera behind them
-    const grey = new T.MeshStandardMaterial({ color: 0xc4c8d1, roughness: 0.85, metalness: 0, transparent: true, opacity: 0.62, depthWrite: false });
+    const grey = new T.MeshStandardMaterial({ color: 0xc4c8d1, roughness: 0.85, metalness: 0, transparent: true, opacity: OPACITY, depthWrite: false });
     const cyl = new T.CylinderGeometry(1, 1, 1, 16, 1), sph = new T.SphereGeometry(1, 20, 14);
     const mesh = (geo, mat) => { const m = new T.Mesh(geo, mat); m.castShadow = true; m.userData.sharedGeo = true; m.matrixAutoUpdate = true; G.add(m); return m; };
-    P = { bones: BONES.map(([a, b, r]) => ({ a, b, r, m: mesh(cyl, grey) })), balls: {}, T };
+    P = { bones: BONES.map(([a, b, r]) => ({ a, b, r, m: mesh(cyl, grey) })), balls: {}, T, grey };
     for (const k in BALLS) { const m = mesh(sph, grey); m.scale.setScalar(BALLS[k]); P.balls[k] = m; }
     P.head = mesh(sph, grey); P.head.scale.set(0.085, 0.08, 0.11);
     P.neck = mesh(cyl, grey);
@@ -174,6 +199,7 @@ body.pc-shared #camPanel { width: 78%; align-self: flex-start; transition: width
     if (!P) return;
     const J = c && c.on && c.visible !== false ? c.joints : null;   // no person drawn for the synthetic no-camera dancer
     if (!J) { hideAll(); V.redraw(); return; }
+    applyFade(J);
     for (const b of P.bones) { if (J[b.a] && J[b.b]) seg(b.m, J[b.a], J[b.b], b.r); else b.m.visible = false; }
     for (const k in P.balls) { const m = P.balls[k]; if (J[k]) { m.position.set(J[k][0], J[k][1], J[k][2]); m.visible = true; } else m.visible = false; }
     if (J.head) { P.head.position.set(J.head[0], J.head[1], J.head[2]); P.head.visible = true; }
@@ -224,5 +250,6 @@ body.pc-shared #camPanel { width: 78%; align-self: flex-start; transition: width
     demo.hidden = !(c.on && c.source === "synthetic");
     if (P) draw(c);
   });
-  window.PCCopresence = { kindOf, hear: (t) => hear(t), get shared() { return shared; }, setShared: (on) => applyShared(on, true) };
+  window.PCCopresence = { kindOf, hear: (t) => hear(t), get shared() { return shared; }, setShared: (on) => applyShared(on, true),
+    get fade() { return Math.round(fade * 100) / 100; } };
 })();
