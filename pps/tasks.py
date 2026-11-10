@@ -661,6 +661,7 @@ class Tasks(FixtureTasks):
         gk = next((idx_map[k] for k, nm in sorted(events.items()) if nm == "grasp"), None)
         if self.plant is not None and gk is not None and self.cur in self.objs:   # the grasp, in the object's own frame
             rt.path["anchor"] = (gk, self.cur, self.obj_mat(self.cur).T @ (pts[gk] - self.obj_pos(self.cur)))
+            rt.path["anchor_R"] = self.obj_mat(self.cur).copy()       # (and how it stood: _regrasp_aim turns with it)
         if qs is not None:
             rt.path["q"] = qs
             if self.plant is not None:            # physics: the hand turns no faster than W_TURN (slower along that segment)
@@ -1063,8 +1064,9 @@ class Tasks(FixtureTasks):
     def _regrasp_aim(self):
         """Physics, above a grasp: if the object has moved since the plan (nudged, or drooping in the other hand during a
         handover, or bumped by the arm on its way), the way down follows it, by up to 8 cm (the robot looks before it
-        reaches in). Moved further than that, the pick is planned again from where the hand is, once per task: going
-        down to the empty spot closed the gripper on air (TidyBot's trailing arm pushed the mug into a block 8.4 cm)."""
+        reaches in), and a square block that turned is grasped across its faces again (_regrasp_turn). Moved further than
+        8 cm, the pick is planned again from where the hand is, once per task: going down to the empty spot closed the
+        gripper on air (TidyBot's trailing arm pushed the mug into a block 8.4 cm, or turned it 47 degrees)."""
         path = self.rt.path
         if not path or path.get("anchor") is None:
             return
@@ -1085,14 +1087,42 @@ class Tasks(FixtureTasks):
                 self.task["message"] = (f"{self.pretty(name)[:1].upper() + self.pretty(name)[1:]} moved {moved * 100:.0f} cm "
                                         "before I could grasp it; picking it up where it is now. " + self.task["message"])
             return
-        if not 1e-4 < moved < 0.08:
+        turn = self._regrasp_turn(path, name)
+        if not 1e-4 < moved < 0.08 and turn is None:
             return
         w = np.zeros(len(pts))
         w[i + 1:gk + 1] = 1.0
         if gk + 1 < len(pts):
             w[gk + 1:] = np.linspace(1.0, 0.0, len(pts) - gk)[1:]
-        pts += w[:, None] * delta[None, :]
-        path["pts"], path["cum"] = pts, np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+        if 1e-4 < moved < 0.08:
+            pts += w[:, None] * delta[None, :]
+            path["pts"], path["cum"] = pts, np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])
+        if turn is not None:      # the jaws turn with it on the way down, and back on the way up (it is set down as planned)
+            qz = np.array([np.cos(turn / 2), 0.0, 0.0, np.sin(turn / 2)])
+            qs = [np.asarray(q, float) for q in path["q"]]
+            for k in range(i + 1, len(qs)):
+                if w[k] > 0:
+                    qt = np.zeros(4)
+                    mujoco.mju_mulQuat(qt, qz, qs[k])
+                    qs[k] = slerp(qs[k], qt, float(w[k]))
+            path["q"] = qs
+            if self.plant is not None:            # the hand turns no faster than W_TURN (as planned at launch)
+                seg = np.diff(path["cum"])
+                seg_t = np.maximum(seg / max(self.rt.follow_speed, 1e-3), 1e-6)
+                ang = np.array([2 * np.arccos(min(1.0, abs(float(np.dot(qs[j], qs[j + 1]))))) for j in range(len(seg))])
+                path["sf"] = np.clip(seg_t / np.maximum(ang / W_TURN, 1e-6), 0.15, 1.0)
+
+    def _regrasp_turn(self, path, name):
+        """A square block that turned about the vertical since the plan (knocked by the arm on its way in) -> the turn
+        (rad) the jaws need to close across its faces again, or None. A quarter turn of a square block is the same
+        grasp, so at most 45 degrees; under 10 degrees the jaws square it up themselves. Other shapes keep the plan."""
+        R0, qs = path.get("anchor_R"), path.get("q")
+        if R0 is None or qs is None or self.kinds.get(name) not in ("block", "box", "cube") or self.tilt(name) > 15:
+            return None
+        R = self.obj_mat(name)
+        d = float(np.arctan2(R[1, 0], R[0, 0]) - np.arctan2(R0[1, 0], R0[0, 0]))
+        d = (d + np.pi / 4) % (np.pi / 2) - np.pi / 4
+        return d if abs(d) > np.radians(10) else None
 
     def _aim(self, palm):
         """Physics, above the spot: where does the object really sit in the hand? It can shift a little while the jaws close
