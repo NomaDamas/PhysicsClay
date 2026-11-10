@@ -187,6 +187,9 @@ _LIST = re.compile(r",\s+(?:or\s+|and\s+)?|\s+or\s+|\s+and\s+")
 
 
 # ------------------------------------------------------------------ templates -> patterns
+_NOSTOP = r"(?:(?![.!?]\s)[\s\S])"         # a placeholder never runs over a sentence end (". " ends a sentence)
+
+
 class _Tpl:
     __slots__ = ("key", "en", "rx", "rx_head", "lit", "first", "frag")
 
@@ -203,7 +206,7 @@ class _Tpl:
                     parts.append(f"(?P={name})")
                 else:
                     seen.add(name)
-                    parts.append(f"(?P<{name}>.*?)" if name.startswith("_") else f"(?P<{name}>.+?)")
+                    parts.append(f"(?P<{name}>{_NOSTOP}*?)" if name.startswith("_") else f"(?P<{name}>{_NOSTOP}+?)")
         body = "".join(parts)
         self.rx = re.compile(body + r"\Z", re.S)
         self.rx_head = re.compile(body, re.S) if not en.rstrip().endswith("}") else None
@@ -319,7 +322,7 @@ MSG_KEYS = frozenset({
     "detail", "line", "cue", "warning", "error", "caption", "intent", "verdict", "status_text", "path_msg", "issue",
     "issues", "warnings", "notes", "say", "explain", "description", "desc", "tip", "subtitle", "narration", "headline",
     "prompt", "ask", "result", "step", "steps_text", "info", "lines", "events", "options", "status_line", "describe",
-    "messages",
+    "messages", "reasons", "constraints", "effect", "held", "where",
 })
 MSG_MAPS = frozenset({"kinds"})                  # {id: message} maps (state.skillbook.kinds)
 SKIP_KEYS = frozenset({
