@@ -5,10 +5,9 @@ practice, correct, save). Every robot line is the system's own output (task / te
 lines and captions are scripted.
 """
 import time
+from pathlib import Path
 
 import numpy as np
-
-from pathlib import Path
 
 ROOT_VIDEOS = Path(__file__).resolve().parents[1] / "recordings" / "demo_videos"
 ROUTE = [[0.28, -0.12, 1.04], [0.29, -0.02, 1.14], [0.29, 0.10, 1.14], [0.29, 0.20, 1.02]]
@@ -207,7 +206,6 @@ class Demo:
                 self.cond = (a, now + b)
                 return
         if getattr(self, "loop_name", None):          # endless mode: start over
-            again = self.loop_name
             self.start("loop")
             self.t_wait = time.time() + 2.0
             return

@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 
-from .tasks import REGIONS, TABLE_TOP, TABLE_X, TABLE_Y
+from .tasks import TABLE_TOP, TABLE_X, TABLE_Y
 
 
 def _angle(a, b, c):
@@ -102,6 +102,6 @@ class MockBrain:
             self.utter("I see you waving. Hi! Say 'follow me' if you want me to copy you.", "vision")
         elif name == "pointing" and ray:
             tasks.set_marker("P", np.array(ray[1]))
-            x, y = ray[1][0], ray[1][1]
+            y = ray[1][1]
             side = "left" if y > 0.08 else "right" if y < -0.08 else "middle"
             self.utter(f"You're pointing at the {side} of the table. I marked it P. Say 'put the mug there'.", "vision")

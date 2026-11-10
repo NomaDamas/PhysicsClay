@@ -9,7 +9,7 @@
 
 | | |
 |---|---|
-| **Demo video (2 min)** | [`docs/demo/physicsclay_demo.mp4`](docs/demo/physicsclay_demo.mp4) |
+| **Demo video (2 min)** | [`docs/hackathon/demo/physicsclay_demo.mp4`](docs/hackathon/demo/physicsclay_demo.mp4) |
 | **Live app** | https://physicsclay.jinminseong.com (phone camera + mic over HTTPS) |
 | **Narrated pitch** | https://physicsclay.jinminseong.com/static/present.html |
 | **Browser physics lab** | https://physicsclay.jinminseong.com/static/lab.html (MuJoCo WASM + React) |
@@ -50,15 +50,36 @@ You: show (camera / video) · say (voice / text) · point & draw (robot view / 3
 Business: free browser playground (users) -> paid per robot for robot teams (humanoid makers, integrators, labs).
 Roadmap: VR/XR teaching at true scale -> real robots -> learning from corrections across robots.
 
+## Install
+You need [uv](https://docs.astral.sh/uv/), git and curl, on macOS or Linux.
+```bash
+make setup                         # = ./scripts/setup.sh: .venv, deps (pyproject.toml), robot models, MediaPipe models
+PC_EXTRAS=vision,data,dev ./scripts/setup.sh   # choose extras; `yolo` (Ultralytics, AGPL-3.0) is opt-in, see NOTICE
+```
+
 ## Run
 ```bash
-./scripts/setup.sh                 # venv + mujoco + mink + mediapipe + models
-./scripts/web.sh                   # http://127.0.0.1:8777  (webcam)
-./scripts/web.sh --https           # + https://<lan-ip>:8443 so a phone can use its mic (accept the cert warning)
-./scripts/web.sh --fake            # no camera
+make run                           # http://127.0.0.1:8777 (synthetic person; add ARGS="--webcam" for your camera)
+make run ARGS="--https --mock"     # + https://<lan-ip>:8443 so a phone can use its mic (accept the cert warning)
+make run ARGS="--byok"             # public deployment: visitors bring their own API keys (see SECURITY.md)
+./scripts/web.sh                   # the old launcher: same server on 8777, opens the browser
 ```
-Open Settings in the page and paste a Gemini API key (stored only in the browser). Without a key the page falls back to
-browser speech recognition and a rule parser.
+Open Settings in the page and paste a Gemini API key, which is stored only in the browser. You can also put server
+keys in `.env`, which is never committed. Without a key, the page falls back to browser speech recognition and a
+rule parser.
+
+## Test
+```bash
+make lint                          # ruff
+make test                          # pytest unit suite (pure functions, a few seconds)
+make selftest                      # end-to-end self test on an isolated server (PC_SELFTEST_OFFLINE=1 without keys)
+```
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Architecture: [docs/architecture.md](docs/architecture.md) ·
+Security: [SECURITY.md](SECURITY.md)
+
+## License
+PhysicsClay is licensed under Apache-2.0 (see [LICENSE](LICENSE)). Third-party models, assets and libraries keep
+their own licenses, which are listed in [NOTICE](NOTICE). The optional `yolo` extra (Ultralytics) is AGPL-3.0.
 
 ## Architecture
 ```

@@ -7,7 +7,6 @@
    pick_place -> a plan is proposed (or the task completes); "what's on the table?" -> observe/context + a reply that
    names objects; reset clears the conversation.
 Run alone: .venv/bin/python scripts/checks/agent.py   (unit test only)"""
-import asyncio
 import json
 import sys
 import threading
@@ -80,7 +79,7 @@ def wait_idle(ag, limit=5.0):
 
 
 def unit(check):
-    from pps.agent import Agent, LLMError, MAX_STEPS, tool_specs
+    from pps.agent import MAX_STEPS, Agent, LLMError, tool_specs
     cfg = {"base_url": "https://example.invalid/v1", "key": "sk-SECRET-never-shown", "model": "fake-model", "effort": "medium"}
 
     # tools follow capabilities; world tools exist but say "not available" without state.world
@@ -150,6 +149,7 @@ def unit(check):
 
     # BYOK: the server key is never used; visitor endpoints must be public https (no SSRF into this machine)
     import os
+
     from pps.agent import public_url_problem, server_llm, visitor_llm
     old = os.environ.get("PC_BYOK")
     os.environ["PC_BYOK"] = "1"
