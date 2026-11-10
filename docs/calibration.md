@@ -204,6 +204,13 @@ What it means:
   shows that the probes and the fit can identify them through noise, not that a real robot would match this well
   (see the limitations).
 
+**UR5e** (`--robot ur5e --seeds 2`, its arm has no joint damping in the model, so four parameters): seed 0 recovered
+friction 1.05 → 1.05, mass 0.727 → 0.734, stiffness 0.609 → 0.611, latency 48.8 → 48.8 ms, and the held-out
+pick & place went from 3.5° / 9.8 mm (nominal) to 0.08° / 0.6 mm (calibrated). Seed 1 (the same secret as the Panda's
+seed 1: a heavy mug and a stiff arm) recovered friction within 8 %, mass within 5.5 %, stiffness within 0.3 % and
+latency within 0.2 ms, but again the hidden robot's own simulation blew up in the held-out task, so that seed's held-out
+numbers are meaningless.
+
 Reproduce: `scripts/calibrate.py --demo --seeds 5 --save-logs` (add `--retrack <json>` to recompute the held-out
 numbers from the saved logs, `--report <json>` to print the tables again).
 
@@ -274,8 +281,8 @@ same sequence. `rnd.ranges()` describes the ranges for a dataset card.
   Without them only swing and press run (stiffness, damping, latency).
 * **Latency** is a pure delay; jitter is not modelled. Damping and stiffness trade off a little in the swing (the press
   breaks the tie, since it is static).
-* **Robots.** Recovery was evaluated on the Panda (the demo and the server check). Headless, the UR5e and the G1 run all
-  four probes and replay them exactly (the G1 raises its hand first to swing clear of the table); ALOHA skips the swing
+* **Robots.** Recovery was evaluated on the Panda (5 seeds and the server check) and the UR5e (2 seeds). The G1 runs all
+  four probes headlessly and replays them exactly (it raises its hand first to swing clear of the table); ALOHA skips the swing
   (its arms start too low). The G1's slide replays less exactly (0.5° with identical parameters: its two-pad grasp
   is chaotic), so expect looser fits on humanoids. Mobile bases were not tried.
 * **The contact model can blow up.** When a grasped object slips out of the jaws (heavy mug, low friction), MuJoCo
