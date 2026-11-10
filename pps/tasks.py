@@ -1485,7 +1485,7 @@ class Tasks(FixtureTasks):
             # things in the same bin / drawer as the one being picked are not kept away from (the fingers go in among them)
             co = tuple(self.contents(self.container_of(name), skip=name)) if self.container_of(name) is not None else ()
             self.rt.set_obstacles((name,) + co, near=[c] + ([dest] if dest is not None else []), fixtures=True, static_arm=True,
-                                  overhead=float(c[2] + self.vertical_half(name) + 0.01))
+                                  overhead=(float(c[2] + self.vertical_half(name) + 0.01), c))
         else:
             self.rt.set_obstacles((name,))        # the planner keeps the gripper clear of everything else on the table
         palms = [palm] if held else [palm] + [h for h in self.hands if h != palm]   # two hands: the other one may get there
@@ -1539,7 +1539,8 @@ class Tasks(FixtureTasks):
             for p, q in quats.items():            # dropped half way (another command): the hands' targets as they were
                 d.mocap_quat[self.rt.hands_mid[p]] = q
 
-    def _pick_plan(self, tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=True, yaw=None, lifts=True):
+    def _pick_plan(self, tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=True, yaw=None, lifts=True,
+                   bow=False):
         """Keypoints of a pick & place (approach, grasp, carry, release, retreat) -> _launch. plan: (offset, approach) with
         physics, None for the kinematic grasp. Physics, from above: the hand may turn about the vertical to set it down
         (yaw; tried in the order that leaves the hand most room). lifts: the way in and the way home go over the other
@@ -1647,10 +1648,12 @@ class Tasks(FixtureTasks):
                 elif zt > cur[2] + 0.01:
                     kps.append(np.array([cur[0], cur[1], zt]))
                 above = np.array([above[0], above[1], zt])
+        bowable = False
         if n is not None and via is None and self.fx is not None and getattr(getattr(self.rt, "profile", None), "base", "") == "fixed":
-            a0 = kps[-1]                                    # generated worlds: a long carry across the station bows out
-            mid = self._around_base(a0, above, palm)        # around the arm's own base (it can't fold its hand onto it),
-            if mid is not None:                             # high enough for what it passes over on the new way
+            a0 = kps[-1]                                    # generated worlds: a long carry across the station that the
+            mid = self._around_base(a0, above, palm)        # arm can't trace straight bows out around its own base (it
+            bowable = mid is not None                       # can't fold its hand onto it), high enough for what it passes
+            if mid is not None and bow:                     # over on the new way
                 zt = max(self._carry_z(name, a0, mid, off), self._carry_z(name, mid, above, off), a0[2], above[2])
                 if zt > a0[2] + 0.005:
                     kps.append(np.array([a0[0], a0[1], zt]))
@@ -1711,7 +1714,12 @@ class Tasks(FixtureTasks):
             self.place_at = None
         if not ok and lifted and getattr(self, "fail_reason", "reach") == "reach":   # the waypoints over the others are
             self.fail_reason = "reach"                                                 # what it can't do: the plain way
-            return self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last, yaw=yaw, lifts=False)
+            return self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last, yaw=yaw, lifts=False,
+                                   bow=bow)
+        if not ok and bowable and not bow and getattr(self, "fail_reason", "reach") == "reach":   # straight across failed:
+            self.fail_reason = "reach"                                                              # around the base
+            return self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last, yaw=yaw, lifts=lifts,
+                                   bow=True)
         if not ok and last and getattr(self, "fail_reason", "reach") == "reach" and via is None and not into:
             self.suggest(tid, dest, palm, off)
         reason = getattr(self, "fail_reason", "reach")

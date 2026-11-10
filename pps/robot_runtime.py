@@ -270,7 +270,8 @@ class Runtime:
         `static_arm` (with `near`): the static furniture there for the arm links only, not the gripper (a pick reaching
         into a machine: the forearm came to rest on the CNC's side wall, the hand 15 cm over the part). `overhead` (a
         height, with `near`): static furniture there whose underside is above it counts for the gripper too (a machine's
-        roof over the part in its vise: the Panda's hand came to rest on it), never what things stand on or beside."""
+        roof over the part in its vise: the Panda's hand came to rest on it), never what things stand on or beside.
+        `overhead` may be (height, point): only what is over that point (the pick, not where it is set down)."""
         if self.plant is None:
             return
         mi, pl = self.configuration.model, self.plant
@@ -306,10 +307,15 @@ class Runtime:
             geoms = [g for g in geoms if g not in skipped]
         if overhead is not None and not static and pts is not None:
             named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            over_p = None
+            if isinstance(overhead, (tuple, list)):
+                overhead, over_p = float(overhead[0]), np.asarray(overhead[1], float)
+            near_p = (lambda g: True) if over_p is None else (
+                lambda g: float(np.linalg.norm(self.ik_data.geom_xpos[g] - over_p)) - mi.geom_rbound[g] < radius)
             for g in range(mi.ngeom):
                 if mi.geom_bodyid[g] == 0 and mi.geom_contype[g] and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and named(g).startswith("fx_"):
                     R = self.ik_data.geom_xmat[g].reshape(3, 3)
-                    if self.ik_data.geom_xpos[g][2] - float((np.abs(R) @ mi.geom_size[g])[2]) > overhead and keep(g):
+                    if self.ik_data.geom_xpos[g][2] - float((np.abs(R) @ mi.geom_size[g])[2]) > overhead and keep(g) and near_p(g):
                         geoms.append(g)
         if static and pts is not None:
             named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
