@@ -655,8 +655,8 @@ class Tasks:
         if self.plant is not None:
             self._phys_tick()
         else:
-            for palm, obj in self.holding.items():
-                if obj in self.objs and self.grasp_off is not None:
+            for palm, obj in self.holding.items():   # (both hands on it, a handover: it rides the one that took it last)
+                if obj in self.objs and self.grasp_off is not None and getattr(self, "grasp_palm", palm) in (palm, None):
                     self.set_obj_pose(obj, d.site_xpos[rt.palm_sid[palm]] + self.grasp_off)
         active = (self.kind in ("task", "path") and (rt.mode == "FOLLOW" or self.ph is not None)) \
             or (self.kind == "skill" and rt.mode == "PREVIEW") or (self.kind == "drive" and getattr(rt, "driving", False))
@@ -994,9 +994,13 @@ class Tasks:
                 self.ph = {"phase": "arrive", "palm": palm, "obj": obj, "t0": now, "p": None, "slow_t": None}
             self._hold_path(True)
             return
+        if name == "let_go":                      # kinematic two-arm handover: the giving hand is off it (the other has it)
+            self.holding[palm] = None
+            return
         if name == "grasp":
             self.holding[palm] = self.cur
             self.grasp_off = self.obj_pos(self.cur) - d.site_xpos[self.rt.palm_sid[palm]]
+            self.grasp_palm = palm
             if self.task:
                 self.task["step"] = "grasped"
         elif name == "release":
@@ -1130,6 +1134,8 @@ class Tasks:
         if plan is None:
             off, n = (np.array([0.0, 0.0, self.mug_half_h + 0.035]) if grasp == "top" else
                       np.array([-(self.mug_r + 0.015), 0.0, 0.01])), None
+            if held is not None:                  # already in the hand: where it really sits (after a two-arm handover
+                off = d.site_xpos[self.rt.palm_sid[palm]] - self.mug_center(name)   # it's held by an end)
         else:
             off, n = plan
         place_c = np.array([dest[0], dest[1], TABLE_TOP + self.mug_half_h])
@@ -1534,8 +1540,9 @@ class Tasks:
             cur = rt.data.site_xpos[rt.palm_sid[receiver]].copy()
             q_now = rt.data.mocap_quat[rt.hands_mid[receiver]].copy()
             q2 = self._top_quat(receiver, np.cross([0, 0, 1.0], u)) if phys else q_now
-            kps = [cur, r + np.array([0, 0, 0.06]), r]
-            self.done_msg = f"Took {what} with my {rs} hand."
+            kps = [cur, r + np.array([0, 0, 0.06]), r] + ([] if phys else [r + np.array([0, 0, 0.005])])
+            self.done_msg = f"Took {what} with my {rs} hand."           # (kinematic: an event fires passing a waypoint,
+                                                                         # so the grasp isn't the last one)
             ok = self._launch(tid, "handover", kps, receiver, {2: "grasp"}, "task",
                               f"My {rs} hand takes the free end of {what}.", quats=[q_now, q2, q2] if phys else None, loose=[(0, 1)])
             if not ok:
@@ -1557,9 +1564,8 @@ class Tasks:
             if phys:
                 kps, ev = [cur, cur + np.array([0, 0, 0.003]), cur + np.array([0, 0, LIFT]), home], {1: "release"}
                 quats = [q_now, q_now, q_now, self.home_quat[giver]]
-            else:
-                self.holding[giver] = None        # kinematic: it rides the receiving hand from here
-                kps, ev, quats = [cur, cur + np.array([0, 0, LIFT]), home], {}, None
+            else:                                 # kinematic: it rides the receiving hand; the giver lets go a moment later
+                kps, ev, quats = [cur, cur + np.array([0, 0, 0.05]), cur + np.array([0, 0, LIFT]), home], {1: "let_go"}, None
             self.done_msg = (f"Passed {what} from my {gs} hand to my {rs} hand." +
                              ("" if target else f" It's in my {rs} hand."))
             ok = self._launch(tid, "handover", kps, giver, ev, "task", f"My {rs} hand has {what}; my {gs} hand lets go.",
