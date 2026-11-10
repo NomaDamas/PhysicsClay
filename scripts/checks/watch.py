@@ -259,7 +259,11 @@ async def run(t):
     e1, g1, who = ee()
     moved = [base[0], base[1] + 0.15, base[2] + 0.05]      # the person's hand moves to the robot's left and up
     await feed(t, synth.frames("hand", 0.3, at=moved, open=True), hold=30.0)
-    await t.pump(2.5)
+    # the synthetic hand jumps 15 cm in one frame when the feed switches: a fast approach toward the gripper, which
+    # safety may stop for (then resume_s of calm and a ramp back up), so give the gripper time to follow, not a fixed
+    # 2.5 s (on a fast loop the jump's speed reads higher: the stop came more often)
+    await wait_for(t, lambda s: (ee()[0] or [0, -9, -9])[1] - e1[1] > 0.08 and (ee()[0] or [0, -9, -9])[2] - e1[2] > 0.02, 8.0)
+    await t.pump(0.3)
     e2, g2, _ = ee()
     dy = (e2[1] - e1[1]) if (e1 and e2) else 0
     dz = (e2[2] - e1[2]) if (e1 and e2) else 0
