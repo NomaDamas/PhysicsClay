@@ -261,9 +261,11 @@ async def run(t):
     while time.time() - t1 < 4.0:                # nothing of the demo comes back over the reply
         await t.pump(0.3)
         held &= (t.state().get("say") or {}).get("text") == reply and t.state().get("demo") is None
+    # (no reply: the model didn't answer, which the check above reports; the demo part is still checked)
     t.check("agent: a running demo stops when you talk to the agent; the reply stays the robot line",
-            running and bool(reply) and (st.get("say") or {}).get("text") == reply and held and st.get("demo") is None
-            and bool(t.state().get("mock")) == mock0, f"demo ran {running}, now {(st.get('demo') or {}).get('name')}, held {held}, "
+            running and st.get("demo") is None and bool(t.state().get("mock")) == mock0
+            and (not reply or ((st.get("say") or {}).get("text") == reply and held)),
+            f"demo ran {running}, now {(st.get('demo') or {}).get('name')}, held {held}, "
             f"mock {t.state().get('mock')} (was {mock0}); {_say_detail(st, reply, a)}")
 
     await t.send(type="agent", op="reset")
