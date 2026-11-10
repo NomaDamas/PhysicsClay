@@ -46,7 +46,7 @@ class RobotAdapter:
             if int(m.jnt_type[j]) not in HINGE_SLIDE or int(m.jnt_bodyid[j]) not in bodies:
                 continue
             name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j) or f"joint{j}"
-            if any(f in name for f in freeze):
+            if any(f in name for f in freeze) or name.startswith("pc_"):   # pc_: P0's built gripper jaws (= gripper value)
                 continue
             self.joints.append(name)
             self.qadr.append(int(m.jnt_qposadr[j]))
@@ -97,7 +97,7 @@ class RobotAdapter:
             except (KeyError, TypeError, ValueError):
                 return None
         qd = np.asarray(qd, np.float64).reshape(-1)
-        if qd.shape[0] == self.model.nq:
+        if qd.shape[0] in (self.model.nq, getattr(self.rt, "nq_r", -1)):   # P0: the planner's q = the plant's robot prefix
             return qd[self.qadr]
         if qd.shape[0] == len(self.joints):
             return qd

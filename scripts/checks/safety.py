@@ -172,8 +172,14 @@ async def run(t):
             ok and not seen["body"] and (not sf.get("stop") or sf.get("reason") == "no_force") and sf.get("speed_scale", 1) <= sf.get("config", {}).get("coop_scale", 0.3) + 1e-6,
             f"d_min={sf.get('d_min')} coop={sf.get('coop')} stop={sf.get('stop')}/{sf.get('reason')} scale={sf.get('speed_scale')} "
             f"closest={(sf.get('closest') or {}).get('human_part')} binding={sf.get('binding')}")
-    t.check("safety: assist: contact only with a measured force (none in the kinematic sim -> stop at contact, never a press)",
-            sf.get("force") is None and (sf.get("d_min", 1) > -0.02 or sf.get("stop")), f"force={sf.get('force')} d_min={sf.get('d_min')} stop={sf.get('stop')}")
+    if (t.state().get("physics") or {}).get("mode") == "dynamic":     # P0 measures the end-effector force
+        fmax = (sf.get("config") or {}).get("f_contact_max", 40.0)
+        t.check("safety: assist: contact only with a measured force (P0 physics: the force is read and under the cap, else a latched stop)",
+                sf.get("force") is not None and (sf["force"] <= fmax or (sf.get("stop") and sf.get("latched"))),
+                f"force={sf.get('force')} cap={fmax} d_min={sf.get('d_min')} stop={sf.get('stop')} latched={sf.get('latched')}")
+    else:
+        t.check("safety: assist: contact only with a measured force (none in the kinematic sim -> stop at contact, never a press)",
+                sf.get("force") is None and (sf.get("d_min", 1) > -0.02 or sf.get("stop")), f"force={sf.get('force')} d_min={sf.get('d_min')} stop={sf.get('stop')}")
     await feed(t, HEAD)
     ok = await wait_for(t, lambda s: (s.get("safety") or {}).get("stop") and (s.get("safety") or {}).get("reason") == "critical", 6.0)
     sf = _sf(t)

@@ -38,6 +38,9 @@ RobotProfile(id, label, kind, model_xml, mount, ee, home_key, base, capabilities
 ```
 Movable objects become mocap bodies named `obj_<name>`; fixed ones `obs_<name>`. The default world
 (G1 + the current table) must behave exactly as today, so the UX 2.0 self test keeps passing.
+With physics (v1 P0, the default) the same spec is compiled twice: the IK planner keeps the objects as mocap, the plant
+makes them free bodies with mass and friction (same names), adds grippers / servos and welds legged bases; see
+`docs/V1.md` (P0, as built). `--kinematic` / `PC_PHYSICS=0` builds exactly the model above.
 
 ### Messages and state
 * `{type: "world", op: "set", robot?: id, scene?: spec}` rebuilds the world (robot and/or scene). Ops

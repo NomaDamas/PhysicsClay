@@ -14,6 +14,8 @@ MJCF, the robot model is attached at its mount with mujoco.MjSpec, and the resul
 Movable objects are mocap bodies `obj_<name>` (carried kinematically by the task layer), fixed ones static bodies
 `obs_<name>`; each has an invisible collision geom `<body>_collision` the task layer reads its size from.
 The main work surface is always the geom named `table` (the G1 collision pairs and the validator refer to it).
+With physics on (pps/physics.py) the same spec is compiled twice: the IK planner's model (objects stay mocap) and the
+plant (movable objects become free bodies with mass and friction, grippers get actuators, legged bases a harness).
 """
 import copy
 import math
@@ -24,6 +26,7 @@ from dataclasses import dataclass, field
 import mujoco
 import numpy as np
 
+from .. import physics as phys
 from .profiles import DEFAULT_ROBOT, ROOT, RobotProfile, get
 
 G1_DIR = ROOT / "assets" / "unitree_g1"
@@ -48,7 +51,7 @@ KINDS = {
     "can": ((0.066, 0.066, 0.12), "silver", "cyl"),
     "bottle": ((0.066, 0.066, 0.22), "green", "cyl"),
     "plate": ((0.20, 0.20, 0.02), "white", "cyl"),
-    "fruit": ((0.08, 0.08, 0.08), "orange", "cyl"),
+    "fruit": ((0.07, 0.07, 0.07), "orange", "cyl"),
     "vase": ((0.09, 0.09, 0.24), "blue", "cyl"),
     # demo packs (P4): workpieces, gym gear and tools in stands
     "steel_plate": ((0.10, 0.30, 0.008), "steel", "box"),
@@ -482,6 +485,12 @@ class World:
     robot_bodies: set = field(default_factory=set)
     notes: list = field(default_factory=list)
     tool: dict | None = None                 # a tool mounted on the end effector (demo packs: the welding torch)
+    ik_model: object = None                  # the IK planner's model (physics); None: the same as `model` (kinematic)
+    physics: bool = False
+
+    @property
+    def kinds(self):
+        return {o["name"]: o["kind"] for o in self.spec["objects"]}
 
     @property
     def robot_roots(self):
@@ -500,16 +509,37 @@ def _quat_mul(a, b):
     return out
 
 
-def build(robot_id=None, spec=None):
+def _compile(sp, profile, kinds, physics, masses=None):
+    """-> (plant model, planner model). Kinematic: one model for both. masses: {object: kg} given by the scene spec."""
+    if not physics:
+        m = sp.compile()
+        return m, m
+    layout, keys = phys.joint_layout(sp), [np.array(k.qpos, float) for k in sp.keys]
+    phys.add_grippers(sp, profile)
+    ik = sp.compile()
+    for i, q in enumerate(keys):                  # gripper joints were added mid-tree: keyframes follow by joint name
+        if i < ik.nkey and len(q) == sum(7 if t == mujoco.mjtJoint.mjJNT_FREE else 1 for _, t in layout):
+            ik.key_qpos[i] = phys.home_overrides(profile, ik, phys.remap_q(layout, q, ik))
+    phys.plant_spec(sp, profile, kinds, masses)
+    return sp.compile(), ik
+
+
+def build(robot_id=None, spec=None, physics=None):
     """robot id + scene spec -> World (compiled model + home pose). Raises ValueError with a readable message."""
     profile = get(robot_id)
     if profile is None:
         raise ValueError(f"unknown robot '{robot_id}'")
+    physics = phys.enabled() if physics is None else bool(physics)
     spec_n, notes = normalize(DEFAULT_SCENE if spec is None else spec, profile)
     s = surface(spec_n["template"])
+    kinds = {o["name"]: o["kind"] for o in spec_n["objects"]}
+    masses = {o["name"]: o["mass"] for o in spec_n["objects"] if o.get("mass")}     # e.g. the gym's 20 kg barbell
     if is_default(profile.id, spec_n):
-        m = mujoco.MjModel.from_xml_path(DEFAULT_XML.as_posix())
-        w = World(profile, spec_n, s, regions(s), m, None, True, notes=notes)
+        if physics:
+            m, ik = _compile(mujoco.MjSpec.from_file(DEFAULT_XML.as_posix()), profile, kinds, True, masses)
+        else:
+            m = ik = mujoco.MjModel.from_xml_path(DEFAULT_XML.as_posix())
+        w = World(profile, spec_n, s, regions(s), m, None, True, notes=notes, ik_model=ik, physics=physics)
         w.robot_bodies = _robot_bodies(m)
         return w
     xml = (ROOT / profile.model_xml)
@@ -547,6 +577,7 @@ def build(robot_id=None, spec=None):
         free = []
     for k in ("integrator", "timestep", "impratio", "cone", "noslip_iterations"):   # no attach conflicts to report
         setattr(arena.option, k, getattr(child.option, k))
+    layout = phys.joint_layout(child)             # the home key's layout (joints may be added later: grippers)
     prev = mujoco.get_mju_user_warning()
     mujoco.set_mju_user_warning(lambda msg: None)   # attach warnings (empty prefix) would otherwise land in MUJOCO_LOG.TXT
     try:
@@ -556,24 +587,28 @@ def build(robot_id=None, spec=None):
         arena.attach(mujoco.MjSpec.from_string(props_xml), frame=arena.worldbody.add_frame(), prefix="")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            m = arena.compile()
+            m, ik = _compile(arena, profile, kinds, physics, masses)
     except Exception as e:
         raise ValueError(f"could not build the scene: {e}") from e
     finally:
         mujoco.set_mju_user_warning(prev)
-    if key is not None and len(key) == m.nq:
+    if key is not None and len(key) == ik.nq:
         q = np.array(key, float)
+    elif key is not None and len(key) == sum(7 if t == mujoco.mjtJoint.mjJNT_FREE else 1 for _, t in layout):
+        q = phys.remap_q(layout, key, ik)
     else:
-        q = m.qpos0.copy()
+        q = ik.qpos0.copy()
+    if physics:
+        q = phys.home_overrides(profile, ik, q)
     if free:                                      # floating base: place it at the mount
-        adr = m.jnt_qposadr[m.joint(free[0].name).id] if free[0].name else 0
+        adr = ik.jnt_qposadr[ik.joint(free[0].name).id] if free[0].name else 0
         qy = _yaw_quat(yaw)
         p = q[adr:adr + 3].copy()
         R = np.zeros(9)
         mujoco.mju_quat2Mat(R, qy)
         q[adr:adr + 3] = mpos + R.reshape(3, 3) @ np.array([p[0], p[1], 0.0]) + np.array([0, 0, p[2]])
         q[adr + 3:adr + 7] = _quat_mul(qy, q[adr + 3:adr + 7])
-    w = World(profile, spec_n, s, regions(s), m, q, False, notes=notes, tool=tool)
+    w = World(profile, spec_n, s, regions(s), m, q, False, notes=notes, tool=tool, ik_model=ik, physics=physics)
     w.robot_bodies = _robot_bodies(m)
     return w
 
@@ -615,7 +650,9 @@ def mount_tool(profile, child, tool):
     tcp.size, tcp.rgba, tcp.group = [0.003, 0, 0], [1.0, 0.45, 0.1, 1], 4
     info = {"kind": tool["kind"], "label": TOOLS[tool["kind"]]["label"], "tcp": L, "site": "torch_tcp", "mount": site_name}
     import dataclasses
-    return dataclasses.replace(profile, ee={role: "torch_tcp"}, tool=info), info, None
+    # physics: the torch replaces the gripper (no jaws are built or driven on it; the TCP stays the torch tip)
+    ph = {k: v for k, v in (profile.physics or {}).items() if k != "grip"}
+    return dataclasses.replace(profile, ee={role: "torch_tcp"}, tool=info, physics=ph), info, None
 
 
 def _home_key(profile, child):
@@ -636,7 +673,7 @@ def _robot_bodies(m):
         n = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or ""
         root = m.body_rootid[b]
         rn = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, root) or ""
-        if m.body_mocapid[root] >= 0 or rn.startswith(("obj_", "obs_")) or rn.endswith("_target"):
+        if m.body_mocapid[root] >= 0 or rn.startswith(("obj_", "obs_", "pc_harness")) or rn.endswith("_target"):
             continue
         if rn in ("mug", "vase", "red_block", "green_block", "blue_block"):
             continue

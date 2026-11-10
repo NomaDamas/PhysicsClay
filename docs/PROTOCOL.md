@@ -595,3 +595,25 @@ Details: `docs/skills.md` and `docs/packs.md`; as-built notes in `docs/V1.md` (P
   slow_s, range}`. Demonstrations skip the synthetic no-camera person and record `smoothing: {ema, dt}`.
 - With P0 physics the server sends itself `{type:"physics", op:"set", params:{impedance, force_limit}}` around spotting.
 - Agent tools: `learn_skill_from_demo`, `list_skills`, `apply_skill`, `edit_skill_params`, `load_pack`.
+
+## v9 · Physics (v1 P0, `pps/physics.py`)
+Physics is the default; `python -m pps.app --kinematic` (or `PC_PHYSICS=0`) keeps the kinematic mode, where everything
+below reports `mode: "kinematic"` and the `physics` message is refused. Details and limits: `docs/V1.md` (P0, as built).
+- `state.physics = {mode: "dynamic"|"kinematic", dt: 0.002, rtf, substeps, time, grasp: {role: object|null},
+  ee_force: {role: [fx, fy, fz]}, contacts: [{a, b, f}], objects: {name: {p: [x,y,z], q: [w,x,y,z], v}}, params}`.
+  `grasp` names the object held by contact on both jaws; `ee_force` is the contact force on the hand (wrist-sensor-like,
+  N, world frame, smoothed); `contacts` are the strongest contacts involving objects or the hands (`a`/`b` are
+  `<role>_pad`, `<role>_hand`, `robot`, `obj_<name>`, `table`, ...; `f` normal force in N); `rtf` is simulated / wall time.
+- `{type:"physics", op:"set", params:{friction_scale, mass_scale, damping_scale, kp_scale, latency_ms, gravity,
+  grip_force, impedance, force_limit}}` changes the plant at run time (unknown keys ignored, values clamped; answers in
+  `state.task`, action `physics`). `op:"reset"` restores the defaults. `op:"drop", object, height` lifts an object by
+  `height` m and lets it fall (a test probe). `mass_scale` scales the objects (not the robot); `grip_force` (N, default
+  40) is the squeeze of every gripper; `impedance: true` softens the arms (stiffness x0.2, effort x0.4) and caps the
+  end-effector force at `force_limit` (N) while pressing.
+- `{type:"task", action:"press", target, force: N, hold_s}`: move over the spot (or an object's top), come down, track
+  `force` along the approach axis with an admittance loop for `hold_s` seconds, retreat. The task message reports the
+  mean and peak force (and "capped by the ... impedance limit" when the limit was lower than asked). Physics only.
+- `pick_place` with physics: the jaws open on the way in, close at the grasp (the path waits), and the object is held
+  only by friction. The task fails honestly with "It slipped: ..." (the object didn't come up / fell out), "Too heavy:
+  ... I can lift X kg" (weight sensed once it hangs free), "I let go of ... but it fell over / ended up N cm from the
+  spot" (checked after the release) or "... is N cm wide and my gripper opens M cm".

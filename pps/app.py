@@ -35,7 +35,7 @@ from .demo import Demo
 from .tasks import REGIONS, Tasks, apply_surface, edit_skill, skills_meta
 from .world import packs as world_packs, profiles as world_profiles, scene as world_scene
 from .world.runtime import make_runtime
-from . import ext
+from . import ext, physics
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
@@ -169,7 +169,7 @@ def world_payload(m, world, key):
     geoms, meshes = [], {}
     d = mujoco.MjData(m)
     if world.home_q is not None:
-        d.qpos[:] = world.home_q
+        d.qpos[:len(world.home_q)] = world.home_q          # robot joints come first (physics: free objects follow)
     mujoco.mj_forward(m, d)
     helper = {b for b in range(m.nbody) if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or "").endswith("_target")}
     for g in range(m.ngeom):
@@ -445,7 +445,8 @@ def world_target(c, world):
 
 
 def world_state(world, rev):
-    return {"rev": rev, "robot": world.profile.public(), "scene": world.spec, "robots": world_profiles.listing(),
+    robot = world_profiles.physics_public(world.profile, world.physics)    # + what the physics can't do (yet)
+    return {"rev": rev, "robot": robot, "scene": world.spec, "robots": world_profiles.listing(world.physics),
             "templates": world_scene.templates(), "surface": {"top": world.surface["top"], "x": list(world.surface["x"]),
                                                               "y": list(world.surface["y"])},
             "regions": {k: list(v) for k, v in world.regions.items()}, "notes": world.notes,
@@ -677,6 +678,8 @@ def worker(args, shared):
                         rt.path_msg = f"Marker {mid} placed. Say 'put the mug on {mid}'."
                     else:
                         rt.path_msg = "That tap missed the scene."
+                elif t == "physics":
+                    physics_msg(rt, tasks, c)
                 elif t == "world":
                     try:
                         robot, spec = world_target(c, world)
@@ -800,6 +803,8 @@ def worker(args, shared):
         now = time.time()
         dt = float(np.clip(now - t_phys, 1 / 240, 1 / 12)) / IK_ITERS
         t_phys = now
+        if rt.plant is not None:                 # the plant may use ~40 % of a frame; heavier models run slower (rtf < 1)
+            rt.plant.budget(0.4 / max(fps, 10.0) / IK_ITERS)
         for _ in range(IK_ITERS):
             rt.step(dt)
             tasks.tick()
@@ -853,12 +858,13 @@ def worker(args, shared):
         st["demo"] = demo.state()
         video_flag[0] = video_job is not None
         st["robot"] = world.profile.id                     # UX 2.0 aliases of state.world
-        st["robots"] = world_profiles.listing()
+        st["robots"] = world_profiles.listing(world.physics)
         st["world"] = world_state(world, world_rev[0])
         st["spatial"] = spatial.state()
         st["server_gemini"] = gemini_key() is not None
         st["byok"] = byok()
         st["geom_poses"] = {str(g): [round(float(x), 4) for x in d.geom_xpos[g]] + [round(float(x), 4) for x in d.geom_xmat[g]] for g in dyn_geoms}
+        st["physics"] = physics_state(rt, tasks)
         if st["path"] is not None:
             st["path"]["pts"] = [[round(float(x), 3) for x in p] for p in rt.path["pts"]]
         st.update(ext.extra_state(ctx))
@@ -871,6 +877,50 @@ def worker(args, shared):
 
 
 TEACHER = [None]
+
+
+def physics_state(rt, tasks):
+    """state.physics (docs/V1.md P0)."""
+    held = {("left" if h.startswith("left") else "right"): o for h, o in tasks.holding.items()}
+    return rt.plant.state() if rt.plant is not None else physics.kinematic_state(held)
+
+
+def physics_msg(rt, tasks, c):
+    """{type: "physics", op: "set" | "reset" | "drop", params?, object?, height?}: plant parameters at run time."""
+    tid, op = str(c.get("id", "physics")), c.get("op", "set")
+    pl = rt.plant
+    quiet = c.get("id") is None and (tasks.task or {}).get("status") in ("running", "planning")
+
+    def report(status, message):          # a request without an id (P4 spotting) must not overwrite the running task's line
+        if not quiet:
+            tasks.set_task(tid, "physics", status, message)
+
+    if pl is None:
+        report("failed", "Physics is off (kinematic mode): restart without --kinematic / PC_PHYSICS=0.")
+        return
+    if op == "reset":
+        pl.reset_params()
+        report("done", "Physics back to the defaults.")
+    elif op == "set":
+        params = c.get("params") if isinstance(c.get("params"), dict) else {}
+        unknown = sorted(k for k in params if k not in physics.DEFAULTS)
+        try:
+            p = pl.set_params(params)
+        except (TypeError, ValueError):
+            report("failed", "Physics parameters must be numbers (impedance: true/false).")
+            return
+        shown = ", ".join(f"{k} {p[k]:g}" if not isinstance(p[k], bool) else f"{k} {'on' if p[k] else 'off'}" for k in params if k in p)
+        report("done", f"Physics: {shown or 'nothing changed'}." + (f" Unknown: {', '.join(unknown)}." if unknown else ""))
+    elif op == "drop":                    # a test probe: lift an object by `height` (m) and let it fall
+        name = tasks.obj_name(c.get("object")) if c.get("object") else tasks.cur
+        if name not in pl.objects:
+            report("failed", f"I can't find '{c.get('object')}' to drop.")
+            return
+        p = tasks.obj_pos(name) + np.array([0, 0, float(np.clip(float(c.get("height", 0.1)), 0.0, 0.5))])
+        tasks.set_obj_pose(name, p)
+        report("done", f"Dropped {tasks.pretty(name)} from {float(c.get('height', 0.1)) * 100:.0f} cm.")
+    else:
+        report("failed", f"Unknown physics op '{op}'. Use set, reset or drop.")
 
 
 def SKILL_FILE(key):
@@ -897,6 +947,8 @@ def dispatch(tasks, rt, c, cam):
         return
     if a == "pick_place":
         tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT)
+    elif a == "press":
+        tasks.press(tid, c.get("target"), c.get("target_uv"), cam, ASPECT, c.get("force", 10.0), c.get("hold_s", 1.5))
     elif a == "reach":
         tasks.reach(tid, c.get("target"), c.get("target_uv"), cam, ASPECT)
     elif a == "follow_path":
@@ -957,6 +1009,8 @@ def dispatch(tasks, rt, c, cam):
 def public_mode(rt, tasks):
     if rt.mode == "FOLLOW":
         return "TASK" if tasks.kind == "task" else "PATH"
+    if rt.mode == "PRESS":                       # physics: the force loop holds the hand on a surface
+        return "TASK"
     if rt.mode == "PREVIEW":
         return "PREVIEW"
     if rt.engaged and rt.mode in ("MIRROR", "REC"):
@@ -1016,11 +1070,14 @@ def main():
     ap.add_argument("--https-port", type=int, default=8443)
     ap.add_argument("--frames", type=int, default=0, help="exit after N frames (testing)")
     ap.add_argument("--safety-config", help="JSON overrides of the safety distances (pps/safety.py Config; clamped, never off)")
+    ap.add_argument("--kinematic", action="store_true", help="no physics: IK poses the robot, picked objects ride the hand (PC_PHYSICS=0)")
     args = ap.parse_args()
     if args.safety_config:
         os.environ["PC_SAFETY_CONFIG"] = args.safety_config
     if args.byok:
         os.environ["PC_BYOK"] = "1"
+    if args.kinematic:
+        os.environ["PC_PHYSICS"] = "0"
     shared = Shared()
     threading.Thread(target=run_server, args=(shared, args.port, args.https_port if args.https else 0), daemon=True).start()
     try:

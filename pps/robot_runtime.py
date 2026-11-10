@@ -15,6 +15,7 @@ import mink
 import mujoco
 import numpy as np
 from loop_rate_limiters import RateLimiter
+from mink.exceptions import NoSolutionFound
 
 from .fake import fake_landmarks
 from .ir import IntentRecorder
@@ -36,7 +37,23 @@ COLLISION_PAIRS = [
     (["left_hand_collision", "right_hand_collision", "left_wrist_collision", "right_wrist_collision",
       "left_elbow_yaw_collision", "right_elbow_yaw_collision"], ["table"]),
 ]
+BODY_GEOMS = ["torso_collision", "pelvis_collision", "head_collision", "left_hip_collision", "right_hip_collision",
+              "left_thigh_collision", "right_thigh_collision"]
 FEET = ["right_foot", "left_foot"]
+
+
+def slerp(q0, q1, a):
+    """Unit quaternions (wxyz): spherical interpolation, shortest way."""
+    q0, q1 = np.asarray(q0, float), np.asarray(q1, float)
+    c = float(np.dot(q0, q1))
+    if c < 0:
+        q1, c = -q1, -c
+    if c > 0.9995:
+        q = q0 + a * (q1 - q0)
+    else:
+        th = np.arccos(c)
+        q = (np.sin((1 - a) * th) * q0 + np.sin(a * th) * q1) / np.sin(th)
+    return q / np.linalg.norm(q)
 HANDS = ["right_palm", "left_palm"]
 
 
@@ -47,40 +64,66 @@ class Runtime:
     capabilities = ("pick_place", "reach", "follow_path", "imitate_video", "follow_me", "teach_by_showing", "balance")
     safety_scale = 1.0   # P5 (pps/features/safety.py) sets it every frame: 1 free, <1 slowing near a person, 0 stop
 
-    def __init__(self, mirror=True, model=None, home_q=None):
+    def __init__(self, mirror=True, model=None, home_q=None, ik_model=None, plant=None, ee_site=None):
+        """Physics (pps/physics.py): `model` is the plant's model (rendered), `ik_model` the planner's, `plant` steps it.
+        Without a plant the IK configuration's data *is* the robot (kinematic mode)."""
         self.model = model if model is not None else mujoco.MjModel.from_xml_path(XML.as_posix())
         self.home_q = None if home_q is None else np.asarray(home_q, float).copy()
         self.hands = list(HANDS)
-        self.configuration = mink.Configuration(self.model)
-        self.data = self.configuration.data
+        self.ee_site = {h: (ee_site or {}).get(h, h) for h in HANDS}   # IK frame per hand (the gripper TCP with physics)
+        self.configuration = mink.Configuration(ik_model if ik_model is not None else self.model)
+        self.ik_data = self.configuration.data
+        self.plant = plant
+        self.data = plant.d if plant is not None else self.ik_data
         m, d = self.model, self.data
 
         self.pelvis_task = mink.FrameTask("pelvis", "body", position_cost=0.0, orientation_cost=1.0, lm_damping=1.0)
         self.torso_task = mink.FrameTask("torso_link", "body", position_cost=0.0, orientation_cost=1.0, lm_damping=1.0)
-        self.posture_task = mink.PostureTask(m, cost=1e-1)
+        self.posture_task = mink.PostureTask(self.configuration.model, cost=1e-1)
         self.com_task = mink.ComTask(cost=10.0)
         self.feet_tasks = [mink.FrameTask(f, "site", position_cost=10.0, orientation_cost=1.0, lm_damping=1.0) for f in FEET]
-        self.hand_tasks = [mink.FrameTask(h, "site", position_cost=4.0, orientation_cost=0.05, lm_damping=1.0) for h in HANDS]
+        # with physics the palm grippers must be held level to grasp: the hand orientation counts (0.05: mirroring only)
+        self.hand_tasks = [mink.FrameTask(self.ee_site[h], "site", position_cost=4.0, orientation_cost=0.05,
+                                          lm_damping=1.0) for h in HANDS]
         self.tasks = [self.pelvis_task, self.torso_task, self.posture_task, self.com_task, *self.feet_tasks, *self.hand_tasks]
+        mi = self.configuration.model
         self.limits = [
-            mink.ConfigurationLimit(m),
-            mink.CollisionAvoidanceLimit(model=m, geom_pairs=COLLISION_PAIRS,
+            mink.ConfigurationLimit(mi),
+            mink.CollisionAvoidanceLimit(model=mi, geom_pairs=COLLISION_PAIRS,
                                          minimum_distance_from_collisions=0.01, collision_detection_distance=0.12),
         ]
+        if plant is not None:     # the grippers on the palms must not sweep through the body (with room for tracking lag)
+            from .physics import velocity_limit
+            self.limits.append(velocity_limit(mi, plant.robot_bodies, ("pc_",)))
+            grips = [[f"{s}_palm_col", f"{s}_pad_a", f"{s}_pad_b"] for s in ("right", "left")]
+            arms = [f"{s}_{k}_collision" for s in ("right", "left") for k in ("wrist", "hand", "elbow_yaw")]
+            upper = [f"{s}_{k}_collision" for s in ("right", "left") for k in ("shoulder_yaw", "elbow_yaw")]
+            self.limits += [
+                mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(grips[0] + grips[1], BODY_GEOMS), (grips[0], grips[1]),
+                                                                   (arms, ["left_hip_collision", "right_hip_collision"])],
+                                             minimum_distance_from_collisions=0.04, collision_detection_distance=0.15),
+                mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(upper, ["torso_collision"])],      # arms across the chest
+                                             minimum_distance_from_collisions=0.01, collision_detection_distance=0.08),
+                mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(grips[0] + grips[1], ["table"])],     # pads reach low objects
+                                             minimum_distance_from_collisions=0.002, collision_detection_distance=0.025)]
         self.com_mid = m.body("com_target").mocapid[0]
         self.feet_mid = [m.body(f"{f}_target").mocapid[0] for f in FEET]
         self.hands_mid = {h: m.body(f"{h}_target").mocapid[0] for h in HANDS}
-        self.palm_sid = {h: m.site(h).id for h in HANDS}
+        self.palm_sid = {h: m.site(self.ee_site[h]).id for h in HANDS}
         self.root_bid = m.body("pelvis").id
         self.robot_roots = {int(m.body_rootid[self.root_bid])}
         self.home()
+        if plant is not None:
+            plant.reset(self.configuration.q)
+            plant.settle()
 
-        # Robot geometry for retargeting (fixed at the home pose).
-        sh = {"left_palm": d.xpos[m.body("left_shoulder_pitch_link").id].copy(),
-              "right_palm": d.xpos[m.body("right_shoulder_pitch_link").id].copy()}
+        # Robot geometry for retargeting (fixed at the home pose; the palms, not the gripper TCP).
+        di = self.ik_data
+        sh = {"left_palm": di.xpos[m.body("left_shoulder_pitch_link").id].copy(),
+              "right_palm": di.xpos[m.body("right_shoulder_pitch_link").id].copy()}
         arm_len = np.mean([
-            np.linalg.norm(d.xpos[m.body(f"{s}_elbow_link").id] - sh[f"{s}_palm"])
-            + np.linalg.norm(d.site_xpos[self.palm_sid[f"{s}_palm"]] - d.xpos[m.body(f"{s}_elbow_link").id])
+            np.linalg.norm(di.xpos[m.body(f"{s}_elbow_link").id] - sh[f"{s}_palm"])
+            + np.linalg.norm(di.site_xpos[m.site(f"{s}_palm").id] - di.xpos[m.body(f"{s}_elbow_link").id])
             for s in ("left", "right")])
         self.retargeter = Retargeter(sh, arm_len, mirror=mirror)
         self.body_rt = BodyRetargeter()
@@ -88,7 +131,7 @@ class Runtime:
                           "feet": {f: d.mocap_pos[mid].copy() for f, mid in zip(FEET, self.feet_mid)},
                           "torso": self.torso_task.transform_target_to_world.copy()}
         self.body_now = None
-        self.validator = Validator(m, d, root_body=self.root_bid)
+        self.validator = Validator(self.configuration.model, self.ik_data, root_body=self.root_bid, palm_sites=dict(self.palm_sid))
         self.recorder = IntentRecorder("unitree_g1", [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(m.njnt)], mirror)
 
         self.mode = "MIRROR"
@@ -104,6 +147,7 @@ class Runtime:
         self.preview_idx = 0
         self.path = None          # {"pts": (N,3) robot frame, "ok": [bool], "palm": str, "cum": (N,), "i": int}
         self.follow_s = 0.0
+        self.force_req, self.grip_manual = {}, {}     # physics: set_force (palm -> admittance), set_gripper (role -> cmd)
         self.follow_speed = 0.3   # m/s along the drawn path
         self.path_msg = None
         self.last_result = {"flags": {}, "messages": [], "feasibility": 1.0, "speed_scale": 1.0, "residuals": {}}
@@ -115,7 +159,7 @@ class Runtime:
 
     # ------------------------------------------------------------------ setup
     def home(self):
-        m, d = self.model, self.data
+        d, di = self.data, self.ik_data
         if self.home_q is not None:
             self.configuration.update(self.home_q.copy())
         else:
@@ -123,14 +167,218 @@ class Runtime:
         self.posture_task.set_target_from_configuration(self.configuration)
         self.pelvis_task.set_target_from_configuration(self.configuration)
         self.torso_task.set_target_from_configuration(self.configuration)
-        for h, f in zip(HANDS, FEET):
-            mink.move_mocap_to_frame(m, d, f"{f}_target", f, "site")
-            mink.move_mocap_to_frame(m, d, f"{h}_target", h, "site")
-        d.mocap_pos[self.com_mid] = d.subtree_com[self.root_bid]
+        for h, f in zip(HANDS, FEET):                    # targets from the planned pose (the plant follows it)
+            self.mocap_to_site(f"{f}_target", f)
+            self.mocap_to_site(f"{h}_target", self.ee_site[h])
+        d.mocap_pos[self.com_mid] = di.subtree_com[self.root_bid]
         if hasattr(self, "body_home"):
             self.torso_task.set_target(self.body_home["torso"])
             self.body_now = None
             self.body_rt.reset()
+
+    def orient(self, on):
+        """Physics: grasps need the hand's orientation (jaws level, approach axis); everything else keeps the body's own
+        weight on it (the G1's is tiny: mirroring and reaching move the hand freely)."""
+        if self.plant is None:
+            return
+        base = getattr(self, "_oc_base", None)
+        if base is None:
+            base = self._oc_base = [float(np.max(t.orientation_cost)) for t in self.hand_tasks]
+        for t, b in zip(self.hand_tasks, base):
+            t.set_orientation_cost(0.6 if on and b < 0.2 else b)    # arms keep their own weight
+
+    def solve(self, cfg, dt):
+        """IK velocity. If the limits can't all hold at once (a joint starting outside its range, a contact the plant made),
+        fall back to the joint limits only rather than stop."""
+        try:
+            return mink.solve_ik(cfg, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
+        except NoSolutionFound:
+            try:
+                return mink.solve_ik(cfg, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits[:1])
+            except NoSolutionFound:
+                return np.zeros(cfg.model.nv)
+
+    def mocap_to_site(self, mocap_body, site):
+        """Put a target ghost (plant data) on a site of the planned pose (planner data)."""
+        m, di = self.model, self.ik_data
+        mid, sid = m.body(mocap_body).mocapid[0], m.site(site).id
+        self.data.mocap_pos[mid] = di.site_xpos[sid]
+        mujoco.mju_mat2Quat(self.data.mocap_quat[mid], di.site_xmat[sid])
+
+    @property
+    def q_des(self):
+        """The planner's joint positions: what the plant tracks (P1 records it as the action)."""
+        return self.configuration.q
+
+    def base_pose(self):
+        """Planned pose of the floating base (the physics harness follows it), or None."""
+        b = getattr(self, "root_bid", None)
+        if b is None:
+            return None
+        q = np.zeros(4)
+        mujoco.mju_mat2Quat(q, self.ik_data.xmat[b])
+        return self.ik_data.xpos[b].copy(), q
+
+    def plant_step(self, dt):
+        """Advance the plant (physics) toward q_des. Kinematic mode: the IK pose is the robot, nothing to do."""
+        if self.plant is not None:
+            self.plant.hold_fingers = False
+            self.plant.step(dt, self.configuration.q, self.base_pose())
+
+    def safety_hold(self, dt):
+        """P5 protective stop with physics: the plan stops where the robot *is* (q_des = the measured joints, taken once
+        when the stop starts), and the plant keeps running (gravity, contacts) holding that pose. The gripper keeps its
+        command (nothing held is dropped) and the fingers don't move. The hand targets are left alone, so a paused task
+        goes on from where it was. Kinematic mode: the IK pose is the robot and it simply isn't advanced."""
+        if self.plant is None:
+            return
+        if not getattr(self, "_safety_held", False):
+            self.configuration.update(self.plant.d.qpos[:self.plant.nq_r].copy())
+            self._safety_held = True
+        self.plant.hold_fingers = True
+        self.plant.step(dt, self.configuration.q, self.base_pose())
+
+    def set_obstacles(self, exclude=()):
+        """Physics: the planner keeps the hand clear of the objects on the table (synced from the plant), except `exclude`
+        (the one being picked). Objects are mocap bodies in the planner's model, so their poses are copied over."""
+        if self.plant is None:
+            return
+        mi, pl = self.configuration.model, self.plant
+        skip = {pl.objects[n]["bid"] for n in exclude if n in pl.objects}
+        for o in pl.objects.values():
+            b = o["bid"]
+            mid = mi.body_mocapid[b]
+            if mid >= 0:
+                self.ik_data.mocap_pos[mid] = self.data.xpos[b]
+                self.ik_data.mocap_quat[mid] = self.data.xquat[b]
+        mujoco.mj_kinematics(mi, self.ik_data)
+        targets = {b for b in range(mi.nbody) if (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_BODY, b) or "").endswith("_target")}
+        geoms = [g for g in range(mi.ngeom) if mi.geom_contype[g] and mi.geom_bodyid[g] not in pl.robot_bodies
+                 and mi.geom_bodyid[g] not in skip and mi.geom_bodyid[g] not in targets and mi.geom_bodyid[g] != 0]
+        if getattr(self, "_obstacle_limit", None) in self.limits:
+            self.limits.remove(self._obstacle_limit)
+        self._obstacle_limit = None
+        hand = [g for r, gr in pl.grip.items() for side in gr["pads"] for g in side]
+        near = set()                              # the gripper and the last links of each arm
+        for r, bodies in pl.ee_bodies.items():
+            near |= bodies
+            b = mi.site_bodyid[pl.site_ids[r]]
+            for _ in range(3):
+                b = mi.body_parentid[b]
+                if b in pl.robot_bodies:
+                    near.add(b)
+        hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and mi.geom_contype[g] and g not in hand]
+        if geoms and hand:
+            self._obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(hand, geoms)], minimum_distance_from_collisions=0.02,
+                                                                collision_detection_distance=0.08)
+            self.limits.append(self._obstacle_limit)
+
+    def hold_here(self):
+        """Stop where the robot is: the planner takes the measured pose so q_des doesn't keep pulling the arm."""
+        if self.plant is None:
+            return
+        self.configuration.update(self.plant.d.qpos[:self.plant.nq_r].copy())
+        for h in self.hands:
+            self.mocap_to_site(f"{h}_target", self.ee_site[h])
+
+    # ------------------------------------------------- physics adapters (P1 datasets, P2, P3 mirror, P4, P5 safety, VR)
+    @staticmethod
+    def _role(palm):
+        return palm[:-5] if palm.endswith("_palm") else palm
+
+    def ee_force(self):
+        """End-effector contact force {role: [fx, fy, fz]} (N, world frame, smoothed): the wrist-sensor-like reading P5
+        needs before it allows cooperative contact, and P1 records. None in kinematic mode: nothing measures force."""
+        if self.plant is None:
+            return None
+        return {r: v.copy() for r, v in self.plant.ee_force.items()}
+
+    def gripper_state(self):
+        """How closed each gripper is, measured from its jaws: {role: 0 (open) .. 1 (closed)} (P1 observation.state). A jaw
+        stopped by an object reads in between. None in kinematic mode (P1 then uses the task layer's grasp)."""
+        if self.plant is None:
+            return None
+        m, d, out = self.plant.m, self.plant.d, {}
+        for r, g in self.plant.grip.items():
+            vals = []
+            for a in g["acts"]:
+                g0, b0, b1 = float(m.actuator_gainprm[a, 0]), float(m.actuator_biasprm[a, 0]), float(m.actuator_biasprm[a, 1])
+                if b1 >= 0:                                   # not a position servo: no length <-> command map
+                    continue
+                lo, hi = (-(g0 * float(c) + b0) / b1 for c in (g["open"], g["close"]))   # servo rest length at open / closed
+                if m.actuator_trntype[a] == mujoco.mjtTrn.mjTRN_JOINT:              # a closed jaw stops at its joint limit
+                    j = m.actuator_trnid[a, 0]
+                    if m.jnt_limited[j]:
+                        rng = sorted(m.jnt_range[j] * m.actuator_gear[a, 0])
+                        lo, hi = float(np.clip(lo, *rng)), float(np.clip(hi, *rng))
+                if abs(hi - lo) > 1e-9:
+                    vals.append((float(d.actuator_length[a]) - lo) / (hi - lo))
+            out[r] = float(np.clip(np.mean(vals), 0.0, 1.0)) if vals else (1.0 if g["cmd"] == "close" else 0.0)
+        return out
+
+    @property
+    def gripper_cmd(self):
+        """The gripper command {role: 0 open | 1 closed} (P1 action). None in kinematic mode."""
+        if self.plant is None:
+            return None
+        return {r: (1.0 if g["cmd"] == "close" else 0.0) for r, g in self.plant.grip.items()}
+
+    @property
+    def set_gripper(self):
+        """Physics only: rt.set_gripper(palm, 0..1) opens / closes the real gripper (>= 0.5 closes); the object is held by
+        friction and the task layer learns what both jaws hold (Tasks._manual_grip). P2 trajectory grip events, P3
+        mirroring and VR teleop call it when `hasattr(rt, "set_gripper")`; in kinematic mode the attribute is absent and
+        they use the task layer's kinematic grasp instead."""
+        if self.plant is None:
+            raise AttributeError("set_gripper: kinematic mode has no physical gripper")
+        return self._set_gripper
+
+    def _set_gripper(self, palm, value):
+        role = self._role(palm)
+        if role not in self.plant.grip:
+            return False
+        cmd = "close" if float(value) >= 0.5 else "open"
+        self.plant.grip_cmd(role, cmd)
+        self.grip_manual[role] = cmd
+        return True
+
+    @property
+    def set_force(self):
+        """Physics only: rt.set_force(palm, N) presses with that force along the approach (down) while a path is followed
+        (P2 point `force`, P4 wipe / press): an admittance offset on the hand target, the loop of the press task. 0 / None
+        ends it. Absent in kinematic mode (the force is only recorded there)."""
+        if self.plant is None:
+            raise AttributeError("set_force: kinematic mode measures no force")
+        return self._set_force
+
+    def _set_force(self, palm, value):
+        try:
+            v = 0.0 if value is None else float(value)
+        except (TypeError, ValueError):
+            v = 0.0
+        if not np.isfinite(v) or v <= 0.0:
+            self.force_req.pop(palm, None)
+        else:
+            self.force_req.setdefault(palm, {"dz": 0.0, "peak": 0.0})["want"] = min(v, 200.0)
+        return True
+
+    def force_tick(self, dt):
+        """Admittance on the followed path (see Tasks._press_tick): lower the hand target until the surface pushes back
+        with the wanted force, back off near 0.9 x the impedance limit; at most 3 cm below the path. Ends with the path."""
+        if not self.force_req:
+            return
+        if self.plant is None or self.mode != "FOLLOW" or self.path is None:
+            self.force_req.clear()
+            return
+        pl = self.plant
+        lim = pl.params["force_limit"] if pl.params["impedance"] else float("inf")
+        for palm, fr in self.force_req.items():
+            f = float(pl.ee_force_raw.get(self._role(palm), np.zeros(3))[2])       # what the surface pushes up with
+            fr["peak"] = max(fr["peak"], f)
+            want = min(fr["want"], 0.8 * lim)
+            v = -0.03 if f > 0.9 * lim else float(np.clip(0.002 * (want - f), -0.03, 0.01))
+            fr["dz"] = float(np.clip(fr["dz"] + v * dt, 0.0, 0.03))
+            self.data.mocap_pos[self.hands_mid[palm]] -= np.array([0.0, 0.0, fr["dz"]])
 
     # --------------------------------------------------------------- messages
     def handle_message(self, msg):
@@ -175,19 +423,28 @@ class Runtime:
 
     def precheck(self, pts, palm, iters=10, dt=0.03, quats=None):
         """Trace the path with IK on a scratch configuration; a waypoint is ok if the hand gets within reach_tol.
-        quats: optional per-waypoint hand orientation (wxyz, P2 trajectories); default: the hand target's current one."""
-        cfg = mink.Configuration(self.model)
+        quats: an orientation per waypoint (wxyz: grasps, P2 trajectories); default: the hand target's current one."""
+        cfg = mink.Configuration(self.configuration.model)
+        cfg.data.mocap_pos[:], cfg.data.mocap_quat[:] = self.ik_data.mocap_pos, self.ik_data.mocap_quat   # objects (physics)
         cfg.update(self.configuration.q.copy())
         task = self.hand_tasks[self.hands.index(palm)]
         saved = task.transform_target_to_world
         mid = self.hands_mid[palm]
         quat = self.data.mocap_quat[mid].copy()
         ok, dists = [], []
-        for k, p in enumerate(pts):
-            q = quat if quats is None else np.asarray(quats[k], float)
-            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(q), p))
+        if quats is not None:
+            quats = [np.asarray(q, float) for q in quats]
+        start = cfg.data.site_xpos[self.palm_sid[palm]].copy()     # far first waypoint: lead in from the hand (unscored),
+        n_lead = int(np.linalg.norm(np.asarray(pts[0]) - start) / 0.035)   # the IK moves joints no faster than the robot
+        for j in range(1, n_lead):
+            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[0]),
+                                                                   start + (np.asarray(pts[0]) - start) * j / n_lead))
             for _ in range(iters):
-                v = mink.solve_ik(cfg, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
+                cfg.integrate_inplace(self.solve(cfg, dt), dt)
+        for k, p in enumerate(pts):
+            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[k]), p))
+            for _ in range(iters):
+                v = self.solve(cfg, dt)
                 cfg.integrate_inplace(v, dt)
             dist = float(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p))
             dists.append(dist)
@@ -307,12 +564,16 @@ class Runtime:
             follow_step(self, dt)       # P2 trajectory: timed samples with orientation and gripper (pps/traj.py)
         elif self.mode == "FOLLOW" and self.path is not None:
             pts, cum = self.path["pts"], self.path["cum"]
-            self.follow_s += dt * self.follow_speed * self.speed_scale
+            if not getattr(self, "follow_hold", False):  # physics: the path waits while the gripper closes / opens
+                slow = any(a <= self.path["i"] < b for a, b in self.path.get("slow", ()))   # the last few cm into a grasp
+                self.follow_s += dt * self.follow_speed * self.speed_scale * (0.35 if slow else 1.0)
             i = int(np.searchsorted(cum, self.follow_s, side="right")) - 1
             i = max(0, min(i, len(pts) - 2))
             seg = cum[i + 1] - cum[i]
             a = 0.0 if seg < 1e-9 else min(1.0, (self.follow_s - cum[i]) / seg)
             d.mocap_pos[self.hands_mid[self.path["palm"]]] = (1 - a) * pts[i] + a * pts[i + 1]
+            if self.path.get("q") is not None:          # an orientation per waypoint (grasps): slerp between them
+                d.mocap_quat[self.hands_mid[self.path["palm"]]] = slerp(self.path["q"][i], self.path["q"][i + 1], a)
             self.path["i"] = i if a < 1.0 else i + 1
             if self.follow_s >= cum[-1]:
                 self.path["i"] = len(pts) - 1
@@ -334,22 +595,26 @@ class Runtime:
         d = self.data
         s = float(self.safety_scale)
         if s <= 0.0:                      # protective stop: targets, IK and every motion source hold still
+            self.safety_hold(dt)          # physics: the plant keeps running and holds the measured pose
             return self.last_result
+        self._safety_held = False
         self.update_targets(dt * s)       # paths, skills, previews advance at the safe speed
+        self.force_tick(dt * s)           # physics: a path point's press force (set_force)
         self.com_task.set_target(d.mocap_pos[self.com_mid])
         for task, mid in zip(self.feet_tasks, self.feet_mid):
             task.set_target(mink.SE3.from_mocap_id(d, mid))
         for task, h in zip(self.hand_tasks, self.hands):
             task.set_target(mink.SE3.from_mocap_id(d, self.hands_mid[h]))
-        vel = mink.solve_ik(self.configuration, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits) * s
+        vel = self.solve(self.configuration, dt) * s
         self.configuration.integrate_inplace(vel, dt)   # s < 1: joints (and live mirroring) move slower too
+        self.plant_step(dt)                              # the plant runs in real time and tracks the (slower) plan
         mujoco.mj_camlight(self.model, d)
         targets = {h: d.mocap_pos[self.hands_mid[h]].copy() for h in self.hands}
         res = self.validator.evaluate(targets, vel)
         if self.mode == "FOLLOW":
-            self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"], {"source": "drawn_path"})
+            self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos[:getattr(self, "nq_r", d.qpos.shape[0])], res["flags"], res["residuals"], res["speed_scale"], {"source": "drawn_path"})
         if self.mode == "REC" and self.new_pose:
-            self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos, res["flags"], res["residuals"], res["speed_scale"], self.last_context)
+            self.recorder.add(self.last_lm, targets, self.last_grip, d.qpos[:getattr(self, "nq_r", d.qpos.shape[0])], res["flags"], res["residuals"], res["speed_scale"], self.last_context)
             self.recorder.frames[-1]["body"] = self.body_now
         self.new_pose = False
         self.last_result = res

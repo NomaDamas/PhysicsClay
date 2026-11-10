@@ -32,8 +32,8 @@ async def run(t):
     w0 = st().get("world") or {}
     robots = [r for r in w0.get("robots") or [] if not r.get("experimental")]
     t.check("world: state.world lists robot bodies and templates",
-            w0.get("robot", {}).get("id") == "g1" and len(robots) >= 9 and {"table", "kitchen", "shelf", "floor"} <= {x["id"] for x in w0.get("templates") or []},
-            f"{len(robots)} robots, rev {w0.get('rev')}")
+            w0.get("robot", {}).get("id") == "g1" and len(w0.get("robots") or []) >= 9 and {"table", "kitchen", "shelf", "floor"} <= {x["id"] for x in w0.get("templates") or []},
+            f"{len(w0.get('robots') or [])} robots ({len(robots)} not experimental), rev {w0.get('rev')}")
 
     for r in robots:
         if r["id"] == "g1":
