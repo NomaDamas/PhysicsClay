@@ -20,20 +20,32 @@ def _angle(a, b, c):
     return 180.0 if n < 1e-6 else float(np.degrees(np.arccos(np.clip(np.dot(v1, v2) / n, -1, 1))))
 
 
+REAL_HOLD = 3.0      # s: a real line (the robot, the agent, vision) stays up at least this long before a scripted demo line
+
+
 class MockBrain:
     def __init__(self):
         self.enabled = False
         self.say = None
         self._sid = 0
+        self.real_t = -1e9           # when the last real (not scripted demo) line was said
         self.gesture = None          # {"name", "ray": [[xyz],[xyz]] | None}
         self._cand, self._cand_t = None, 0.0
         self._cool = 0.0
         self._wx = collections.deque(maxlen=45)
         self._last_task = None
 
-    def utter(self, text, kind="robot"):
+    def utter(self, text, kind="robot", src=None):
+        """The robot line (state.say). src="demo": a line of the scripted demo (pps/demo.py: captions, the narrator, its
+        scripted user and robot lines); everything else is a real line, which a demo line must not cover (real_fresh)."""
         self._sid += 1
         self.say = {"id": self._sid, "text": text, "kind": kind}
+        if src != "demo":
+            self.real_t = time.time()
+
+    def real_fresh(self, hold=REAL_HOLD):
+        """A real line was said less than `hold` s ago (a running scripted demo waits until it has been seen and heard)."""
+        return time.time() - self.real_t < hold
 
     # -------------------------------------------------------------- narration
     def narrate(self, task):

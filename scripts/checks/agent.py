@@ -175,7 +175,10 @@ def unit(check):
 
 
 # ---------------------------------------------------------------------------- real LLM over the protocol
-async def _turn(t, text, limit=100):
+TURN_LIMIT = 200          # s: a turn with a tool makes two model calls, each may take up to responses_call's 90 s
+
+
+async def _turn(t, text, limit=TURN_LIMIT):
     await t.send(type="agent", text=text, confirm=True)
     t0, started = time.time(), False
     while time.time() - t0 < limit:
@@ -186,6 +189,24 @@ async def _turn(t, text, limit=100):
         elif started or any(e.get("kind") == "error" for e in a.get("events") or []):
             break
     return t.state().get("agent") or {}
+
+
+async def _said(t, reply, frames=12):
+    """The reply is put on the robot line (state.say) on the server tick after the turn ends: wait a few frames for it."""
+    st, seen = t.state(), 0
+    while reply and (st.get("say") or {}).get("text") != reply and seen < frames:
+        await t.pump(0.2)
+        seen += 1 if t.state() is not st else 0
+        st = t.state()
+    return st
+
+
+def _say_detail(st, reply, a):
+    sy = st.get("say") or {}
+    if not reply:                                 # no reply at all: say why, not what the line happened to be before
+        last = next((e for e in reversed(a.get("events") or []) if e.get("kind") in ("error", "tool", "thinking")), {})
+        return f"no reply (agent busy {a.get('busy')}, last event {last.get('kind')}: {str(last.get('text'))[:60]!r})"
+    return f"{sy.get('kind')} #{sy.get('id')}: {str(sy.get('text'))[:60]!r} (demo {(st.get('demo') or {}).get('name')})"
 
 
 async def run(t):
@@ -211,16 +232,20 @@ async def run(t):
     t.check("agent: 'put the mug in the center' -> pick_place -> plan proposed", ok,
             f"{time.time() - t0:.0f}s tools={[e.get('tool') for e in tools]} plan={plan.get('phase')} reply={reply[:70]!r}")
     print("      transcript:", json.dumps([{k: e.get(k) for k in ("kind", "tool", "args", "ok", "text") if e.get(k) is not None} for e in evs], ensure_ascii=False)[:1500], flush=True)
-    for _ in range(15):                  # the reply is spoken on the server tick after the turn ends (one frame later)
-        if (st.get("say") or {}).get("text") == reply:
-            break
-        await t.pump(0.2)
-        st = t.state()
-    t.check("agent: reply spoken through state.say", bool(reply) and (st.get("say") or {}).get("text") == reply, str((st.get("say") or {}).get("text"))[:60])
+    st = await _said(t, reply)
+    t.check("agent: reply spoken through state.say", bool(reply) and (st.get("say") or {}).get("text") == reply, _say_detail(st, reply, a))
     if plan.get("phase") == "proposing":
         await t.send(type="plan", op="cancel", id=plan.get("id"))
         await t.pump(0.8)
 
+    # the scripted demo yields to the conversation: it runs, the person asks something, the demo stops, the agent's
+    # reply is the robot line and no caption comes back over it (pps/demo.py, pps/features/agent.py)
+    mock0 = bool(t.state().get("mock"))
+    await t.send(type="demo", name="keyfeatures")
+    t1 = time.time()
+    while time.time() - t1 < 30 and not ((t.state().get("demo") or {}).get("step", 0) >= 2 and (t.state().get("say") or {}).get("kind") == "narrator"):
+        await t.pump(0.2)
+    running = (t.state().get("demo") or {}).get("name") == "keyfeatures"
     t0 = time.time()
     a = await _turn(t, "what's on the table?")
     evs = a.get("events") or []
@@ -231,6 +256,17 @@ async def run(t):
     t.check("agent: \"what's on the table?\" -> reply names the objects", any(w in low for w in ("mug", "block", "vase")) and not any(
         e.get("tool") in ("pick_place", "reach") for e in evs), f"{time.time() - t0:.0f}s {reply[:90]!r}")
     print("      transcript:", json.dumps([{k: e.get(k) for k in ("kind", "tool", "ok", "text") if e.get(k) is not None} for e in evs], ensure_ascii=False)[:900], flush=True)
+    st = await _said(t, reply)
+    held, t1 = True, time.time()
+    while time.time() - t1 < 4.0:                # nothing of the demo comes back over the reply
+        await t.pump(0.3)
+        held &= (t.state().get("say") or {}).get("text") == reply and t.state().get("demo") is None
+    # (no reply: the model didn't answer, which the check above reports; the demo part is still checked)
+    t.check("agent: a running demo stops when you talk to the agent; the reply stays the robot line",
+            running and st.get("demo") is None and bool(t.state().get("mock")) == mock0
+            and (not reply or ((st.get("say") or {}).get("text") == reply and held)),
+            f"demo ran {running}, now {(st.get('demo') or {}).get('name')}, held {held}, "
+            f"mock {t.state().get('mock')} (was {mock0}); {_say_detail(st, reply, a)}")
 
     await t.send(type="agent", op="reset")
     await t.pump(0.6)

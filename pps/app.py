@@ -796,6 +796,8 @@ def worker(args, shared):
                         teacher.start()
                         brain.utter("I'm watching. Show me the task and tell me what you're doing.", "robot")
                     elif cmd == "utterance":
+                        if demo.steps:                    # the person is speaking: a running scripted demo stops
+                            demo.stop()
                         if teacher.phase == "recording":
                             teacher.utter(c.get("text"))
                         elif teacher.phase in ("confirm", "done"):
@@ -819,8 +821,7 @@ def worker(args, shared):
                         tasks.set_task("demo", "demo", "failed", "The scripted demos run in the default world (the G1 at the "
                                        "wooden table). Reset the world first.")
                     else:
-                        brain.enabled = True
-                        demo.start(c.get("name", "full"))
+                        demo.start(c.get("name", "full"))   # (turns the mock brain on while it runs)
                 elif t == "robot":   # UX 2.0 robot switch: now a real switch of the body (the scene stays)
                     p = world_profiles.get(c.get("name")) or world_profiles.get("g1")
                     verdict = ""
@@ -845,6 +846,7 @@ def worker(args, shared):
                     tasks.set_path_world(c.get("points") or [], c.get("hand") if c.get("hand") in ("left", "right") else None)
                 elif t == "mock":
                     brain.enabled = bool(c.get("enabled"))
+                    demo.mock0 = None                       # the person's choice stays after a running demo ends
                     if tasks.task:
                         brain._last_task = (tasks.task.get("id"), tasks.task.get("status"))
                     if brain.enabled:
@@ -893,6 +895,8 @@ def worker(args, shared):
                     zf = float(np.clip(float(c.get("zoom", 1.0) or 1.0), 0.25, 4.0))
                     cam_.distance = float(np.clip(cam_.distance * zf, 0.35, 8.0))
                 elif t == "task":
+                    if demo.steps and c.get("utterance"):   # said by the person (the browser attaches their words):
+                        demo.stop()                         # a running scripted demo stops
                     if not ext.intercept_task(ctx, c):
                         dispatch(tasks, rt, c, cam_params)
             except Exception as e:  # never let one bad intent kill the loop
