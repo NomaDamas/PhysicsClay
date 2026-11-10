@@ -22,6 +22,11 @@ def _objs(g):
 
 async def run(t):
     await t.task("reset_scene", 1)
+    if ((t.state().get("physics") or {}).get("mode")) == "dynamic":
+        # with physics the red block starts 8 cm further right: at its UX 2.0 spot, right behind the mug, the swap's
+        # set-aside spots are past what the G1's side grasp physically reaches there (the kinematic run got them with its
+        # 6 cm IK tolerance, the block riding the hand) and the robot says it can't get there
+        await t.send(type="physics", id=f"goal-place-{time.time():.3f}", op="place", object="red block", pos=[0.30, -0.42])
     await t.pump(0.5)
     g = t.state().get("goal") or {}
     objs = _objs(g)

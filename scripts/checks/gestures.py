@@ -145,7 +145,9 @@ async def run(t):
             and (st.get("task") or {}).get("action") == "stop", f"seen={seen}")
     await t.task("home", 1.5)
 
-    # nudge a running pick-and-place: the place target moves 2 cm
+    # nudge a running pick-and-place: the place target moves 2 cm (from the start scene: with physics the "go on" path
+    # above runs the hand through where the mug stands and knocks it over)
+    await t.task("reset_scene", 1)
     await t.send(type="speed", scale=0.3)
     tk = await t.task("pick_place", 3, object="mug", target="center")
     await t.pump(0.4)
@@ -156,7 +158,8 @@ async def run(t):
     await t.send(type="nudge", dx=0.0, dy=dy, dz=0.0)
     await t.pump(0.6)
     n1 = t.state().get("nudge") or {}
-    t.check("nudge: active while a task runs", tk.get("status") == "running" and n0.get("active") and n0.get("kind") == "running", str(n0))
+    t.check("nudge: active while a task runs", tk.get("status") == "running" and n0.get("active") and n0.get("kind") == "running",
+            f"{n0} task {tk.get('status')}: {tk.get('message', '')[:80]}")
     p0, p1 = n0.get("pos"), n1.get("pos")
     t.check("nudge: moves the active target 2 cm", (n1.get("last") or {}).get("ok") and p0 and p1 and abs(p1[1] - p0[1] - dy) < 1e-3
             and abs(p1[0] - p0[0]) < 1e-3, f"{p0} -> {p1} {n1.get('offset')} {(n1.get('last') or {}).get('message')}")

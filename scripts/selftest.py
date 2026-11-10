@@ -1,5 +1,6 @@
 """End-to-end self test: starts an isolated server (synthetic input) and exercises every feature over the real protocol.
-Run: .venv/bin/python scripts/selftest.py        Prints PASS/FAIL per check and exits non-zero on any failure."""
+Run: .venv/bin/python scripts/selftest.py        Prints PASS/FAIL per check and exits non-zero on any failure.
+PC_SELFTEST_CHECKS=gestures,handover runs only those scripts/checks/ files (no core section)."""
 import asyncio
 import json
 import os
@@ -15,6 +16,7 @@ import aiohttp
 ROOT = Path(__file__).resolve().parents[1]
 PORT = int(os.environ.get("PC_SELFTEST_PORT", "8791")); HTTPS = PORT + 1   # parallel runs: give each its own port
 BASE = f"http://127.0.0.1:{PORT}"
+ONLY = [c for c in os.environ.get("PC_SELFTEST_CHECKS", "").split(",") if c]
 results = []
 
 
@@ -40,7 +42,8 @@ async def main():
         nonlocal st
         t0 = time.time()
         while time.time() - t0 < sec:
-            m = await asyncio.wait_for(ws.receive(), 10)
+            m = await asyncio.wait_for(ws.receive(), 30)   # (a plan is made inside one server tick: with physics on a
+                                                            # loaded machine one can take more than 10 s)
             if m.type == aiohttp.WSMsgType.TEXT:
                 st = json.loads(m.data)
             elif m.type == aiohttp.WSMsgType.BINARY:
@@ -78,6 +81,29 @@ async def main():
         return st.get("task") or {}
 
     send = lambda **k: ws.send_str(json.dumps(k))
+
+    async def features():
+        """Feature checks: scripts/checks/*.py each define `async def run(t)` (UX 2.0 features add their own file)."""
+        import importlib.util
+        from types import SimpleNamespace
+        t = SimpleNamespace(send=send, pump=pump, task=task, until_done=until_done, check=check, http=s, base=BASE,
+                            state=lambda: st, frames=lambda: bins)
+        for f in sorted((ROOT / "scripts" / "checks").glob("*.py")):
+            if f.name.startswith("_") or (ONLY and f.stem not in ONLY):
+                continue
+            spec = importlib.util.spec_from_file_location(f"checks_{f.stem}", f)
+            mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+            try:
+                await mod.run(t)
+            except Exception as e:
+                check(f"checks/{f.name} ran", False, repr(e)[:120])
+            await task("reset_scene", 1)
+
+    if ONLY:                                    # PC_SELFTEST_CHECKS=gestures,handover: only those feature checks
+        await pump(1.0)
+        await features()
+        await ws.close(); await s.close()
+        return
 
     # --- serving
     async with s.get(BASE + "/static/app.js") as r:
@@ -245,22 +271,7 @@ async def main():
     else:
         check("video upload", False, "no /tmp/pc_clip.mp4 test clip")
 
-    # --- feature checks: scripts/checks/*.py each define `async def run(t)` (UX 2.0 features add their own file)
-    import importlib.util
-    from types import SimpleNamespace
-    t = SimpleNamespace(send=send, pump=pump, task=task, until_done=until_done, check=check, http=s, base=BASE,
-                        state=lambda: st, frames=lambda: bins)
-    for f in sorted((ROOT / "scripts" / "checks").glob("*.py")):
-        if f.name.startswith("_"):
-            continue
-        spec = importlib.util.spec_from_file_location(f"checks_{f.stem}", f)
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        try:
-            await mod.run(t)
-        except Exception as e:
-            check(f"checks/{f.name} ran", False, repr(e)[:120])
-        await task("reset_scene", 1)
-
+    await features()
     await ws.close(); await s.close()
 
 

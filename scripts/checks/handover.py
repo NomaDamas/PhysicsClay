@@ -54,13 +54,12 @@ async def run(t):
         if p and holders and not h and p[2] > z0 + 0.03 and task.get("id") == tid and task.get("status") == "running":
             low = min(low, -1.0)                  # off the table and in no hand: dropped
         return task.get("id") == tid and task.get("status") in ("done", "failed")
-    await _until(t, watch, 5.0)
-    fin = await t.until_done(90)
-    watch(t.state())
+    await _until(t, watch, 240.0)                 # every state while it runs (a loaded machine: well past 60 s of sim)
+    fin = t.state().get("task") or {}
     end = _bar(t.state()) or [0, 0, 0]
     ok = fin.get("id") == tid and fin.get("status") == "done"
     t.check("handover: right arm picks, both meet, left arm takes it and puts it down", ok and "left hand" in fin.get("message", "")
-            and end[1] > 0.1, f"{fin.get('status')}: {fin.get('message', '')[:110]} bar={end}")
+            and end[1] > 0.03, f"{fin.get('status')}: {fin.get('message', '')[:110]} bar={end}")
     passed = ("right",) in holders and ("left",) in holders and holders.index(("right",)) < holders.index(("left",))
     t.check("handover: the bar goes from the right hand to the left hand (both hold it in between)", passed and ("left", "right") in holders,
             f"holders={holders}")

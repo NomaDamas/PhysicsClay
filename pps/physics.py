@@ -593,11 +593,14 @@ class Plant:
     # ---------------------------------------------------------------- control
     def _apply_ctrl(self, q, qd):
         m, d = self.m, self.d
+        soft = self.params["impedance"]
         for a, qa, da in self.track:
             # setpoint + velocity feed-forward: kp (q* - q) + kv (qd* - qd) + b qd*, so neither the servo's damping nor the
-            # joint's own (b, friction-like) make it lag behind a moving plan
+            # joint's own (b, friction-like) make it lag behind a moving plan; not for a compliant (impedance) arm, where
+            # the small kp turns the feed-forward into a 20 Hz force ripple against a surface
             kp, kv = m.actuator_gainprm[a, 0], -m.actuator_biasprm[a, 2] + m.dof_damping[da]
-            v = q[qa] + (kv / kp * qd[qa] if kp > 0 else 0.0)        # hinge/slide: qpos and velocity share the index
+            ff = kv / kp if kp > 0 and not (soft and a in self.arm_acts) else 0.0
+            v = q[qa] + ff * qd[qa]                                   # hinge/slide: qpos and velocity share the index
             lo, hi = m.actuator_ctrlrange[a] if m.actuator_ctrllimited[a] else (-1e9, 1e9)
             d.ctrl[a] = min(max(v, lo), hi)
         for a in self.hold0:

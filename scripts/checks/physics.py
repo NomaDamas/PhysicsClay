@@ -18,12 +18,20 @@ def _phys(t):
     return t.state().get("physics") or {}
 
 
-async def _until(t, cond, limit):
-    t0 = time.time()
-    while time.time() - t0 < limit:
+async def _until(t, cond, limit, sim=False):
+    """Pump until cond(state); limit in wall seconds, or with sim=True in the robot's own (sim) seconds (a loaded machine
+    runs the plant slower than real time), capped at 4x the limit of wall time."""
+    t0, ran, last = time.time(), 0.0, None
+    while time.time() - t0 < (4 * limit if sim else limit):
         await t.pump(0.2)
         if cond(t.state()):
             return True
+        if sim:
+            now = float((t.state().get("physics") or {}).get("time") or 0.0)
+            ran += max(0.0, now - last) if last is not None and now >= last else 0.0
+            last = now
+            if ran >= limit:
+                return False
     return False
 
 
@@ -86,7 +94,7 @@ async def run(t):
         if any("pad" in c["a"] + c["b"] and "mug" in c["a"] + c["b"] for c in ph.get("contacts") or []):
             seen["pads"] = True
         return (s.get("task") or {}).get("status") != "running"
-    await _until(t, watch, 40)
+    await _until(t, watch, 40, sim=True)
     fin = t.state().get("task") or {}
     t.check("physics: a real pick holds the mug by contact (both pads) and places it", res.get("status") in ("running", "done")
             and fin.get("status") == "done" and seen["grasp"] and seen["pads"], f"{fin.get('status')}: {fin.get('message', '')[:70]} {seen}")
@@ -124,7 +132,7 @@ async def run(t):
         if f:
             fz.append(f[2])
         return (s.get("task") or {}).get("status") != "running"
-    await _until(t, press, 30)
+    await _until(t, press, 30, sim=True)
     fin = t.state().get("task") or {}
     peak = re.search(r"peak ([\d.]+) N", fin.get("message", ""))
     peak = float(peak.group(1)) if peak else max(fz or [0])
@@ -133,7 +141,7 @@ async def run(t):
             f"{fin.get('message', '')[:100]} (sampled max {max(fz or [0]):.1f} N)")
     await _physics(t, op="reset")
     res = await t.task("press", 4, target="center", force=10, hold_s=1.0)
-    await _until(t, lambda s: (s.get("task") or {}).get("status") != "running", 30)
+    await _until(t, lambda s: (s.get("task") or {}).get("status") != "running", 30, sim=True)
     fin = t.state().get("task") or {}
     mean = re.search(r"with ([\d.]+) N", fin.get("message", ""))
     t.check("physics: a pressing force is tracked along the approach axis (10 N asked)",

@@ -88,9 +88,9 @@ def _blocker(p, r, others, gap=GAP):
     return None
 
 
-def _free_near(p, r, others, reach_bias=True, ok=None):
+def _free_near(p, r, others, reach_bias=True, ok=None, pref=None):
     """Nearest point to p on the table that clears every (name, xy, r) in others (and, given ok(xy), that ok accepts:
-    physics checks that the hand can really set it down there)."""
+    physics checks that the hand can really set it down there; pref(xy) adds to a spot's score)."""
     if _on_table(p, r) and _blocker(p, r, others) is None:
         return np.asarray(p, float)
     cands = []
@@ -100,7 +100,7 @@ def _free_near(p, r, others, reach_bias=True, ok=None):
             if not _on_table(c, r) or _blocker(c, r, others) is not None:
                 continue
             score = rad + (0.6 * max(0.0, c[0] - 0.40) + 0.4 * max(0.0, abs(c[1]) - 0.30) if reach_bias else 0.0)
-            cands.append((score, len(cands), c))
+            cands.append((score + (pref(c) if pref else 0.0), len(cands), c))
         if cands and ok is None and rad > min(cands)[0] + 0.02:
             break
     cands.sort(key=lambda x: x[:2])
@@ -162,11 +162,21 @@ def plan(tasks, targets):
         n0 = pending[0]
         b = occupant(n0, fixed[n0])
         others = obst + [(m, sim[m], rad[m]) for m in objs if m != b] + [(m, q, rad[m]) for m, q in fixed.items() if m != b]
-        reach = None
+        reach = pref = None
         if getattr(tasks, "plant", None) is not None:     # physics: a spot the hand can really reach to set it down
-            hh = tasks.objs[b]["half_h"]
-            reach = lambda c: tasks._reach_err(np.array([c[0], c[1], TABLE_TOP + hh]), tasks.hand_for(c)) < 0.015
-        aside = _free_near(sim[b], rad[b], others, ok=reach)
+            hh, hand = tasks.objs[b]["half_h"], tasks.picker(b)     # (the hand that picks it up carries it there)
+            tasks.rt.set_obstacles((b,))                             # (around everything else, as its pick will)
+            frm, tgt = tasks.mug_center(b), fixed.get(b)             # (and the hand heading it takes it with), and from
+                                                                     # there on to its own goal later
+            def reach(c, hh=hh, hand=hand, frm=frm, tgt=tgt):
+                at = np.array([c[0], c[1], TABLE_TOP + hh])
+                if tasks._reach_err(at, hand, frm=frm) >= 0.015:
+                    return False
+                return tgt is None or tasks._reach_err(np.array([tgt[0], tgt[1], TABLE_TOP + hh]), tasks.hand_for(at), frm=at) < 0.015
+            sh = np.asarray(tasks.rt.retargeter.robot_shoulders[hand], float)[:2]    # first try spots no farther from
+            d0 = float(np.linalg.norm(frm[:2] - sh))                                 # the shoulder than where it is now
+            pref = lambda c, sh=sh, d0=d0: 1.0 * max(0.0, float(np.linalg.norm(c - sh)) - d0 - 0.02)
+        aside = _free_near(sim[b], rad[b], others, ok=reach, pref=pref)
         if aside is None:
             notes.append(f"I can't make room: {_pretty(tasks, b)} sits on {_pretty(tasks, n0)}'s goal and there is no free spot to set it aside.")
             break
