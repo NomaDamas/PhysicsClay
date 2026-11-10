@@ -76,19 +76,9 @@ LEGGED_NOTE = ("Physics: manipulation runs with the base welded in place and the
                "needs a learned locomotion policy and is out of scope.")
 
 
-# bodies whose contact pick & place isn't reliable yet with physics on: listed as experimental (physics only), with why
-# (xArm7, iiwa14 and Apollo left this list in v1 P0b: >= 9/10 on both tasks in scripts/bench_grasp.py)
-_PICK = "contact pick & place isn't reliable with this gripper yet"
-STRETCH = (f"{_PICK}: the SG3's fingers are hinged and close at an angle, with the rubber tips on soft hinges, so a block "
-           "or a mug is twisted out of the grip as they close (it needs a parallel, spring-loaded SG3 finger model).")
-TIDYBOT = ("contact pick & place of small blocks isn't reliable yet (8 in 10): the mug is picked and placed reliably, but "
-           "on the way to a block next to the mug the Kinova's forearm can bump the mug into it (the planner keeps only "
-           "the gripper and wrist clear of objects), and the 2F-85's fingertips then close on a block that is pressed "
-           "against the mug and it slips out.")
-SPOT = ("contact pick & place of the mug isn't reliable with this gripper yet: blocks are picked and placed reliably, but "
-        "the mug is held by its rim between the moving "
-        "finger and the fixed jaw, and the bulky jaw ends up inside the mug and drags it along when the hand lifts after "
-        "letting go.")
+# bodies whose contact pick & place isn't reliable yet with physics on are listed as experimental (physics only), with
+# why: physics={"experimental": "<reason>"}. None today: xArm7, iiwa14 and Apollo left the list in v1 P0b; Stretch 3,
+# TidyBot and Spot in v1 P0c (>= 9/10 on both tasks in scripts/bench_grasp.py).
 
 
 def _built(width, approach=(0, 0, 1), axis=(0, 1, 0), length=0.06, base=0.0):
@@ -187,7 +177,7 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         {"x": -0.22, "y": 0.0, "yaw": 90, "on": "floor"}, {"right": "link_grasp_center"}, "home", "mobile",
         ("pick_place", "reach", "follow_path", "drive_base"), planar_base=("x",), base_joints=("base_x",), base_cost=0.5,
         ee_down=False, hand_cost=(4.0, 0.0), freeze=("wheel", "head", "rubber", "gripper"), prompt="pps/world/prompts/stretch3.md",
-        physics={"payload": 1.5, "grasp": "side", "experimental": STRETCH,
+        physics={"payload": 1.5, "grasp": "side",
                  "stiffer": [(("wrist",), 10.0)],         # the model's wrist servos (kp 10-50) let the fingers droop onto the table
                  "home": {"joint_lift": 0.75},             # the model's home has the fingers 2 cm inside the table top
                  "grip": {"right": _sg3_grip()}}),
@@ -196,14 +186,14 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         {"x": -0.30, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "pinch_site"}, "home", "mobile",
         ("pick_place", "reach", "follow_path", "drive_base"), base_joints=("joint_x", "joint_y", "joint_th"), base_cost=1.0,
         freeze=("driver", "coupler", "spring", "follower"), prompt="pps/world/prompts/tidybot.md",
-        physics={"payload": 4.0, "experimental": TIDYBOT, "grip": {"right": _native("fingers_actuator", 0, 255, ("left_pad", "left_follower"), ("right_pad", "right_follower"), 0.085, axis=(1, 0, 0), boost=0.115)}}),
+        physics={"payload": 4.0, "grip": {"right": _native("fingers_actuator", 0, 255, ("left_pad", "left_follower"), ("right_pad", "right_follower"), 0.085, axis=(1, 0, 0), boost=0.115)}}),
     RobotProfile(
         "spot", "Boston Dynamics Spot with arm", "quadruped_arm", EX + "boston_dynamics_spot/spot_arm.xml",
         {"x": -0.35, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "EE"}, "home", "legged",
         ("pick_place", "reach", "follow_path", "balance"),
         feet=(("FL", "site"), ("FR", "site"), ("HL", "site"), ("HR", "site")), root="body", ee_axis=(1, 0, 0),
         freeze=("f1x",), prompt="pps/world/prompts/spot.md",
-        physics={"payload": 5.0, "experimental": SPOT, "grip": {"right": dict(
+        physics={"payload": 5.0, "grip": {"right": dict(
             _native("arm_f1x", -0.9, 0.0, ("arm_link_fngr",), ("arm_link_wr1",), 0.10, tcp=(0.03, 0, -0.02), approach=(1, 0, 0),
                     axis=(0, 0, 1), boost=0.06, jaw=-0.013),
             wide_open=-1.25, deep=0.05)}}),   # the mug: the finger comes down outside its far wall, holds 5 cm down

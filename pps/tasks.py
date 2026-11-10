@@ -88,6 +88,46 @@ def _seg_dist(p, a, b):
     return float(np.linalg.norm(p - (a + s * ab)))
 
 
+def path_object_hits(pts, bodies, hang, foot, hand="my hand", carry=None, margin=0.01):
+    """Per path point: why the hand (or what it carries) would run into an object there, or None.
+
+    The hand is its TCP point plus the gripper below it: `hang` m down, over a footprint of radius `foot`. bodies:
+    [(centre xyz, radius, half height, name)] as upright cylinders. carry: (name, radius, half height, how far its centre
+    hangs below the TCP) of what the hand holds. The wording matches the P2 trajectory checks (pps/traj.py)."""
+    out = []
+    for p in np.asarray(pts, float).reshape(-1, 3):
+        why = None
+        for c, r, h, n in bodies:
+            dh = float(np.hypot(p[0] - c[0], p[1] - c[1]))
+            top = float(c[2]) + h
+            if dh < r + foot + margin and p[2] - hang < top + margin:
+                why = f"{hand} would hit {n}"
+                break
+            if carry and dh < r + carry[1] + margin and p[2] - carry[3] - carry[2] < top + margin:
+                why = f"{carry[0]} would hit {n}"
+                break
+        out.append(why)
+    return out
+
+
+def lift_path(pts, bodies, hang, foot, margin=0.025):
+    """The path raised over the bodies it would run into, with 45° ramps up and down (1 cm lower per cm further out),
+    unchanged elsewhere. bodies as in path_object_hits. -> (points, names of the bodies it now goes over)."""
+    P = np.array(pts, float).reshape(-1, 3)
+    need = np.full(len(P), -np.inf)
+    names = []
+    for c, r, h, n in bodies:
+        dh = np.hypot(P[:, 0] - c[0], P[:, 1] - c[1])
+        z = float(c[2]) + h + hang + margin
+        reach = r + foot + 0.015
+        if not np.any((dh < reach) & (P[:, 2] < z)):
+            continue
+        names.append(n)
+        need = np.maximum(need, z - np.maximum(dh - reach, 0.0))
+    P[:, 2] = np.maximum(P[:, 2], need)
+    return P, names
+
+
 class Tasks:
     def __init__(self, rt, kinds=None):
         """kinds: {object name: kind} from the world spec (scenes built on the fly), used to understand 'the cup'."""
@@ -700,14 +740,15 @@ class Tasks:
             return 0.03
         return float(g.get("pad_h", 0.018)) + 0.01 if side else float(g["tip"])
 
-    def _clear_z(self, a, b, palm, side, placed=None, margin=0.03):
+    def _clear_z(self, a, b, palm, side, placed=None, margin=0.03, skip=()):
         """Physics: the TCP height at which the open hand, going straight from a to b, passes over every movable object near
-        that line (`placed`: (name, centre) of one just set down, counted where it now stands) with `margin`; -inf if none.
-        Fixed obstacles (the vase) are not flown over: the planner keeps the hand clear of them."""
+        that line (`placed`: (name, centre) of one just set down, counted where it now stands; `skip`: ones it goes to)
+        with `margin`; -inf if none. Fixed obstacles (the vase) are not flown over: the planner keeps the hand clear of them."""
         hang, need = self._hang(palm, side), -np.inf
         g = self.plant.grip.get(self.role(palm)) if self.plant is not None else None
         foot = max(float(g.get("span", 0.0)), float(g["width"]) / 2) if g else 0.05
-        bodies = [(c, r, hh, n) for c, r, hh, n in self._bodies(skip=tuple(self.obstacles)) if not placed or n != placed[0]]
+        bodies = [(c, r, hh, n) for c, r, hh, n in self._bodies(skip=tuple(self.obstacles) + tuple(skip))
+                  if not placed or n != placed[0]]
         if placed:
             o = self.objs[placed[0]]
             bodies.append((np.array([placed[1][0], placed[1][1], TABLE_TOP + o["half_h"]]), self._radius(placed[0]), o["half_h"], placed[0]))
@@ -1277,10 +1318,11 @@ class Tasks:
             for p, q in quats.items():            # dropped half way (another command): the hands' targets as they were
                 d.mocap_quat[self.rt.hands_mid[p]] = q
 
-    def _pick_plan(self, tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=True, yaw=None):
+    def _pick_plan(self, tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=True, yaw=None, lifts=True):
         """Keypoints of a pick & place (approach, grasp, carry, release, retreat) -> _launch. plan: (offset, approach) with
         physics, None for the kinematic grasp. Physics, from above: the hand may turn about the vertical to set it down
-        (yaw; tried in the order that leaves the hand most room). -> launched?"""
+        (yaw; tried in the order that leaves the hand most room). lifts: the way in and the way home go over the other
+        objects (planned again without, if those waypoints are what the arm can't reach). -> launched?"""
         d = self.rt.data
         mid = self.rt.hands_mid[palm]
         q_grip = d.mocap_quat[mid].copy()          # grasp_plan sets the orientation the grasp needs
@@ -1323,7 +1365,7 @@ class Tasks:
             nh_p = rz(nh) if nh is not None else None
         self.cur_off = off
         place_hand = place_c + off + (np.array([0, 0, PLACE_GAP]) if n is not None else 0.0)   # let go just above the surface
-        kps, ev = [cur], {}
+        kps, ev, lifted = [cur], {}, False
         home = self.home_palm[palm]
         over = n is not None and home[2] < TABLE_TOP + 0.06 and home[0] < TABLE_X[0] + 0.05   # hands start below the edge
         if over and cur[2] < TABLE_TOP + 0.06:    # physics: up over the table's edge first (a straight line would cut it)
@@ -1334,6 +1376,12 @@ class Tasks:
                 pre = g + (np.array([0, 0, 0.09]) if np.array_equal(off[:2], [0, 0]) else np.array([-0.08, 0, 0.07]))
             else:                                 # physics: come in along the approach axis with the jaws open
                 pre = g - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else g + np.array([0, 0, self._pre_dz(name, palm, g)])
+                a0 = kps[-1]                      # ... over the other objects on the way there, not skimming past them (the
+                zl = self._clear_z(a0, pre, palm, sidegrasp, skip=(name,)) if lifts else -np.inf   # arm trails the plan)
+                if zl > min(a0[2], pre[2]) + 0.005:
+                    kps += [np.array([a0[0], a0[1], zl])] if a0[2] < zl else []
+                    kps += [np.array([pre[0], pre[1], zl])] if pre[2] < zl else []
+                    lifted = True
             kps += [pre, g]
             ev[len(kps) - 1] = "grasp"
             kps += [g + np.array([0, 0, LIFT if n is not None else 0.12])]
@@ -1368,9 +1416,11 @@ class Tasks:
         if n is not None:                         # physics: backed off: from here the hand keeps clear of what it set down
             ev[len(kps) - 1] = "clear"
             nxt = np.array([home[0], home[1], TABLE_TOP + 0.10]) if over else home
-            zl = self._clear_z(retreat, nxt, palm, sidegrasp, placed=(name, place_c))
-            if zl > retreat[2] + 0.005:           # ... and goes up over it (and its neighbours) before heading home
-                kps.append(np.array([retreat[0], retreat[1], zl]))
+            zl = self._clear_z(retreat, nxt, palm, sidegrasp, placed=(name, place_c)) if lifts else -np.inf
+            if zl > min(retreat[2], nxt[2]) + 0.005:   # ... and goes over it (and its neighbours) on the way home, down
+                kps += [np.array([retreat[0], retreat[1], zl])] if retreat[2] < zl else []   # only once past them
+                kps += [np.array([nxt[0], nxt[1], zl])] if nxt[2] < zl else []
+                lifted = True
         kps += ([np.array([home[0], home[1], TABLE_TOP + 0.10])] if over else []) + [home]
         quats = None
         if n is not None:                         # the hand turns to the grasp orientation, keeps it, and turns back home
@@ -1401,6 +1451,9 @@ class Tasks:
                           quats=quats, loose=loose)
         if not ok:
             self.place_at = None
+        if not ok and lifted and getattr(self, "fail_reason", "reach") == "reach":   # the waypoints over the others are
+            self.fail_reason = "reach"                                                 # what it can't do: the plain way
+            return self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last, yaw=yaw, lifts=False)
         if not ok and last and getattr(self, "fail_reason", "reach") == "reach" and via is None:
             self.suggest(tid, dest, palm, off)
         reason = getattr(self, "fail_reason", "reach")
@@ -1800,6 +1853,48 @@ class Tasks:
         self._launch(tid, "reach", [cur, np.array([dest[0], dest[1], dest[2] + HOVER + 0.04])], palm, {}, "task",
                      f"Reaching over {label}.")
 
+    # ------------------------------------------------------------------ paths vs the objects on the table (physics)
+    def hand_extent(self, palm):
+        """(how far the hand reaches below its TCP, its footprint radius): with physics the gripper's own size (side
+        grippers: the pads below the TCP; from above: the open fingertips past it), else a 3 cm point hand."""
+        g = self.plant.grip.get(self.role(palm)) if self.plant is not None else None
+        if g is None:
+            return 0.02, 0.03
+        prof = getattr(self.rt, "profile", None)
+        side = prof is not None and (prof.physics or {}).get("grasp", prof.grasp) == "side"
+        foot = float(np.clip(max(g.get("span", 0.0), g.get("depth", 0.0)), 0.02, 0.06))
+        return self._hang(palm, side), foot
+
+    def path_hits(self, pts, palm, skip=(), carrying=None):
+        """Per point: why the hand (or what it carries) would hit an object there, or None (path_object_hits with this
+        hand's extent and the objects where they stand; `skip`: ones the path is meant to reach)."""
+        hang, foot = self.hand_extent(palm)
+        held = carrying[0] if carrying else None
+        bodies = [(c, r, h, self.pretty(n)) for c, r, h, n in self._bodies(skip=tuple(skip) + ((held,) if held else ()))]
+        carry = (self.pretty(held), self._radius(held), self.objs[held]["half_h"], float(carrying[1])) if held else None
+        return path_object_hits(pts, bodies, hang, foot, f"my {self.limb(self.role(palm))}", carry)
+
+    def lift_over(self, pts, palm, skip=(), carrying=None):
+        """The path raised over the movable objects it would run into (lift_path); fixed obstacles (the vase) are not
+        flown over. -> (points, names lifted over)."""
+        hang, foot = self.hand_extent(palm)
+        if carrying:                              # what it carries hangs below the hand
+            held = carrying[0]
+            hang, foot = max(hang, float(carrying[1]) + self.objs[held]["half_h"]), max(foot, self._radius(held))
+            skip = tuple(skip) + (held,)
+        return lift_path(pts, self._bodies(skip=tuple(self.obstacles) + tuple(skip)), hang, foot)
+
+    def carrying(self, palm):
+        """(object in this hand, how far its centre hangs below the TCP) or None."""
+        held = self.holding.get(palm)
+        if held not in self.objs:
+            return None
+        return held, max(0.0, float(self.rt.data.site_xpos[self.rt.palm_sid[palm]][2] - self.mug_center(held)[2]))
+
+    def _names(self, names):
+        names = [self.pretty(n) for n in names]
+        return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
     def draw(self, uvs, cam, aspect, hand=None):
         hits = [self.raycast(cam, u, v, aspect) for u, v in uvs]
         hits = [h for h in hits if h is not None]
@@ -1818,13 +1913,31 @@ class Tasks:
         if palm not in self.hands:
             palm = self.hand_for([0.0, float(np.mean([p[1] for p in pts]))])
         pts = densify(pts, 0.04)
+        side = "right" if palm.startswith("right") else "left"
+        carry = self.carrying(palm)
+        hits, over = (self.path_hits(pts, palm, carrying=carry) if self.plant is not None else None), []
+        if hits and any(hits):                    # physics: the hand would run into something: over the movable ones, if
+            lp, over = self.lift_over(pts, palm, carrying=carry)   # it can reach that high (the vase is not flown over,
+            if over and all(self.rt.precheck(lp, palm)):            # as with a carry)
+                pts, hits = lp, self.path_hits(lp, palm, carrying=carry)
+            else:
+                over = []
         ok = self.rt.precheck(pts, palm)
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
-        side = "right" if palm.startswith("right") else "left"
         self.rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
         bad = sum(1 for o in ok if not o)
-        self.rt.path_msg = (f"{self.limb(side).capitalize()} path: {len(pts)} waypoints, all reachable. Say 'go' or press F."
-                            if bad == 0 else f"{self.limb(side).capitalize()} path: {bad}/{len(pts)} waypoints out of reach (red).")
+        lim = self.limb(side).capitalize()
+        lifted = f", lifted over {self._names(over)}" if over else ""
+        self.rt.path_msg = (f"{lim} path: {len(pts)} waypoints, all reachable{lifted}. Say 'go' or press F."
+                            if bad == 0 else f"{lim} path: {bad}/{len(pts)} waypoints out of reach (red){lifted}.")
+        if hits and any(hits):                    # what it would still run into: red, with why
+            self.rt.path["ok"] = [o and not h for o, h in zip(self.rt.path["ok"], hits)]
+            why = next(h for h in hits if h)
+            self.rt.path["why"] = f"Part of that path runs into something: {why} (red). Draw it around, or over it in 3D."
+            self.rt.path["hits"] = hits
+            self.rt.path_msg = f"{lim} path: {sum(1 for h in hits if h)}/{len(pts)} waypoints where {why} (red)."
+        if over:
+            self.rt.path["lifted"] = list(over)
         zs = self.keepout.along(pts, {}, palm) if self.keepout else None
         if zs and any(zs):   # waypoints inside a keep-out zone are not ok either
             self.rt.path["ok"] = [o and not z for o, z in zip(ok, zs)]
@@ -1839,11 +1952,18 @@ class Tasks:
         if not all(rt.path["ok"]):
             self.set_task(tid, "follow_path", "failed", rt.path.get("why") or "Part of that path is out of my reach (red). Redraw it closer.")
             return
-        if self.plant is not None:                # physics: get to the route's start first (over the table's edge, not into it)
-            cur = rt.data.site_xpos[rt.palm_sid[rt.path["palm"]]].copy()
+        if self.plant is not None:                # physics: get to the route's start first (over the table's edge, not into it,
+            palm = rt.path["palm"]                # and over the objects on the way), with every object but what the hand
+            cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()   # holds an obstacle for the planner
+            rt.set_obstacles(tuple(o for o in self.holding.values() if o))
             pts = np.asarray(rt.path["pts"], float)
             if np.linalg.norm(pts[0] - cur) > 0.03:
                 lead = [cur] + ([np.array([cur[0], cur[1], TABLE_TOP + 0.10])] if cur[2] < TABLE_TOP + 0.06 and cur[0] < TABLE_X[0] + 0.05 else [])
+                side = (getattr(rt, "profile", None) is not None and (rt.profile.physics or {}).get("grasp", rt.profile.grasp) == "side")
+                zl = self._clear_z(lead[-1], pts[0], palm, side)
+                if zl > min(lead[-1][2], pts[0][2]) + 0.005:
+                    lead += [np.array([lead[-1][0], lead[-1][1], zl])] if lead[-1][2] < zl else []
+                    lead += [np.array([pts[0][0], pts[0][1], zl])] if pts[0][2] < zl else []
                 head = densify(lead + [pts[0]])[:-1]
                 pts = np.vstack([head, pts])
                 rt.path["pts"], rt.path["ok"] = pts, [True] * len(head) + list(rt.path["ok"])
