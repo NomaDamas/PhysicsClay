@@ -147,6 +147,74 @@ def blobs(img, disp=None):
     return out, hull
 
 
+def height_blobs(Z, plane, metric=True):
+    """With depth: what stands on the plane. Height map -> table (|h| small, its largest region) and objects (h above a
+    threshold inside the table's outline) -> (blobs, table hull)."""
+    h, w = Z.shape
+    P, uv = fit.backproject(Z, plane.K, None, 1)
+    hm = np.full((h, w), np.nan)
+    hm[uv[:, 1].astype(int), uv[:, 0].astype(int)] = P @ plane.n + plane.d
+    scale_ = 1.0 if metric else float(np.nanmedian(Z))
+    tol, thr = 0.006 * scale_, 0.012 * scale_
+    table = segment.clean(np.nan_to_num(np.abs(hm), nan=9) < tol)
+    hull = np.zeros((h, w), np.uint8)
+    cs, _ = cv2.findContours(table.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if cs:
+        cv2.fillPoly(hull, [cv2.convexHull(np.vstack(cs))], 1)
+    cand = (np.nan_to_num(hm, nan=-9) > thr) & hull.astype(bool)
+    k = max(3, int(min(h, w) * 0.008)) | 1
+    cand = cv2.morphologyEx(cand.astype(np.uint8), cv2.MORPH_OPEN, np.ones((k, k), np.uint8))
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(cand, 8)
+    out = []
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] < 0.0006 * w * h:
+            continue
+        x, y, bw, bh = stats[i, :4]
+        out.append({"label": None, "score": 0.6, "box": (int(x), int(y), int(x + bw), int(y + bh)), "mask": lab == i})
+    return out, hull.astype(bool)
+
+
+def measure_points(Z, plane, mask, kind=None):
+    """An object's 3D points on the plane -> footprint centre, extents across / along the photo, height, shape."""
+    k = max(1, int(np.sqrt(mask.sum()) * 0.04))
+    er = cv2.erode(mask.astype(np.uint8), np.ones((k, k), np.uint8)).astype(bool)
+    P, _ = fit.backproject(Z, plane.K, er if er.sum() > 30 else mask, max(1, int(np.sqrt(mask.sum() / 6000))))
+    if len(P) < 30:
+        return None
+    R = np.stack([plane.x, plane.y, plane.n])
+    Q = (P + plane.d * plane.n) @ R.T                  # origin: the plane point nearest the camera
+    H = float(np.percentile(Q[:, 2], 98))
+    if H <= 0:
+        return None
+    Q = Q[Q[:, 2] > 0.03 * H]
+    if len(Q) < 30:
+        return None
+    shape, prm, _ = fit.choose_shape(Q, kind)
+    if shape == "box":
+        w_, l_, h_ = prm["dims"]
+        c, s = abs(np.cos(prm["yaw"])), abs(np.sin(prm["yaw"]))
+        ex, ey, xy = c * w_ + s * l_, s * w_ + c * l_, prm["center"]
+    elif shape in ("cylinder", "lathe"):
+        ex = ey = 2 * prm["r"]
+        h_, xy = prm["h"], prm["center"]
+    else:
+        lo, hi = Q[:, :2].min(0), Q[:, :2].max(0)
+        ex, ey, h_, xy = hi[0] - lo[0], 2 * (hi[1] - lo[1]), H, [(lo[0] + hi[0]) / 2, hi[1]]
+    return {"xy": np.asarray(xy, float), "front": False, "w": float(ex), "d": float(ey), "h": float(h_), "shape": shape}
+
+
+def _kind_from_dims(shape, w, d, h):
+    if shape == "box":
+        return "block" if max(w, d, h) < 0.07 else "box"
+    if h > 1.6 * max(w, d):
+        return "bottle" if h > 0.15 else "can"
+    if h < 0.3 * max(w, d):
+        return "plate" if shape in ("cylinder", "lathe") else "box"
+    if shape == "hull":
+        return "fruit" if h < 0.9 * max(w, d) else "box"
+    return "cup"
+
+
 def _iou(a, b):
     x0, y0, x1, y1 = max(a[0], b[0]), max(a[1], b[1]), min(a[2], b[2]), min(a[3], b[3])
     inter = max(0, x1 - x0) * max(0, y1 - y0)
@@ -172,7 +240,8 @@ def _kind_from_shape(mask, w_m, h_m):
 
 
 def color_name(img, mask=None, box=None):
-    from ..world.scene import COLORS
+    """A scene colour name by hue (light and shading change brightness, not hue): the saturated pixels' hue, or
+    white / gray / black for unsaturated things."""
     if mask is not None and mask.any():
         px = img[mask]
     else:
@@ -180,9 +249,28 @@ def color_name(img, mask=None, box=None):
         cu, cv_ = (u0 + u1) // 2, (v0 + v1) // 2
         du, dv = max(1, (u1 - u0) // 4), max(1, (v1 - v0) // 4)
         px = img[cv_ - dv:cv_ + dv, cu - du:cu + du].reshape(-1, 3)
-    b, g, r = np.median(px, axis=0) / 255.0
-    c = np.array([r, g, b])
-    return min((k for k in COLORS if k not in ("grey", "cardboard", "steel")), key=lambda k: float(np.sum((np.asarray(COLORS[k]) - c) ** 2)))
+    hsv = cv2.cvtColor(px.reshape(-1, 1, 3).astype(np.uint8), cv2.COLOR_BGR2HSV).reshape(-1, 3).astype(float)
+    hue, sat, val = hsv[:, 0] * 2, hsv[:, 1] / 255, hsv[:, 2] / 255
+    if np.median(sat) < 0.25:
+        v = float(np.median(val))
+        return "white" if v > 0.78 else "black" if v < 0.25 else "gray"
+    sel = sat >= np.median(sat)
+    hist = np.bincount((hue[sel] // 10).astype(int) % 36, minlength=36)
+    hh = (int(np.argmax(np.convolve(np.r_[hist[-1], hist, hist[0]], [1, 2, 1], "valid"))) * 10 + 5) % 360
+    v = float(np.median(val[sel]))
+    if hh < 15 or hh >= 340:
+        return "brown" if v < 0.35 else "red"
+    if hh < 40:
+        return "brown" if v < 0.5 else "orange"
+    if hh < 70:
+        return "yellow"
+    if hh < 165:
+        return "green"
+    if hh < 255:
+        return "blue"
+    if hh < 300:
+        return "purple"
+    return "pink"
 
 
 # ------------------------------------------------------------------ the scan
@@ -204,7 +292,23 @@ def scan(job, img, hints=None, depth=None, K=None, gemini_key=None, llm_cfg=None
         if disp is None:
             job.skip("depth")
     job.at("surface")
-    found, hull = blobs(img, disp)
+    det_mask = np.zeros((h, w), bool)
+    for d in dets:
+        u0, v0, u1, v1 = d["box"]
+        det_mask[max(0, v0):v1, max(0, u0):u1] = True
+    Z = np.asarray(depth, float) if depth is not None else (fit.depth_from_disparity(disp) if disp is not None else None)
+    plane = marker_plane(img, K)
+    if plane is None and Z is not None:
+        plane = depth_plane(Z, K, det_mask, depth is not None)
+    if plane is None:
+        plane = assumed_plane(K)
+    if Z is not None and (plane.metric or depth is None) and not plane.source.startswith("an assumed"):
+        if plane.source.startswith("the ArUco") and depth is None:    # marker plane is metric; pseudo depth isn't
+            found, hull = blobs(img, disp)
+        else:
+            found, hull = height_blobs(Z, plane, metric=depth is not None)
+    else:
+        found, hull = blobs(img, disp)
     if not vlm:                                         # detector labels for the blobs they overlap, other blobs stay
         objs = []
         for b in found:
@@ -220,42 +324,32 @@ def scan(job, img, hints=None, depth=None, K=None, gemini_key=None, llm_cfg=None
         for d in dets:
             m = next((b["mask"] for b in found if _iou(b["box"], d["box"]) > 0.4), None)
             objs.append(dict(d, mask=m))
-    obj_mask = np.zeros((h, w), bool)
-    for o in objs:
-        u0, v0, u1, v1 = o["box"]
-        obj_mask[max(0, v0):v1, max(0, u0):u1] = True
-    plane = marker_plane(img, K)
-    if plane is None and depth is not None:
-        plane = depth_plane(np.asarray(depth, float), K, obj_mask, True)
-    if plane is None and disp is not None:
-        plane = depth_plane(fit.depth_from_disparity(disp), K, obj_mask, False)
-    if plane is None:
-        plane = assumed_plane(K)
     job.at("layout")
+    use_points = Z is not None and not plane.source.startswith("an assumed") and not (plane.source.startswith("the ArUco") and depth is None)
     out = []
     for o in objs[:16]:
         u0, v0, u1, v1 = o["box"]
         m = o.get("mask")
-        if m is not None and m.any():
-            ys, xs = np.nonzero(m)
-            vb = float(np.percentile(ys, 99))
-            ub = float(np.median(xs[ys >= vb - 2])) if np.any(ys >= vb - 2) else (u0 + u1) / 2
-        else:
-            vb, ub = v1 - 0.02 * (v1 - v0), (u0 + u1) / 2
-        base = plane.hit(ub, vb)
-        pl, pr = plane.hit(u0, vb), plane.hit(u1, vb)
-        if base is None or pl is None or pr is None:
-            continue
-        wid = float(np.linalg.norm(pr - pl))
-        hei = float(plane.height(base, v0))
         label = o.get("label")
         kind, material, _ = recognize.classify(label or "")
-        vs_ = o.get("vlm") or {}
-        dep = None
-        if not label:
-            kind = None
-        out.append({"label": label, "kind": kind, "material": material, "box": [int(u0), int(v0), int(u1), int(v1)], "mask": m,
-                    "base": base, "w": wid, "h": hei, "d": dep, "vlm": vs_, "score": o.get("score", 0.5)})
+        meas = measure_points(Z, plane, m, kind if label else None) if use_points and m is not None and m.any() else None
+        if meas is not None and depth is None:          # relative depth: trust widths and heights, not the depth axis
+            meas.update(d=None, shape=None)
+        if meas is None:                                # rays: the lowest pixel meets the plane, the top projects up
+            if m is not None and m.any():
+                ys, xs = np.nonzero(m)
+                vb = float(np.percentile(ys, 99))
+                ub = float(np.median(xs[ys >= vb - 2])) if np.any(ys >= vb - 2) else (u0 + u1) / 2
+            else:
+                vb, ub = v1 - 0.02 * (v1 - v0), (u0 + u1) / 2
+            base = plane.hit(ub, vb)
+            pl, pr = plane.hit(u0, vb), plane.hit(u1, vb)
+            if base is None or pl is None or pr is None:
+                continue
+            wid = float(np.linalg.norm(pr - pl))
+            meas = {"xy": plane.table_xy(base), "front": True, "w": wid, "d": None, "h": float(plane.height(base, v0)), "shape": None}
+        out.append(dict(meas, label=label, kind=kind if label else None, material=material, box=[int(u0), int(v0), int(u1), int(v1)],
+                        mask=m, vlm=o.get("vlm") or {}, score=o.get("score", 0.5)))
     if not out:
         return {"surface": {"kind": "table", "from": plane.source, "confidence": plane.confidence}, "objects": [],
                 "scale": {"source": plane.source, "confidence": plane.confidence}, "notes": ["I couldn't find objects on the table."]}
@@ -280,10 +374,13 @@ def scan(job, img, hints=None, depth=None, K=None, gemini_key=None, llm_cfg=None
     for o in out:
         wid, hei = o["w"] * f, o["h"] * f
         if o["kind"] is None:
-            o["kind"] = _kind_from_shape(o["mask"], wid, hei)
+            o["kind"] = _kind_from_dims(o["shape"], wid, (o["d"] or wid) * f, hei) if o["shape"] else _kind_from_shape(o["mask"], wid, hei)
         vd = o["vlm"].get("depth_cm") if isinstance(o["vlm"], dict) else None
-        dep = float(vd) / 100 if vd else (wid if o["kind"] in fit.ROUND_KINDS else 0.75 * wid)
-        xy = plane.table_xy(o["base"]) * f + np.array([0.0, dep / 2])
+        if o["d"] is not None:
+            dep = o["d"] * f
+        else:
+            dep = float(vd) / 100 if vd else (wid if o["kind"] in fit.ROUND_KINDS else 0.75 * wid)
+        xy = np.asarray(o["xy"], float) * f + (np.array([0.0, dep / 2]) if o.get("front") else 0.0)
         label = o["label"] or o["kind"]
         color = color_name(img, o["mask"], o["box"])
         base = slug(f"{color}_{label}" if not o["label"] else label) or "thing"

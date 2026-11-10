@@ -181,6 +181,28 @@ def radius_profile(Q, center, H, bins=12):
     return np.array(hs), np.array(rs)
 
 
+def lateral_radii(Q, prm, bins=12):
+    """Round shape from pseudo depth: radius = half the width across the photo (x), per height band; the axis sits at
+    the middle of that width. Depth (y) only places the axis."""
+    H = prm["h"]
+    side = Q[Q[:, 2] < 0.9 * H]
+    side = side if len(side) >= 20 else Q
+    x0, x1 = np.percentile(side[:, 0], [1, 99])
+    out = dict(prm, r=float((x1 - x0) / 2), center=[float((x0 + x1) / 2), prm["center"][1]])
+    if "radii" in prm:
+        hs, rs = [], []
+        for k in range(bins):
+            lo, hi = H * k / bins, H * (k + 1) / bins
+            sel = (Q[:, 2] >= lo) & (Q[:, 2] < hi) & (Q[:, 2] < 0.92 * H)
+            if np.count_nonzero(sel) >= 8:
+                a, b = np.percentile(Q[sel, 0], [2, 98])
+                hs.append((lo + hi) / 2)
+                rs.append(float((b - a) / 2))
+        if len(rs) >= 3:
+            out.update(heights=np.array(hs), radii=np.array(rs))
+    return out
+
+
 def choose_shape(Q, kind=None):
     """Best primitive for the object points -> (shape, params, confidence)."""
     box, cyl = fit_box(Q), fit_cylinder(Q)
@@ -190,8 +212,9 @@ def choose_shape(Q, kind=None):
         rc *= 0.6
     elif kind in BOX_KINDS:
         rb *= 0.6
-    if cyl["r"] <= 0 or not np.isfinite(rc):
-        rc = 9.0
+    foot = float(max(np.ptp(Q[:, 0]), np.ptp(Q[:, 1]))) if len(Q) else 0.0
+    if cyl["r"] <= 0 or not np.isfinite(rc) or cyl["r"] > 0.8 * foot:
+        rc = 9.0                                       # a flat face fits a huge circle: that's no cylinder
     if min(rb, rc) > 0.09:
         return "hull", {"box": box, "cyl": cyl}, max(0.25, 0.6 - min(rb, rc))
     if rb <= rc:
@@ -287,9 +310,10 @@ def sample_colors(uv, img, mask, fallback_rgb):
 
 
 # ------------------------------------------------------------------ silhouette only (no depth)
-def silhouette_shape(mask, kind=None):
+def silhouette_shape(mask, kind=None, force=None):
     """Mask only -> (mesh in pixel units, shape, uv(vertices) function, confidence). Round things (by kind, or a
-    left-right symmetric outline) become a lathe of the row widths, others a box as deep as 0.6 x its width."""
+    left-right symmetric outline) become a lathe of the row widths, others a box as deep as 0.6 x its width.
+    force: "lathe" | "box" (e.g. what relative depth says)."""
     ys, xs = np.nonzero(mask)
     if len(xs) < 50:
         return None
@@ -309,6 +333,8 @@ def silhouette_shape(mask, kind=None):
     sub = mask[v0:v1 + 1, u0:u1 + 1]
     sym = float(np.logical_and(sub, sub[:, ::-1]).sum() / max(np.logical_or(sub, sub[:, ::-1]).sum(), 1))
     round_ = kind in ROUND_KINDS or (kind not in BOX_KINDS and sym > 0.88)
+    if force in ("lathe", "box"):
+        round_ = force == "lathe"
     H = float(v1 - v0 + 1)
     W = float(widths.max())
     cu = float(np.median(mids))

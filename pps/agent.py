@@ -531,6 +531,19 @@ def tool_specs(st, confirm=True):
         _fn("add_object", "Add one object to the scene.", {"object": {"type": "object", "description": '{"name", "kind", "color", "pos", "movable"}'}}, ["object"]),
         _fn("remove_object", "Remove an object from the scene by name.", {"name": {"type": "string"}}, ["name"]),
     ]
+    if has_world:                # real photos -> simulated objects and spaces (pps/recon, docs/RECON.md)
+        T += [
+            _fn("import_object_from_photo", "Bring a REAL object into the simulation from the live camera (the phone or browser "
+                                            "camera): recognize it, reconstruct its 3D shape, set its real size, make it physical "
+                                            "(mass, friction, collision) and add it to the scene as an object the robot can grasp. "
+                                            "First ask the person to hold it up or put it on their table in view. Takes 5-60 s.",
+                {"description": {"type": "string", "description": "What it is, in the person's words ('my coffee mug')."},
+                 "size_hint": {"type": "string", "description": "How big, if they said ('9 cm tall', 'about 20 cm long')."}}),
+            _fn("scan_space_from_photo", "Turn the person's REAL table into the scene from the live camera: find the surface and "
+                                         "the objects on it (where, how big) and rebuild the scene to match ('this is my desk'). "
+                                         "shapes 'real' reconstructs each object's shape too (slower).",
+                {"shapes": {"type": "string", "enum": ["primitive", "real"], "description": "primitive (default, fast) or real."}}),
+        ]
     return T
 
 
@@ -1326,6 +1339,42 @@ class Agent:
 
     def t_remove_object(self, a, confirm):
         return self._world({"op": "remove_object", "name": str(a.get("name") or "")}, 20)
+
+    # ---- real photos -> simulated objects and spaces (pps/features/recon.py; state.recon)
+    def _recon(self, msg, timeout=180):
+        st = self.state_now()
+        if not isinstance(st.get("world"), dict):
+            return {"ok": False, "error": "not available in this build"}
+        tag, rev0 = self._tid("recon"), (st.get("world") or {}).get("rev")
+        self.push(dict(msg, type="recon", source="camera", id=tag))
+        rep, st = self._wait(lambda s: ((s.get("recon") or {}).get("reply") or {}) if ((s.get("recon") or {}).get("reply") or {}).get("id") == tag else None, 8)
+        if not rep:
+            return {"ok": False, "status": "timeout", "message": "The camera picture didn't arrive in time."}
+        if not rep.get("ok"):
+            return {"ok": False, "error": rep.get("message")}
+        jid = rep.get("job")
+        job, st = self._wait(lambda s: next((j for j in (s.get("recon") or {}).get("jobs") or []
+                                             if j.get("id") == jid and j.get("status") in ("added", "failed")), None), timeout)
+        if job is None:
+            return {"ok": False, "status": "timeout", "message": "Still reconstructing; it will appear in the scene when done."}
+        if job.get("status") == "failed":
+            return {"ok": False, "error": job.get("error") or job.get("message")}
+        w2, st = self._wait(lambda s: s.get("world") if (s.get("world") or {}).get("rev") != rev0 else None, 40)
+        s = job.get("summary") or {}
+        out = {"ok": w2 is not None, "message": job.get("message"), "objects": _objects(st)}
+        out.update({k: s.get(k) for k in ("label", "kind", "size_cm", "mass_g", "confidence", "count", "surface", "objects_brief") if s.get(k) is not None})
+        if isinstance(s.get("scale"), dict):
+            out["size_from"] = s["scale"].get("label") or s["scale"].get("source")
+        if job.get("added"):
+            out["added_as"] = job["added"].get("name")
+        return out
+
+    def t_import_object_from_photo(self, a, confirm):
+        hints = {k: str(a[v])[:80] for k, v in (("label", "description"), ("size", "size_hint")) if a.get(v)}
+        return self._recon({"op": "import", "add": True, "hints": hints})
+
+    def t_scan_space_from_photo(self, a, confirm):
+        return self._recon({"op": "scan", "use": True, "shapes": "real" if a.get("shapes") == "real" else "primitive"})
 
 
 def _clean_keypoint(k):

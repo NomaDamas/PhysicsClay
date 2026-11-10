@@ -81,6 +81,17 @@ async function loadMesh(id, url) {
   meshCache.set(id, p); p.catch(() => meshCache.delete(id));
   return p;
 }
+// RGB u8 per vertex (an object imported from a photo): only when the count matches the mesh the server sent.
+async function addColors(geo, url) {
+  if (geo.getAttribute("color")) return true;
+  try {
+    const r = await fetch(url); if (!r.ok) return false;
+    const c = new Uint8Array(await r.arrayBuffer());
+    if (c.length !== geo.getAttribute("position").count * 3) return false;
+    geo.setAttribute("color", new THREE.BufferAttribute(c, 3, true));
+    return true;
+  } catch (e) { return false; }
+}
 function primitive(gm) {
   const s = arr(gm.size).map(Number), a = s[0] || 0.01, b = s[1] || a, c = s[2] || a;
   switch (gm.kind) {
@@ -105,14 +116,15 @@ async function loadScene() {
     const built = await Promise.all(arr(sj.geoms).map(async (gm) => {
       if (!gm || (Array.isArray(gm.rgba) && gm.rgba[3] === 0)) return null;
       if (gm.kind === "plane") return floor(gm);
-      let geo = null, shared = false;
+      let geo = null, shared = false, vcol = false;
       if (gm.kind === "mesh" && gm.mesh != null) {
-        const url = (meshes[gm.mesh] && meshes[gm.mesh].url) || `/mesh/${gm.mesh}.bin`;
+        const ent = meshes[gm.mesh] || {}, url = ent.url || `/mesh/${gm.mesh}.bin`;
         try { geo = await loadMesh(url, url); shared = true; } catch (e) { console.warn("[3d]", e); return null; }
+        if (ent.colors) vcol = await addColors(geo, ent.colors);   // objects imported from photos (pps/recon)
       } else geo = primitive(gm);
       if (!geo) return null;
       const alpha = Array.isArray(gm.rgba) && gm.rgba.length > 3 ? gm.rgba[3] : 1;
-      const mat = new THREE.MeshStandardMaterial({ color: colorOf(gm.rgba), roughness: 0.62, metalness: 0.04, transparent: alpha < 1, opacity: alpha });
+      const mat = new THREE.MeshStandardMaterial({ color: vcol ? 0xffffff : colorOf(gm.rgba), vertexColors: vcol, roughness: 0.62, metalness: 0.04, transparent: alpha < 1, opacity: alpha });
       const m = new THREE.Mesh(geo, mat); m.userData.sharedGeo = shared;
       m.userData.gm = { name: gm.name || "", kind: gm.kind, dynamic: !!gm.dynamic };   // P2b: MR ghosts the static furniture
       m.castShadow = true; m.receiveShadow = true; m.matrixAutoUpdate = false;
