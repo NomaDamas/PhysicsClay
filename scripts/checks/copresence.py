@@ -47,6 +47,9 @@ def unit(check):
 
 async def feed(t, frames, hold=60.0):
     await t.send(type="copresence_feed", frames=frames, fps=20, hold=hold)
+    # A new feed disarms the pointing (re-arming takes ARM_HOLD). Wait until a state frame shows that, so the checks
+    # below never read the previous pose's frames. On a slow server (CI renders in software) that takes a while.
+    await wait_for(t, lambda c: not (c.get("pointing") or {}).get("armed"), 3.0, 0.1)
 
 
 async def wait_for(t, pred, limit=4.0, step=0.2):

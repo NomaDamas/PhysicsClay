@@ -100,7 +100,7 @@ async def main():
     except Exception as e:
         check("https (phone mic)", False, str(e)[:60])
     await pump(1.5)
-    check("frames: camera / robot view / full body", all(k in bins for k in (1, 2, 3)), str(sorted(bins)))
+    check("frames: camera / robot view / full body", all(k in bins for k in (1, 2, 3)), f"{sorted(bins)} server {st.get('fps')} fps")
     keys = ("mode", "view", "feasibility", "markers", "path", "task", "holding", "scene_objects", "skills", "teach", "geom_poses", "say", "mock")
     check("state fields", all(k in st for k in keys), ",".join(k for k in keys if k not in st))
     names = sorted(o["name"] for o in st["scene_objects"])
