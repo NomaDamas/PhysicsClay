@@ -858,7 +858,8 @@ def worker(args, shared):
         t_phys = now
         if rt.plant is not None:                 # the plant may use ~40 % of a frame; heavier models run slower (rtf < 1)
             rt.plant.budget(0.4 / max(fps, 10.0) / IK_ITERS)
-            dt = min(dt, rt.plant.sub_cap * physics.DT)   # ...and the plan with it: never ahead of what the plant simulates
+            dt = min(dt, rt.plant.sub_cap * physics.DT)   # plan and plant share one clock: under load the plan must not
+                                                          # run ahead of what the plant could simulate (grasps slip)
         for _ in range(IK_ITERS):
             rt.step(dt)
             tasks.tick()
@@ -942,7 +943,7 @@ def physics_state(rt, tasks):
 
 
 def physics_msg(rt, tasks, c):
-    """{type: "physics", op: "set" | "reset" | "drop", params?, object?, height?}: plant parameters at run time."""
+    """{type: "physics", op: "set" | "reset" | "drop" | "place", params?, object?, height?, pos?}: plant parameters at run time."""
     tid, op = str(c.get("id", "physics")), c.get("op", "set")
     pl = rt.plant
     quiet = c.get("id") is None and (tasks.task or {}).get("status") in ("running", "planning")
@@ -975,8 +976,21 @@ def physics_msg(rt, tasks, c):
         p = tasks.obj_pos(name) + np.array([0, 0, float(np.clip(float(c.get("height", 0.1)), 0.0, 0.5))])
         tasks.set_obj_pose(name, p)
         report("done", f"Dropped {tasks.pretty(name)} from {float(c.get('height', 0.1)) * 100:.0f} cm.")
+    elif op == "place":                   # a test probe: set an object down at rest at [x, y] (as if the person moved it)
+        name = tasks.obj_name(c.get("object")) if c.get("object") else None
+        try:
+            xy = [float(v) for v in (c.get("pos") or [])[:2]]
+        except (TypeError, ValueError):
+            xy = []
+        if name not in pl.objects or len(xy) != 2:
+            report("failed", "Say which object and where: {object, pos: [x, y]}.")
+            return
+        p = tasks.obj_pos(name)
+        p[0], p[1] = xy
+        tasks.set_obj_pose(name, p)
+        report("done", f"Put {tasks.pretty(name)} at ({xy[0]:.2f}, {xy[1]:.2f}).")
     else:
-        report("failed", f"Unknown physics op '{op}'. Use set, reset or drop.")
+        report("failed", f"Unknown physics op '{op}'. Use set, reset, drop or place.")
 
 
 def SKILL_FILE(key):
@@ -1002,7 +1016,9 @@ def dispatch(tasks, rt, c, cam):
         tasks.set_task(tid, a, "failed", f"{need[1]} needs a humanoid body: the {label} can't do that. Switch to the Unitree G1 for it.")
         return
     if a == "pick_place":
-        tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT)
+        tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT, sliced=True)
+    elif a == "handover":                         # between a two-armed robot's hands (to the person: pps/features/copresence.py)
+        tasks.handover_arms(tid, c.get("object"), c.get("to"), c.get("target"), cam, ASPECT)
     elif a == "press":
         tasks.press(tid, c.get("target"), c.get("target_uv"), cam, ASPECT, c.get("force", 10.0), c.get("hold_s", 1.5))
     elif a == "reach":

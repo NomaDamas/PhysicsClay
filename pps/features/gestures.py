@@ -282,20 +282,23 @@ def _come_here(ctx):
         ok = msg.startswith("Moved")
         _say(ctx, "Bringing it 4 cm closer to you." if ok else msg)
         return "4 cm closer" if ok else "Can't come closer"
-    from ..tasks import TABLE_TOP, densify
+    from ..tasks import TABLE_TOP, TABLE_X, densify
     palm = next((h for h, o in tasks.holding.items() if o), None) or "right_palm"
     y = 0.12 if palm.startswith("left") else -0.12
     cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()
+    up = []                                       # a hand below the table's edge goes up over it first (not through it)
+    if cur[2] < TABLE_TOP + 0.06 and cur[0] < TABLE_X[0] + 0.05:
+        up = [np.array([cur[0], cur[1], TABLE_TOP + 0.10])]
     for x in COME_X:
         p = np.array([x, y, TABLE_TOP + 0.22])
-        if all(rt.precheck(densify([cur, p], 0.06), palm)):
+        if all(rt.precheck(densify([cur] + up + [p], 0.06), palm)):
             break
     else:
         _say(ctx, "I can't reach any closer to you from here.")
         return "Out of reach"
     held = tasks.holding.get(palm)
     tasks.done_msg = "Here I am, as close as I can reach."
-    ok = tasks._launch("g-come", "reach", [cur, p], palm, {}, "task",
+    ok = tasks._launch("g-come", "reach", [cur] + up + [p], palm, {}, "task",
                        f"Coming to you{' with ' + tasks.pretty(held) if held else ''}: reaching toward you.")
     _say(ctx, f"Coming closer{' with ' + tasks.pretty(held) if held else ''}." if ok else "I can't reach toward you from here.")
     return "Reaching toward you" if ok else "Out of reach"
@@ -334,7 +337,11 @@ def _target_pos(ctx, kind):
     rt, tasks = ctx.rt, ctx.tasks
     if kind == "running":
         rel = _release_idx(tasks)
-        return rt.path["pts"][rel if rel is not None else -1]
+        p = np.asarray(rt.path["pts"][rel if rel is not None else -1], float)
+        off = getattr(tasks, "cur_off", None)
+        if rel is not None and off is not None and (tasks.task or {}).get("action") == "pick_place":
+            p = p - np.asarray(off, float)        # where the object goes (the hand holds it at an offset)
+        return p
     if kind == "marker":
         return tasks.markers[-1]["pos"]
     if kind == "path":
@@ -399,7 +406,9 @@ def nudge(ctx, delta):
         w[end + 1:] = np.linspace(1.0, 0.0, tail + 1)[1:]
     new = pts + w[:, None] * delta[None, :]
     probe = list(new[start:end + 1:4]) + [new[end]]
-    if not all(rt.precheck(np.array(probe), path["palm"])[-1:]):
+    ok = rt.precheck(np.array(probe), path["palm"], iters=30)
+    exact = getattr(tasks, "plant", None) is None or rt.last_precheck_dists[-1] < 0.03    # physics: the hand must get there
+    if not (all(ok[-1:]) and exact):
         return f"I can't reach {label} if it moves {_cm(delta)}."
     seg = np.linalg.norm(np.diff(new, axis=0), axis=1)
     path["pts"], path["cum"] = new, np.concatenate([[0.0], np.cumsum(seg)])

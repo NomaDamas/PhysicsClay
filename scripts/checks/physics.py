@@ -18,12 +18,20 @@ def _phys(t):
     return t.state().get("physics") or {}
 
 
-async def _until(t, cond, limit):
-    t0 = time.time()
-    while time.time() - t0 < limit:
+async def _until(t, cond, limit, sim=False):
+    """Pump until cond(state); limit in wall seconds, or with sim=True in the robot's own (sim) seconds (a loaded machine
+    runs the plant slower than real time), capped at 4x the limit of wall time."""
+    t0, ran, last = time.time(), 0.0, None
+    while time.time() - t0 < (4 * limit if sim else limit):
         await t.pump(0.2)
         if cond(t.state()):
             return True
+        if sim:
+            now = float((t.state().get("physics") or {}).get("time") or 0.0)
+            ran += max(0.0, now - last) if last is not None and now >= last else 0.0
+            last = now
+            if ran >= limit:
+                return False
     return False
 
 
@@ -85,8 +93,8 @@ async def run(t):
             seen["grasp"] = True
         if any("pad" in c["a"] + c["b"] and "mug" in c["a"] + c["b"] for c in ph.get("contacts") or []):
             seen["pads"] = True
-        return (s.get("task") or {}).get("status") != "running"
-    await _until(t, watch, 40)
+        return (s.get("task") or {}).get("status") not in ("running", "planning")
+    await _until(t, watch, 40, sim=True)
     fin = t.state().get("task") or {}
     t.check("physics: a real pick holds the mug by contact (both pads) and places it", res.get("status") in ("running", "done")
             and fin.get("status") == "done" and seen["grasp"] and seen["pads"], f"{fin.get('status')}: {fin.get('message', '')[:70]} {seen}")
@@ -113,6 +121,16 @@ async def run(t):
             and _phys(t)["params"].get("grip_force") == 40.0, str(_phys(t).get("params"))[:120])
     await t.task("reset_scene", 1)
 
+    # 4b. a pick nothing could reach is refused at once (no dozen ways in, no stalled loop): wall time, on purpose
+    await t.send(type="physics", id=f"phys-far-{time.time():.3f}", op="place", object="red block", pos=[0.78, 0.45])
+    await t.pump(0.5)
+    t0 = time.time()
+    res = await t.task("pick_place", 10, object="red block", target="center")
+    took = time.time() - t0
+    t.check("physics: an unreachable pick is refused in under 2 s (wall)", res.get("status") == "failed" and took < 2.0,
+            f"{took:.2f} s {res.get('status')}: {res.get('message', '')[:70]}")
+    await t.task("reset_scene", 1)
+
     # 5. impedance mode: pressing on the table stays under the force limit (an arm, an uncluttered table)
     await _world(t, op="set", robot="panda", scene=PRESS_SCENE)
     await _physics(t, op="set", params={"impedance": True, "force_limit": 15})
@@ -123,8 +141,8 @@ async def run(t):
         f = ((s.get("physics") or {}).get("ee_force") or {}).get("right")
         if f:
             fz.append(f[2])
-        return (s.get("task") or {}).get("status") != "running"
-    await _until(t, press, 30)
+        return (s.get("task") or {}).get("status") not in ("running", "planning")
+    await _until(t, press, 30, sim=True)
     fin = t.state().get("task") or {}
     peak = re.search(r"peak ([\d.]+) N", fin.get("message", ""))
     peak = float(peak.group(1)) if peak else max(fz or [0])
@@ -133,7 +151,7 @@ async def run(t):
             f"{fin.get('message', '')[:100]} (sampled max {max(fz or [0]):.1f} N)")
     await _physics(t, op="reset")
     res = await t.task("press", 4, target="center", force=10, hold_s=1.0)
-    await _until(t, lambda s: (s.get("task") or {}).get("status") != "running", 30)
+    await _until(t, lambda s: (s.get("task") or {}).get("status") not in ("running", "planning"), 30, sim=True)
     fin = t.state().get("task") or {}
     mean = re.search(r"with ([\d.]+) N", fin.get("message", ""))
     t.check("physics: a pressing force is tracked along the approach axis (10 N asked)",

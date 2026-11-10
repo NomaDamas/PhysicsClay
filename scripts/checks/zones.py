@@ -37,6 +37,13 @@ async def run(t):
     t.check("zone: carrying along a route through it is refused", r.get("status") == "failed" and "keep-out zone" in msg(r), msg(r)[:90])
     await t.send(type="zone", op="remove", id="B"); await t.send(type="clear"); await t.pump(0.4)
     await t.task("reset_scene", 1.5)
+    if ((st().get("physics") or {}).get("mode")) == "dynamic":
+        # with physics the G1's 18 cm side gripper doesn't fit the spot beside the vase the kinematic (point) hand used,
+        # and the nearest spot it does fit is right next to the mug: start the mug on the zone's other side instead
+        # (the green block, behind it, out of the way) so the carry still has to get past zone A
+        for obj, pos in (("green block", [0.30, -0.42]), ("mug", [0.45, -0.12])):
+            await t.send(type="physics", id=f"zone-place-{obj}", op="place", object=obj, pos=pos)
+            await t.pump(0.4)
 
     r = await t.task("pick_place", 12, object="mug", target="center")
     ok = r.get("status") in ("running", "done") and "keep-out zone A" in msg(r)

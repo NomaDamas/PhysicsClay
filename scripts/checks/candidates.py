@@ -20,8 +20,18 @@ async def _wait(t, fn, limit=6.0):
     return False
 
 
-async def run(t):
+async def _reset(t):
+    """Scene reset. With physics the green block is set down within the G1's reach first: at its UX 2.0 spot (47 cm
+    out at table height, behind the mug) only the kinematic mode reached it (6 cm reach tolerance, the block riding the
+    hand); the physical gripper can't get onto it there and the robot says so (honest refusal, not a check failure)."""
     await t.task("reset_scene", 1)
+    if ((t.state().get("physics") or {}).get("mode")) == "dynamic":
+        await t.send(type="physics", id=f"cand-place-{time.time():.3f}", op="place", object="green block", pos=[0.30, -0.42])
+        await t.pump(0.6)
+
+
+async def run(t):
+    await _reset(t)
     names = sorted(o["name"] for o in t.state().get("scene_objects", []))
     t.check("candidates: green block in the scene", "green block" in names, str(names))
 
@@ -47,7 +57,7 @@ async def run(t):
     moved = green is not None and green0 is not None and max(abs(a - b) for a, b in zip(green, green0)) > 0.05
     t.check("candidates: green block placed", done.get("status") == "done" and "green block" in done.get("message", "") and moved,
             f"{done.get('message', '')[:60]} {green}")
-    await t.task("reset_scene", 1)
+    await _reset(t)
 
     # 3. unambiguous -> no question
     tk = await t.task("pick_place", 2, object="red block", target="center")
@@ -80,6 +90,7 @@ async def run(t):
     await t.task("stop", 1); await t.task("reset_scene", 1)
 
     # 6. tapping the object on the robot view while asked answers too, and the tap leaves no stray marker
+    await _reset(t)
     tk = await t.task("pick_place", 2, object="block", target="center")
     uv = next((o.get("uv") for o in _choices(t).get("options", []) if o["name"] == "green_block"), None)
     if uv:

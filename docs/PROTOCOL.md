@@ -308,7 +308,8 @@ robot-eye render (through `@ext.overlay`) and into the 3D stage (`PC3D.layer("co
   messages). In-process: `resolve_deixis(ctx, text) -> same dict` (adds a marker for "put it there").
 - `{type:"task", action:"pick_place", hold:true, object, object_pos?|candidates?}` picks up and keeps holding.
 - `{type:"task", action:"handover", object?, hand?: [x,y,z]}` or `{type:"copresence", op:"handover"}`: carry the held
-  (or named) object to the offered hand, clamped to reach; release once the person's hand is within 12 cm.
+  (or named) object to the offered hand, clamped to reach; present it there (0.8 s), then release once the person's
+  hand has come to it (within 7 cm, or 4 cm closer than when the arm stopped and within 12 cm) and stays 0.4 s.
 - `op:"view", on` (Shared space): wider robot eye (90 deg) pitched up to see the person, turning slightly toward the
   attention target; restored when off. `op:"on"|"off"` shows/hides the person. `op:"heard"` (any utterance) makes the
   robot attend to the person. `op:"place", x, y` moves where the person stands.
@@ -607,16 +608,24 @@ below reports `mode: "kinematic"` and the `physics` message is refused. Details 
 - `{type:"physics", op:"set", params:{friction_scale, mass_scale, damping_scale, kp_scale, latency_ms, gravity,
   grip_force, impedance, force_limit}}` changes the plant at run time (unknown keys ignored, values clamped; answers in
   `state.task`, action `physics`). `op:"reset"` restores the defaults. `op:"drop", object, height` lifts an object by
-  `height` m and lets it fall (a test probe). `mass_scale` scales the objects (not the robot); `grip_force` (N, default
+  `height` m and lets it fall (a test probe); `op:"place", object, pos: [x, y]` sets it down at rest there (a test probe). `mass_scale` scales the objects (not the robot); `grip_force` (N, default
   40) is the squeeze of every gripper; `impedance: true` softens the arms (stiffness x0.2, effort x0.4) and caps the
   end-effector force at `force_limit` (N) while pressing.
 - `{type:"task", action:"press", target, force: N, hold_s}`: move over the spot (or an object's top), come down, track
   `force` along the approach axis with an admittance loop for `hold_s` seconds, retreat. The task message reports the
   mean and peak force (and "capped by the ... impedance limit" when the limit was lower than asked). Physics only.
+- `pick_place` with physics first works out how (`state.task.status: "planning"`, "Working out how to pick up …", a
+  slice per frame) and then runs or is refused; clients wait past `planning` for the verdict.
 - `pick_place` with physics: the jaws open on the way in, close at the grasp (the path waits), and the object is held
   only by friction. The task fails honestly with "It slipped: ..." (the object didn't come up / fell out), "Too heavy:
   ... I can lift X kg" (weight sensed once it hangs free), "I let go of ... but it fell over / ended up N cm from the
-  spot" (checked after the release) or "... is N cm wide and my gripper opens M cm".
+  spot" (checked after the release) or "... is N cm wide and my gripper opens M cm". The done message ends with the measured placement error ("..., 0.8 cm from the spot").
+  The hand stops over the grasp and over the spot until the arm has lined up, the way down follows where the object
+  really is (in the hand, or if it moved), and it lets go once the object rests on the surface.
+- `{type:"task", action:"handover", object, to: "left"|"right", target?}` (or `between_arms: true`) on two-armed bodies:
+  pass the object from one hand to the other (pick by the near end, meet in the middle, the other hand takes the free
+  end, the first lets go), then put it on `target`. `state.task.action` is `handover` throughout; one-armed bodies and
+  objects too short for two grippers are refused with the reason. `preview: true` gives a plan card (#B).
 
 ## v10 · Calibration (v1 P6, `pps/calib/`, `pps/features/calib.py`, `web/ui/calib.js`)
 Method, math and results: `docs/calibration.md`.

@@ -63,6 +63,16 @@ makes them free bodies with mass and friction (same names), adds grippers / serv
   along the table only). Bases also move by themselves inside the IK when a target is out of the arm's reach.
 * Humanoid-only actions (`follow_me`, `learn_skill`, `edit_skill`, motion `play_skill`, `teach` start, video upload)
   are refused on other bodies with a message naming the robot; the scripted demos run only in the default world.
+* Task action `handover {object, to: "left"|"right", target?}` (or `between_arms: true`) on two-armed bodies (ALOHA):
+  one arm picks the object by the end nearest it, both hands meet in the middle, the other hand closes on the free
+  end, the hold is checked, the first hand lets go and backs off, then the receiver puts it on `target` (or keeps it).
+  It needs a long object (about 20 cm or more, both grippers on it); shorter ones are refused with the set-down
+  alternative. Without `to` / `between_arms`, `handover` stays the co-presence handover to the person. Agent tool
+  `handover_arms`; plan card with the steps.
+* With physics (V1 P0) every body but H2 does a real contact pick & place except where its note says otherwise (Stretch
+  3: the SG3 fingers; Spot: the mug by its rim; TidyBot: small blocks 8/10); per-robot results in `docs/V1.md` "P0 as built" and
+  `scripts/bench_grasp.py`. Physics-only profile tuning lives in `RobotProfile.physics` (gripper pads, servo stiffness,
+  physics home pose, contact excludes, a riser under a mount: `mount.z`).
 
 ## 2. Brain (owner: Brain workstream) — `pps/agent.py`
 * **Config:**

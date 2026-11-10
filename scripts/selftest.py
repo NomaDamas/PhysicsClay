@@ -5,7 +5,8 @@ Environment:
   PC_SELFTEST_PORT=8791      HTTP port of the test server (HTTPS uses the next one); give parallel runs their own ports.
   PC_SELFTEST_OFFLINE=1      CI / no keys: the server runs with --byok (never reads .env keys) and the checks that need
                              a key, the network or a local test clip are reported as SKIP instead of FAIL.
-  PC_SELFTEST_LOG=path       write the server's stdout/stderr there (default: discarded)."""
+  PC_SELFTEST_LOG=path       write the server's stdout/stderr there (default: discarded).
+  PC_SELFTEST_CHECKS=a,b     run only those scripts/checks/ files (no core section)."""
 import asyncio
 import json
 import os
@@ -24,6 +25,7 @@ BASE = f"http://127.0.0.1:{PORT}"
 OFFLINE = os.environ.get("PC_SELFTEST_OFFLINE") == "1"
 if OFFLINE:
     os.environ["PC_BYOK"] = "1"   # checks in this process see what the --byok server sees: no server keys
+ONLY = [c for c in os.environ.get("PC_SELFTEST_CHECKS", "").split(",") if c]
 results = []
 skipped = []
 
@@ -55,7 +57,8 @@ async def main():
         nonlocal st
         t0 = time.time()
         while time.time() - t0 < sec:
-            m = await asyncio.wait_for(ws.receive(), 120)   # physics: a refused pick plans every grasp first (seconds; more on a loaded machine)
+            m = await asyncio.wait_for(ws.receive(), 120)   # a plan made inside one server tick (goal set-aside spots, a
+                                                             # dry run) can take seconds with physics on a loaded machine
             if m.type == aiohttp.WSMsgType.TEXT:
                 st = json.loads(m.data)
             elif m.type == aiohttp.WSMsgType.BINARY:
@@ -66,21 +69,60 @@ async def main():
         tid = f"{action}-{time.time():.3f}"
         await ws.send_str(json.dumps({"type": "task", "id": tid, "action": action, **kw}))
         t0 = time.time()
-        while time.time() - t0 < wait:
+        deadline = t0 + wait
+        while time.time() < deadline:
             await pump(0.2)
-            if st.get("task") and st["task"]["id"] == tid and st["task"]["status"] != "planning":
+            cur = st.get("task") or {}
+            if cur.get("id") == tid and cur.get("status") != "planning":
                 break
+            if cur.get("id") == tid:              # still working out how (a pick search runs a slice per frame): its verdict
+                deadline = max(deadline, min(time.time() + 0.5, t0 + wait + 60))
         return st.get("task") or {}
 
     async def until_done(limit=25):
-        t0 = time.time()
-        while time.time() - t0 < limit:
+        """Wait for the task to end: `limit` seconds of the robot's own (sim) time when physics runs, so a loaded machine
+        running the plant slower than real time doesn't fail a check (capped at 4x the limit of wall time)."""
+        t0, sim, last = time.time(), 0.0, None
+        while time.time() - t0 < 4 * limit:
             await pump(0.3)
-            if st.get("task", {}).get("status") != "running":
+            if st.get("task", {}).get("status") not in ("running", "planning"):   # (planning: a pick search, one slice per frame)
+                break
+            ph = st.get("physics") or {}
+            if ph.get("mode") != "dynamic":
+                if time.time() - t0 >= limit:
+                    break
+                continue
+            now = float(ph.get("time") or 0.0)
+            sim += max(0.0, now - last) if last is not None and now >= last else 0.0   # (the clock restarts on a reset)
+            last = now
+            if sim >= limit:
                 break
         return st.get("task") or {}
 
     send = lambda **k: ws.send_str(json.dumps(k))
+
+    async def features():
+        """Feature checks: scripts/checks/*.py each define `async def run(t)` (UX 2.0 features add their own file)."""
+        import importlib.util
+        from types import SimpleNamespace
+        t = SimpleNamespace(send=send, pump=pump, task=task, until_done=until_done, check=check, http=s, base=BASE,
+                            state=lambda: st, frames=lambda: bins)
+        for f in sorted((ROOT / "scripts" / "checks").glob("*.py")):
+            if f.name.startswith("_") or (ONLY and f.stem not in ONLY):
+                continue
+            spec = importlib.util.spec_from_file_location(f"checks_{f.stem}", f)
+            mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+            try:
+                await mod.run(t)
+            except Exception as e:
+                check(f"checks/{f.name} ran", False, repr(e)[:120])
+            await task("reset_scene", 1)
+
+    if ONLY:                                    # PC_SELFTEST_CHECKS=gestures,handover: only those feature checks
+        await pump(1.0)
+        await features()
+        await ws.close(); await s.close()
+        return
 
     # --- serving
     async with s.get(BASE + "/static/app.js") as r:
@@ -268,22 +310,7 @@ async def main():
     else:
         check("video upload", False, "no /tmp/pc_clip.mp4 test clip")
 
-    # --- feature checks: scripts/checks/*.py each define `async def run(t)` (UX 2.0 features add their own file)
-    import importlib.util
-    from types import SimpleNamespace
-    t = SimpleNamespace(send=send, pump=pump, task=task, until_done=until_done, check=check, http=s, base=BASE,
-                        state=lambda: st, frames=lambda: bins)
-    for f in sorted((ROOT / "scripts" / "checks").glob("*.py")):
-        if f.name.startswith("_"):
-            continue
-        spec = importlib.util.spec_from_file_location(f"checks_{f.stem}", f)
-        mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
-        try:
-            await mod.run(t)
-        except Exception as e:
-            check(f"checks/{f.name} ran", False, repr(e)[:120])
-        await task("reset_scene", 1)
-
+    await features()
     await ws.close(); await s.close()
 
 

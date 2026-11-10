@@ -18,7 +18,7 @@ from .. import ext
 from ..tasks import HOVER, SKILL_DIR, TABLE_TOP, densify
 
 KEY = "plan"
-MOTION = ("pick_place", "reach", "follow_path", "play_skill")
+MOTION = ("pick_place", "reach", "follow_path", "play_skill", "handover")
 WAITING = ("proposing", "needs_you", "blocked")
 MAX_PTS = 90
 
@@ -166,8 +166,9 @@ def _plan_motion(ctx, msg):
         g = ev.get("grasp")
         # each step starts at the keypoint its motion leaves from
         if g is not None:
+            lift = (kps[g + 1][2] - kps[g][2]) * 100 if g + 1 < len(kps) else 12
             steps += [(f"Reach for {what} with my {side} hand", 0), (f"Grasp it from the {'top' if top else 'side'}", g - 1),
-                      ("Lift it 12 cm", g)]
+                      (f"Lift it {lift:.0f} cm", g)]
             carry_from = g + 1
         else:
             carry_from = 0
@@ -280,6 +281,41 @@ def _plan_skill(ctx, msg):
     return plan
 
 
+def _plan_handover(ctx, msg):
+    """A two-arm handover (tasks.handover_arms): who gives, who takes, where the hands meet, and whether both get there."""
+    tasks = ctx.tasks
+    run = {k: v for k, v in msg.items() if k not in ("type", "preview")}
+    plan = {"action": "handover", "run": run, "constraints": [], "reasons": [], "steps": [], "waypoints": [], "wp_ok": [],
+            "target": None, "carry": None, "alternative": None, "hand": None}
+    hp, why = tasks.handover_plan(msg.get("object"), msg.get("to"))
+    if hp is None:
+        plan.update(ok=False, intent="Pass it from one hand to the other.", verdict="I can't do this", message=why, reasons=[why])
+        return plan
+    name, g, r = hp["name"], hp["giver"][:-5], hp["receiver"][:-5]
+    what, target = tasks.pretty(name), msg.get("target")
+    meet, um, d = hp["meet"], hp["um"], hp["d"]
+    ends = {hp["giver"]: meet - um * d, hp["receiver"]: meet + um * d}
+    short = {p: tasks._reach_err(q, p) for p, q in ends.items()} if getattr(tasks, "plant", None) is not None else {}
+    bad = [p[:-5] for p, e in short.items() if e > 0.03]
+    steps = [f"Pick up {what} with my {g} hand", "Hold it out in the middle", f"My {r} hand takes the other end",
+             f"My {g} hand lets go"] + ([f"My {r} hand puts it on {target}"] if target else [])
+    ok = not bad
+    plan.update(ok=ok, hand=g, intent=f"Pass {what} from my {g} hand to my {r} hand" + (f" and put it on {target}" if target else "") + ".",
+                steps=[{"text": s, "at": round(k / max(1, len(steps) - 1), 3)} for k, s in enumerate(steps)],
+                constraints=["Held by contact the whole way", f"Hands meet {(meet[2] - TABLE_TOP) * 100:.0f} cm above the table",
+                             "Hands stay apart"],
+                target={"label": "the middle", "pos": _xyz(meet)},
+                carry={"object": name, "label": what, "shape": "box", "r": round(tasks.objs[name]["r"], 3),
+                       "half_h": round(tasks.objs[name]["half_h"], 3), "from": _xyz(tasks.mug_center(name)), "to": _xyz(meet)},
+                verdict="I can do this" if ok else f"I can't — my {' and '.join(bad)} hand can't get there",
+                message=(f"Passing {what} from my {g} hand to my {r} hand." if ok else
+                         f"My {' and '.join(bad)} hand can't reach the middle to pass {what}."),
+                reasons=[f"Both hands reach the middle, {2 * d * 100:.0f} cm apart on {what}." if ok else
+                         f"The middle is out of my {' and '.join(bad)} hand's reach."])
+    plan["waypoints"], plan["wp_ok"] = [_xyz(tasks.mug_center(name)), _xyz(meet)], [True, ok]
+    return plan
+
+
 def _is_taught_task(msg):
     key = str(msg.get("name") or "").strip().lower().replace(" ", "_")
     f = SKILL_DIR / f"{key}.json"
@@ -299,11 +335,11 @@ def preview_first(ctx, msg):
     if not msg.get("preview"):
         return False
     a = msg.get("action")
-    if a not in MOTION or (a == "play_skill" and _is_taught_task(msg)):
+    if a not in MOTION or (a == "play_skill" and _is_taught_task(msg)) or (a == "handover" and not (msg.get("to") or msg.get("between_arms"))):
         return False   # stop/home/speed/... and taught multi-step tasks (they run their own practice card) are not previewed
     tid = str(msg.get("id", f"plan-{time.time():.3f}"))
     try:
-        plan = {"follow_path": _plan_path, "play_skill": _plan_skill}.get(a, _plan_motion)(ctx, msg)
+        plan = {"follow_path": _plan_path, "play_skill": _plan_skill, "handover": _plan_handover}.get(a, _plan_motion)(ctx, msg)
     except Exception as e:    # never fall through to running an unconfirmed task
         import traceback
         traceback.print_exc()

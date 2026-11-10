@@ -138,10 +138,27 @@ class BodyRuntime(Runtime):
         self.limits = [mink.ConfigurationLimit(mi)]
         if plant is not None:                            # the planner moves no faster than the plant's servos follow
             self.limits.append(phys.velocity_limit(mi, robot_bodies, p.freeze))
-        pairs = self._collision_pairs(robot_bodies) if p.base != "legged" else []
+        pairs = self._collision_pairs(robot_bodies) if (p.base != "legged" or plant is not None) else []
         if pairs:
             self.limits.append(mink.CollisionAvoidanceLimit(model=mi, geom_pairs=pairs, minimum_distance_from_collisions=0.005,
                                                             collision_detection_distance=0.06))
+        if plant is not None and len(self.hands) == 2 and p.base != "legged":   # two arms (ALOHA): the hands keep apart
+            near = []
+            for h in self.hands:
+                b, links = m.site_bodyid[m.site(self.ee_site[h]).id], set()
+                for _ in range(3):
+                    links.add(b)
+                    b = m.body_parentid[b]
+                links |= {c for c in range(m.nbody) if self._under(c, m.site_bodyid[m.site(self.ee_site[h]).id])}
+                near.append([g for g in range(m.ngeom) if m.geom_bodyid[g] in links and (m.geom_contype[g] or m.geom_conaffinity[g])])
+            if near[0] and near[1]:
+                self.limits.append(mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(near[0], near[1])], minimum_distance_from_collisions=0.02,
+                                                                collision_detection_distance=0.10))
+        if plant is not None and p.base == "legged":     # the hands (and grippers) keep off the robot's own torso and legs
+            own = self._self_pairs(robot_bodies)
+            if own:
+                self.limits.append(mink.CollisionAvoidanceLimit(model=mi, geom_pairs=own, minimum_distance_from_collisions=0.03,
+                                                                collision_detection_distance=0.12))
         self.hands_mid = {h: m.body(f"{h}_target").mocapid[0] for h in self.hands}
         self.palm_sid = {h: m.site(self.ee_site[h]).id for h in self.hands}
         self.feet_mid = [m.body(f"{f}_target").mocapid[0] for f in self.feet]
@@ -201,21 +218,58 @@ class BodyRuntime(Runtime):
         self.body_geoms = {b: [g for g in visual if m.geom_bodyid[g] == b] for b in range(m.nbody)}
         self.target_geoms = {h: [g for g in range(m.ngeom) if m.geom_bodyid[g] == m.body(f"{h}_target").id] for h in self.hands}
 
+    def _self_pairs(self, robot_bodies):
+        """Physics, legged bodies: each hand's last links and gripper vs the collision geoms of the body itself (pelvis,
+        torso, legs: everything that isn't an arm), so a planned reach doesn't drive the hand into the hips."""
+        m = self.model
+        stop = {m.body(self.profile.root).id} if self.profile.root else set()
+        name = lambda b: mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or ""
+        arms, hand = set(), {}
+        for h in self.hands:
+            b0 = m.site_bodyid[m.site(self.ee_site[h]).id]
+            b, chain = b0, []
+            while b != 0 and b in robot_bodies and b not in stop and "torso" not in name(b) and name(b) != "body":
+                chain.append(b)                           # up the arm to (not including) the torso / body
+                b = m.body_parentid[b]
+            sub = {c for c in range(m.nbody) if self._under(c, b0)}    # the hand and the gripper on it
+            arms |= set(chain) | sub
+            hand[h] = set(chain[:4]) | sub
+        col = lambda bs: [g for g in range(m.ngeom) if m.geom_bodyid[g] in bs and (m.geom_contype[g] or m.geom_conaffinity[g])]
+        body = col({b for b in robot_bodies if b not in arms})
+        return [(col(hs), body) for hs in hand.values() if col(hs) and body]
+
+    def _under(self, b, top):
+        m = self.model
+        while b > 0:
+            if b == top:
+                return True
+            b = m.body_parentid[b]
+        return False
+
     def _collision_pairs(self, robot_bodies):
-        """Collision geoms on the last links of each arm vs the work surface (cheap: a handful of pairs)."""
+        """Collision geoms of each arm vs the work surface: the last links always; with physics the whole arm (an upper arm
+        that sweeps through the table edge stalls the real one), except links that already sit on or next to it."""
         m = self.model
         try:
             table = m.geom("table").id
         except KeyError:
             return []
         out = []
+        dist = None
+        if self.plant is not None and self.home_q is not None:
+            mi = self.configuration.model
+            di = mujoco.MjData(mi)
+            di.qpos[:] = self.home_q
+            mujoco.mj_forward(mi, di)
+            dist = lambda g: mujoco.mj_geomDistance(mi, di, g, table, 0.1, None)
         for h in self.hands:
             b, links = m.site_bodyid[m.site(self.ee_site[h]).id], []
-            while b != 0 and b in robot_bodies and len(links) < 4:
+            while b != 0 and b in robot_bodies and (len(links) < 4 or dist is not None):
                 links.append(b)
                 b = m.body_parentid[b]
             geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] in links and m.geom_group[g] == 3
-                     and (m.geom_contype[g] or m.geom_conaffinity[g])]
+                     and (m.geom_contype[g] or m.geom_conaffinity[g])
+                     and (dist is None or links.index(m.geom_bodyid[g]) < 4 or dist(g) > 0.04)]
             if geoms:
                 out.append((geoms, [table]))
         return out
