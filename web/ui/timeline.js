@@ -23,7 +23,7 @@
     x: '<path d="M6 6l12 12M18 6 6 18"/>',
     dot: '<circle cx="12" cy="12" r="4"/>',
   };
-  const ic = (n, s = 20) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n] || ""}</svg>`;
+  const ic = (n, s = 20) => `<svg width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${P[n] || ""}</svg>`;
   const esc = (x) => String(x == null ? "" : x).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const arr = (x) => (Array.isArray(x) ? x : []);
   const num = (x, d = 0) => (typeof x === "number" && isFinite(x) ? x : d);
@@ -35,15 +35,15 @@
 .tl-sec { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-card, 24px); box-shadow: var(--shadow);
   padding: 10px 12px 12px; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); min-width: 0; }
 .tl-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; min-height: 44px; }
-.tl-title { font-size: var(--fs-sm, 13px); font-weight: 650; letter-spacing: .01em; white-space: nowrap; }
-.tl-phase { font-size: var(--fs-xs, 12px); padding: 3px 9px; border-radius: 999px; background: var(--accent-tint); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
+.tl-title { font-size: var(--fs-sm, 13px); font-weight: 600; letter-spacing: .01em; white-space: nowrap; }
+.tl-phase { font-size: var(--fs-xs, 12px); padding: 4px 8px; border-radius: var(--r-ctl, 10px); background: var(--accent-tint); color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
 .tl-phase[data-ph="recording"] { background: var(--bad-tint); color: var(--bad-ink); }
 .tl-phase[data-ph="done"] { background: var(--ok-tint); color: var(--ok-ink); }
 .tl-q { flex: 1 1 220px; min-width: 0; font-size: var(--fs-sm, 13px); color: var(--t2); line-height: 1.35;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .tl-acts { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-left: auto; }
 .tl-btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 44px; min-width: 44px; padding: 0 14px;
-  border-radius: 999px; border: 1px solid var(--line2); background: var(--raised); color: var(--t1); font: 600 var(--fs-sm, 13px)/1 var(--sans);
+  border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2); background: var(--raised); color: var(--t1); font: 600 var(--fs-sm, 13px)/1 var(--sans);
   cursor: pointer; transition: background var(--fast) var(--ease), border-color var(--fast) var(--ease); }
 .tl-btn:hover { background: var(--active); }
 .tl-btn:focus-visible, .tl-ib:focus-visible, .tl-chip:focus-visible, .tl-grip:focus-visible, .tl-seg button:focus-visible, .tl-track:focus-visible { outline: none; box-shadow: var(--ring); }
@@ -52,7 +52,7 @@
 .tl-btn.rec { background: var(--bad); border-color: var(--bad); color: var(--on-accent); }
 .tl-btn:disabled, .tl-ib:disabled { opacity: .38; cursor: default; }
 .tl-save { display: inline-flex; gap: 6px; align-items: center; }
-.tl-save input { min-height: 44px; width: 150px; border-radius: 999px; border: 1px solid var(--line2); background: var(--field); padding: 0 14px;
+.tl-save input { min-height: 44px; width: 150px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2); background: var(--field); padding: 0 14px;
   font: 500 var(--fs-sm, 13px) var(--sans); color: var(--t1); }
 .tl-save input:focus { outline: none; box-shadow: var(--ring); }
 .tl-row { user-select: none; -webkit-user-select: none; display: flex; gap: 10px; overflow-x: auto; overscroll-behavior-x: contain; padding: 8px 2px 4px; margin: 0; list-style: none;
@@ -68,7 +68,7 @@
 .tl-row.drag .tl-card:not(.dragging) { transition: transform var(--med) var(--ease); }
 .tl-top { display: flex; align-items: center; gap: 4px; }
 .tl-grip { display: inline-flex; align-items: center; gap: 2px; min-height: 44px; min-width: 44px; padding: 0 6px 0 2px; border: 0; background: none;
-  color: var(--t3); border-radius: 12px; cursor: grab; touch-action: none; font: 700 var(--fs-md, 15px) var(--sans); }
+  color: var(--t3); border-radius: 12px; cursor: grab; touch-action: none; font: 600 var(--fs-md, 15px) var(--sans); }
 .tl-grip b { color: var(--t1); }
 .tl-grip:disabled { cursor: default; }
 .tl-grip:disabled svg { visibility: hidden; }
@@ -76,13 +76,13 @@
 .tl-card[data-status="running"] .tl-st { color: var(--accent-ink); }
 .tl-card[data-status="done"] .tl-st { color: var(--ok-ink); }
 .tl-card[data-status="failed"] .tl-st, .tl-card.reshow .tl-st { color: var(--bad-ink); }
-.tl-what { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: var(--fs-md, 15px); font-weight: 650; min-width: 0; }
+.tl-what { display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: var(--fs-md, 15px); font-weight: 600; min-width: 0; }
 .tl-what span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-what svg { flex: none; color: var(--t3); }
 .tl-what .tgt { color: var(--accent-ink); }
 .tl-chips { display: flex; flex-wrap: wrap; gap: 0 4px; padding: 0 2px; }
 .tl-chip { min-height: 44px; padding: 0; border: 0; background: none; cursor: pointer; display: inline-flex; align-items: center; }
-.tl-chip span { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px 0 7px; border-radius: 999px; font: 600 var(--fs-xs, 12px) var(--sans);
+.tl-chip span { display: inline-flex; align-items: center; gap: 4px; height: 28px; padding: 0 10px 0 8px; border-radius: var(--r-ctl, 10px); font: 600 var(--fs-xs, 12px) var(--sans);
   background: var(--hot-tint); color: var(--hot-ink); border: 1px solid color-mix(in srgb, var(--hot) 35%, transparent); }
 .tl-chip[aria-pressed="false"] span { background: none; color: var(--t3); border: 1px dashed var(--line2); text-decoration: line-through; }
 .tl-chip:disabled { cursor: default; }
@@ -114,7 +114,7 @@
 .tl-track i { position: absolute; top: 6px; bottom: 6px; border-radius: 9px; background: var(--accent-tint); border: 2px solid var(--accent); pointer-events: none; }
 .tl-track b { position: absolute; bottom: 2px; transform: translateX(-50%); font: 500 10px var(--mono); color: var(--t3); pointer-events: none; }
 .tl-seg { display: flex; gap: 4px; flex-wrap: wrap; }
-.tl-seg button:not(.tl-btn) { min-height: 44px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line2); background: var(--raised); color: var(--t2);
+.tl-seg button:not(.tl-btn) { min-height: 44px; padding: 0 12px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2); background: var(--raised); color: var(--t2);
   font: 600 var(--fs-xs, 12px) var(--sans); cursor: pointer; }
 .tl-seg button:not(.tl-btn)[aria-pressed="true"] { background: var(--inv-bg); border-color: var(--inv-bg); color: var(--inv-fg); }
 .tl-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
@@ -136,7 +136,7 @@
       <ol class="tl-row tl-steps" aria-label="Taught steps"></ol>
     </div>
     <div class="tl-sec tl-skills" hidden>
-      <div class="tl-head"><span class="tl-title">Skills</span><span class="tl-q tl-skq">Tap play to run one (skills you showed me are proposed on this scene first). Motion skills can be edited.</span></div>
+      <div class="tl-head"><span class="tl-title">Skills</span><span class="tl-q tl-skq">Play one to run it. Skills you showed me come first; motion skills can be edited</span></div>
       <ul class="tl-row tl-sklist" aria-label="Saved skills"></ul>
       <div class="tl-ed" hidden></div>
     </div>

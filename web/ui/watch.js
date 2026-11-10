@@ -22,7 +22,7 @@
   };
   const VERB = { squat: "Squatting", press: "Pressing", curl: "Curling", wave: "Waving", weave: "Weaving", reach: "Reaching",
     point: "Pointing", still: "Still", moving: "Moving", none: "No one in view" };
-  const EYE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+  const EYE = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>';
 
   const css = `
 .pcw { container-type: inline-size; background: var(--raised); border: 1px solid var(--line); border-radius: var(--r-inner, 16px); box-shadow: var(--shadow); padding: 4px 14px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -35,31 +35,31 @@
 .pcw-live[data-rec="1"] i { background: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 16%, transparent); animation: pcw-pulse 1.2s ease-in-out infinite; }
 @keyframes pcw-pulse { 50% { opacity: .35; } }
 .pcw-head .grow { flex: 1; }
-.pcw-ai { min-height: 32px; padding: 0 10px; border-radius: 999px; border: 1px solid var(--line2); background: transparent; color: var(--t2); font-size: var(--fs-xs, 12px); font-weight: 600; position: relative; }
+.pcw-ai { min-height: 32px; padding: 0 10px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2); background: transparent; color: var(--t2); font-size: var(--fs-xs, 12px); font-weight: 600; position: relative; }
 .pcw-ai::before { content: ""; position: absolute; inset: -6px -2px; }
 .pcw-ai[aria-pressed="true"] { background: var(--accent-tint); color: var(--accent-ink); border-color: transparent; }
 .pcw-ai:focus-visible, .pcw-chip:focus-visible, .pcw-btn:focus-visible { outline: none; box-shadow: var(--ring); }
-.pcw-modes { display: flex; gap: 2px; padding: 3px; background: var(--field); border-radius: 12px; }
+.pcw-modes { display: flex; gap: 2px; padding: 4px; background: var(--field); border-radius: 12px; }
 @container (max-width: 290px) { .pcw-modes { flex-wrap: wrap; } .pcw-chip { flex-basis: 30%; } }
-.pcw-chip { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; min-height: 36px; padding: 0 5px; border: 0; border-radius: 9px; background: transparent; color: var(--t2); font-size: var(--fs-xs, 12px); font-weight: 600; white-space: nowrap; transition: background var(--fast), color var(--fast); }
+.pcw-chip { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; min-height: 36px; padding: 0 4px; border: 0; border-radius: 9px; background: transparent; color: var(--t2); font-size: var(--fs-xs, 12px); font-weight: 600; white-space: nowrap; transition: background var(--fast), color var(--fast); }
 .pcw-chip:hover { color: var(--t1); }
 .pcw-chip[aria-checked="true"] { background: var(--raised); color: var(--t1); box-shadow: 0 1px 2px rgba(0,0,0,.08), 0 0 0 1px var(--line-soft); }
 .pcw-chip[data-mode="off"][aria-checked="true"] { color: var(--t2); }
 .pcw-now { display: flex; align-items: center; gap: 12px; min-height: 48px; }
 .pcw-reps { flex: none; width: 52px; height: 48px; border-radius: 12px; background: var(--deep); display: flex; flex-direction: column; align-items: center; justify-content: center; line-height: 1; }
-.pcw-reps b { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
-.pcw-reps small { font-size: 10px; color: var(--t3); margin-top: 3px; letter-spacing: .02em; }
+.pcw-reps b { font-size: 22px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.pcw-reps small { font-size: 10px; color: var(--t3); margin-top: 4px; letter-spacing: .02em; }
 .pcw-reps[data-zero="1"] b { color: var(--t3); }
 .pcw-txt { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .pcw-act { display: flex; align-items: center; gap: 6px; font-size: var(--fs-md, 15px); font-weight: 600; min-width: 0; flex-wrap: wrap; }
-.pcw-tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--accent-tint); color: var(--accent-ink); white-space: nowrap; }
+.pcw-tag { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: var(--r-ctl, 10px); background: var(--accent-tint); color: var(--accent-ink); white-space: nowrap; }
 .pcw-tag[data-k="hold"] { background: var(--hot-tint); color: var(--hot-ink); }
 .pcw-tag[data-k="stuck"] { background: var(--bad-tint); color: var(--bad-ink); }
 .pcw-sum { font-size: var(--fs-xs, 12px); color: var(--t2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pcw-line { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: var(--fs-xs, 12px); color: var(--t2); border-top: 1px solid var(--divider); padding-top: 8px; }
 .pcw-line .t { flex: 1; min-width: 0; }
 .pcw-line b { color: var(--t1); font-weight: 600; }
-.pcw-btn { min-height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line2); background: var(--raised); color: var(--t1); font-size: var(--fs-xs, 12px); font-weight: 600; white-space: nowrap; flex: none; }
+.pcw-btn { min-height: 36px; padding: 0 14px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2); background: var(--raised); color: var(--t1); font-size: var(--fs-xs, 12px); font-weight: 600; white-space: nowrap; flex: none; }
 .pcw-btn:hover { background: var(--active); }
 .pcw-btn.primary { background: var(--inv-bg); color: var(--inv-fg); border-color: var(--inv-bg); }
 .pcw-btn.primary:hover { background: color-mix(in srgb, var(--inv-bg) 88%, var(--inv-fg)); }
@@ -70,7 +70,7 @@
 .pcw-rule .w span { color: var(--t3); }
 .pcw-rule .n { font-size: 11px; color: var(--t3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .pcw-rule .n[data-hot="1"] { color: var(--ok-ink); font-weight: 600; }
-.pcw-rm { width: 44px; height: 44px; flex: none; border: 0; border-radius: 999px; background: transparent; color: var(--t3); display: grid; place-items: center; }
+.pcw-rm { width: 44px; height: 44px; flex: none; border: 0; border-radius: var(--r-ctl, 10px); background: transparent; color: var(--t3); display: grid; place-items: center; }
 .pcw-rm:hover { background: var(--active); color: var(--bad-ink); }
 .pcw-rm:focus-visible { outline: none; box-shadow: var(--ring); }
 .pcw-add { display: flex; gap: 6px; }

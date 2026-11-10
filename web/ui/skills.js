@@ -27,7 +27,7 @@
   background: var(--raised, #fff); border: 1px solid var(--line, rgba(29,29,31,.1)); box-shadow: var(--shadow, none); }
 .sk-row[hidden], .sk-pack[hidden] { display: none !important; }
 .sk-row b { font: 600 12px var(--sans, system-ui); color: var(--t2, rgba(29,29,31,.64)); margin-right: 4px; white-space: nowrap; }
-.sk-chip { min-height: 36px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line2, rgba(29,29,31,.16)); background: var(--field, #f5f5f7);
+.sk-chip { min-height: 36px; padding: 0 12px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2, rgba(29,29,31,.16)); background: var(--field, #f5f5f7);
   color: var(--t1, #1d1d1f); font: 600 12.5px var(--sans, system-ui); cursor: pointer; position: relative; }
 .sk-chip::before { content: ""; position: absolute; inset: -4px -1px; }
 .sk-chip:hover { background: var(--active, #f0f0f3); }
@@ -37,11 +37,11 @@
   box-shadow: var(--shadow, none); padding: 10px 14px 12px; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; min-width: 0; }
 .sk-pack-head { display: flex; align-items: center; gap: 8px; min-height: 36px; }
 .sk-pack-head svg { color: var(--hot, #f59145); flex: none; }
-.sk-pack-head b { font-size: var(--fs-sm, 13px); font-weight: 650; }
+.sk-pack-head b { font-size: var(--fs-sm, 13px); font-weight: 600; }
 .sk-pack-head span { margin-left: auto; font-size: 11px; color: var(--t3, rgba(29,29,31,.45)); }
 .sk-pack p { margin: 0; font-size: 12px; line-height: 1.4; color: var(--t2, rgba(29,29,31,.64)); }
 .sk-ex { display: flex; flex-wrap: wrap; gap: 6px; }
-.sk-btn { min-height: 40px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--accent, #5c77df); background: var(--accent, #5c77df);
+.sk-btn { min-height: 40px; padding: 0 14px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--accent, #5c77df); background: var(--accent, #5c77df);
   color: var(--on-accent, #fff); font: 600 13px var(--sans, system-ui); cursor: pointer; align-self: flex-start; }
 .sk-btn:disabled { opacity: .5; cursor: default; }
 .sk-skills { font-size: 12px; color: var(--t2, rgba(29,29,31,.64)); line-height: 1.4; }
@@ -78,7 +78,7 @@
   const pack = document.createElement("section");
   pack.className = "sk-pack"; pack.hidden = true; pack.setAttribute("aria-label", "Demo pack");
   let packMounted = false, packKey = "";
-  const ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="7" width="17" height="12" rx="2"/><path d="M8 7V5h8v2M3.5 12h17"/></svg>';
+  const ICON = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="7" width="17" height="12" rx="2"/><path d="M8 7V5h8v2M3.5 12h17"/></svg>';
   function renderPack() {
     if (!packMounted) { U.slot("side").appendChild(pack); packMounted = true; }
     const pk = SB.pack, skills = arr(SB.skills).filter((k) => k.ok !== false && !k.example);

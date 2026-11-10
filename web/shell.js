@@ -42,7 +42,7 @@
     const t = s.task && typeof s.task === "object" ? s.task : null;
     if (t) {
       const key = `${t.id}|${t.status}`;
-      if (key !== lastTask) { lastTask = key; taskAt = Date.now(); }
+      if (key !== lastTask) { const first = !lastTask; lastTask = key; taskAt = first ? 0 : Date.now(); }   // an old result on page load isn't news
       if (t.status === "planning") return ["busy", "Thinking"];
       if (t.status === "proposed" || t.status === "asking") return ["wait", "Waiting for you"];
       if (t.status === "running") return ["busy", "Working"];

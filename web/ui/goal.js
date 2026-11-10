@@ -15,10 +15,10 @@
   font: 13px/1.4 var(--sans); max-height: calc(100vh - 120px); overflow: auto; }
 .goal-card[hidden] { display: none; }
 .goal-head { display: flex; align-items: center; gap: 10px; }
-.goal-head h3 { margin: 0; font-size: 15px; font-weight: 650; flex: 1; letter-spacing: -.01em; }
+.goal-head h3 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; letter-spacing: 0; }
 .goal-head .goal-ico { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--accent-ink);
   background: var(--accent-tint); flex: none; }
-.goal-btn { min-height: 44px; min-width: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line2);
+.goal-btn { min-height: 44px; min-width: 44px; padding: 0 16px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2);
   background: var(--raised); color: var(--t1); font: 500 13.5px var(--sans); cursor: pointer; display: inline-flex;
   align-items: center; justify-content: center; gap: 8px; }
 .goal-btn:hover:not(:disabled) { background: var(--active); }
@@ -28,8 +28,8 @@
 .goal-btn.primary:hover:not(:disabled) { background: var(--inv-bg); color: var(--inv-fg); }
 .goal-btn.danger { color: var(--bad-ink); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 .goal-btn.icon { padding: 0; border-color: transparent; background: transparent; }
-.goal-seg { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--field); }
-.goal-seg button { flex: 1; min-height: 44px; border: 0; border-radius: 999px; background: transparent; color: var(--t2);
+.goal-seg { display: flex; gap: 4px; padding: 4px; border-radius: var(--r-ctl, 10px); background: var(--field); }
+.goal-seg button { flex: 1; min-height: 44px; border: 0; border-radius: var(--r-ctl, 10px); background: transparent; color: var(--t2);
   font: 500 13px var(--sans); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .goal-seg button[aria-pressed="true"] { background: var(--raised); color: var(--t1); box-shadow: var(--shadow); }
 .goal-seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
@@ -46,7 +46,7 @@
 .goal-preview { position: relative; border-radius: 16px; overflow: hidden; background: var(--field); aspect-ratio: 4 / 3;
   display: grid; place-items: center; color: var(--t3); }
 .goal-preview img { width: 100%; height: 100%; object-fit: contain; display: block; }
-.goal-preview .dot { position: absolute; transform: translate(-50%, -50%); padding: 2px 8px; border-radius: 999px;
+.goal-preview .dot { position: absolute; transform: translate(-50%, -50%); padding: 2px 8px; border-radius: var(--r-ctl, 10px);
   background: var(--accent); color: var(--on-accent); font: 600 11px var(--sans); white-space: nowrap; box-shadow: var(--shadow); }
 .goal-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .goal-row .grow { flex: 1; }
@@ -76,7 +76,7 @@
     cube: '<path d="m12 3 8 4.5v9L12 21l-8-4.5v-9z"/><path d="m4 7.5 8 4.5 8-4.5M12 12v9"/>',
     reset: '<path d="M4 12a8 8 0 1 0 2.6-5.9"/><path d="M4 4v4.5h4.5"/>',
   };
-  const svg = (body, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
+  const svg = (body, size = 18) => `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const arr = (x) => (Array.isArray(x) ? x : []);
 

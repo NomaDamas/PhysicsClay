@@ -17,7 +17,7 @@
 .pcz-title { font-size: var(--fs-sm, 13px); font-weight: 600; }
 .pcz-count { font-size: var(--fs-xs, 12px); color: var(--t3); font-variant-numeric: tabular-nums; }
 .pcz-head .grow { flex: 1; }
-.pcz-btn { min-height: 44px; min-width: 44px; padding: 0 12px; border-radius: 999px; border: 1px solid transparent; background: transparent;
+.pcz-btn { min-height: 44px; min-width: 44px; padding: 0 12px; border-radius: var(--r-ctl, 10px); border: 1px solid transparent; background: transparent;
   color: var(--t2); font: 500 var(--fs-xs, 12px) var(--sans); cursor: pointer; display: inline-flex; align-items: center; justify-content: center; gap: 6px; }
 .pcz-btn:hover { background: var(--active); color: var(--t1); }
 .pcz-btn:focus-visible { outline: none; box-shadow: var(--ring); }

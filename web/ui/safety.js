@@ -14,11 +14,11 @@
 .sf-note { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--raised, #fff);
   border: 1px solid var(--line, rgba(29,29,31,.1)); font: 600 var(--fs-sm, 13px) var(--sans, system-ui); color: var(--t1, #1d1d1f); }
 .sf-note[hidden] { display: none; }
-.sf-note i { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--warn, #f59145); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
+.sf-note i { width: 7px; height: 7px; border-radius: var(--lamp, 2px); flex: none; background: var(--warn, #f59145); box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 16%, transparent); }
 .sf-note[data-zone="stop"] i { background: var(--bad, #d6453a); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 16%, transparent); }
 .sf-note .sf-t { flex: 1 1 auto; min-width: 0; }
 .sf-note small { display: block; font-weight: 500; color: var(--t2, rgba(29,29,31,.64)); margin-top: 2px; }
-.sf-note button { flex: none; min-height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid var(--line2, rgba(29,29,31,.16));
+.sf-note button { flex: none; min-height: 32px; padding: 0 12px; border-radius: var(--r-ctl, 10px); border: 1px solid var(--line2, rgba(29,29,31,.16));
   background: var(--raised, #fff); color: var(--t1, #1d1d1f); font: 600 12px var(--sans, system-ui); cursor: pointer; }
 .sf-note button:focus-visible { outline: none; box-shadow: var(--ring, 0 0 0 3px rgba(92,119,223,.32)); }
 `;

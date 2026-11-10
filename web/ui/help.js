@@ -31,9 +31,9 @@
 .help-lead { margin: 0 0 14px; font-size: var(--fs-md); line-height: 1.45; color: var(--t1); text-wrap: pretty; }
 .help-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 270px), 1fr)); gap: 10px; align-items: start; }
 .help-sec { margin: 0; padding: 12px 14px; border-radius: 16px; background: var(--s0); border: 1px solid var(--divider); }
-.help-sec h3 { margin: 0 0 8px; font-size: var(--fs-xs); font-weight: 650; letter-spacing: .06em; text-transform: uppercase; color: var(--t2); }
-.help-sec dl { margin: 0; display: flex; flex-direction: column; gap: 7px; }
-.help-sec dt { font-size: var(--fs-sm); font-weight: 650; color: var(--t1); display: flex; align-items: center; gap: 6px; }
+.help-sec h3 { margin: 0 0 8px; font-size: var(--fs-sm); font-weight: 600; color: var(--t1); }
+.help-sec dl { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.help-sec dt { font-size: var(--fs-sm); font-weight: 600; color: var(--t1); display: flex; align-items: center; gap: 6px; }
 .help-sec dd { margin: 1px 0 0; font-size: var(--fs-sm); line-height: 1.42; color: var(--t2); text-wrap: pretty; }
 .help-sec kbd { margin-left: 0; font-weight: 600; color: var(--t1); background: var(--raised); }
 .help-acts { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
@@ -58,7 +58,7 @@
 `;
   document.head.appendChild(css);
 
-  const svgX = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>';
+  const svgX = '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></svg>';
   const dlg = document.createElement("dialog");
   dlg.className = "help-dlg"; dlg.id = "helpDlg"; dlg.setAttribute("aria-labelledby", "helpTitle");
   dlg.innerHTML = `

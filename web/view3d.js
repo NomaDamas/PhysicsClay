@@ -457,7 +457,7 @@ function buildUi(container) {
       <button type="button" class="seg-btn" data-cam="orbit">Orbit</button>
       <button type="button" class="seg-btn" data-cam="top">Top</button>
       <button type="button" class="seg-btn" data-cam="side">Side</button>
-      <button type="button" class="seg-btn" data-cam="reset" aria-label="Reset view">↺</button>
+      <button type="button" class="seg-btn" data-cam="reset" aria-label="Reset view" title="Reset view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg></button>
     </div>
     <div class="v3d-msg" hidden></div>`;
   msgEl = container.querySelector(".v3d-msg"); listEl = container.querySelector(".v3d-list");

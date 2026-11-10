@@ -29,7 +29,7 @@
     --bad: #d6453a; --bad-ink: #b3342b; --bad-tint: rgba(214, 69, 58, .07);
     --idle: #8e8e94;
     --cam-bg: #26262b; --cam-ink: rgba(255, 255, 255, .78);
-    --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 10px 28px rgba(40, 30, 90, .07);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 10px 28px rgba(0, 0, 0, .07);
     --ring: 0 0 0 3px rgba(92, 119, 223, .4);
     --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", Pretendard, "Noto Sans KR", system-ui, sans-serif;
     color-scheme: light;
@@ -89,15 +89,15 @@
   .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
   .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .mark {
-    width: 30px; height: 30px; border-radius: 9px; flex: none; position: relative;
-    background: conic-gradient(from 210deg, #ed7473, #f59145, #e8c44e, #5ac576, #1da8e5, #5c77df, #b679e1, #ed7473);
+    width: 30px; height: 30px; border-radius: 8px; flex: none; position: relative;
+    background: var(--accent);
   }
-  .mark::after { content: ""; position: absolute; inset: 6px; border-radius: 5px; background: var(--ground); }
+  .mark::after { content: ""; position: absolute; inset: 9px; border-radius: 4px; background: #f59145; }   /* the app's logo: indigo tile, orange square */
   .brand-text { min-width: 0; }
-  .brand h1 { margin: 0; font-size: 17px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+  .brand h1 { margin: 0; font-size: 17px; line-height: 1.2; font-weight: 600; letter-spacing: 0; }
   .brand p { margin: 1px 0 0; font-size: 13px; line-height: 1.3; color: var(--t2); }
   .lang {
-    display: inline-flex; flex: none; padding: 3px; border-radius: 12px;
+    display: inline-flex; flex: none; padding: 4px; border-radius: 12px;
     background: var(--field); border: 1px solid var(--line);
   }
   .lang button {
@@ -132,12 +132,12 @@
   .placeholder svg { width: 40px; height: 40px; opacity: .85; }
   .live, .flip {
     position: absolute; z-index: 3; display: inline-flex; align-items: center;
-    border-radius: 999px; background: rgba(12, 12, 14, .66); color: #fff;
+    border-radius: var(--r-ctl, 10px); background: rgba(12, 12, 14, .66); color: #fff;
     -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
   }
-  .live { top: 12px; left: 12px; gap: 7px; padding: 6px 10px 6px 9px; font: 600 13px/1 var(--sans); }
+  .live { top: 12px; left: 12px; gap: 8px; padding: 6px 10px 6px 8px; font: 600 13px/1 var(--sans); }
   .flip {
-    right: 12px; bottom: 12px; max-width: calc(100% - 24px); gap: 8px; min-height: 44px; padding: 0 16px 0 13px;
+    right: 12px; bottom: 12px; max-width: calc(100% - 24px); gap: 8px; min-height: 44px; padding: 0 16px 0 12px;
     appearance: none; border: 1px solid rgba(255, 255, 255, .2); font: 600 14px/1.2 var(--sans); cursor: pointer;
   }
   .flip svg { width: 18px; height: 18px; }
@@ -147,17 +147,17 @@
 
   /* status */
   .status {
-    display: flex; align-items: flex-start; gap: 11px; padding: 12px 14px; min-height: 48px;
+    display: flex; align-items: flex-start; gap: 12px; padding: 12px 14px; min-height: 48px;
     border-radius: 16px; background: var(--panel); border: 1px solid var(--line);
   }
   .status .dot {
-    width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex: none;
-    background: var(--idle); box-shadow: 0 0 0 4px color-mix(in srgb, var(--idle) 18%, transparent);
+    width: 8px; height: 8px; border-radius: 2px; margin-top: 7px; flex: none;   /* status lamp, as in the app */
+    background: var(--idle);
   }
-  .status[data-tone="ok"] .dot { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 20%, transparent); }
-  .status[data-tone="warn"] .dot { background: var(--warn); box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 22%, transparent); }
-  .status[data-tone="bad"] .dot { background: var(--bad); box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 20%, transparent); }
-  .status[data-tone="info"] .dot { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); }
+  .status[data-tone="ok"] .dot { background: var(--ok); }
+  .status[data-tone="warn"] .dot { background: var(--warn); }
+  .status[data-tone="bad"] .dot { background: var(--bad); }
+  .status[data-tone="info"] .dot { background: var(--accent); }
   .status[data-pulse="1"] .dot { animation: pulse 1.4s ease-in-out infinite; }
   @keyframes pulse { 50% { opacity: .35; } }
   .status[data-tone="bad"] { background: var(--bad-tint); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
@@ -165,7 +165,7 @@
   .status[data-tone="ok"] { background: var(--ok-tint); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
   .status-text { min-width: 0; flex: 1; }
   .status-main { margin: 0; font-weight: 600; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
-  .status-fix { margin: 3px 0 0; font-size: 14px; line-height: 1.45; color: var(--ink); opacity: .86; overflow-wrap: anywhere; }
+  .status-fix { margin: 4px 0 0; font-size: 14px; line-height: 1.45; color: var(--ink); opacity: .86; overflow-wrap: anywhere; }
   .status-link {
     display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-top: 4px; padding: 0 14px;
     border-radius: 12px; background: var(--accent-btn); color: var(--on-accent); font-weight: 600; font-size: 15px;
@@ -190,7 +190,7 @@
 
   /* how it works */
   .how { padding: 2px 2px 0; }
-  .how h2 { margin: 0 0 4px; font-size: 13px; font-weight: 650; color: var(--t2); letter-spacing: .01em; }
+  .how h2 { margin: 0 0 4px; font-size: 13px; font-weight: 600; color: var(--t2); letter-spacing: .01em; }
   .how p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink); }
   .note { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px !important; color: var(--t2) !important; }
   .note svg { width: 16px; height: 16px; margin-top: 2px; }
@@ -237,7 +237,7 @@
     </div>
     <div class="live" id="live" hidden><span class="rec" aria-hidden="true"></span><span id="liveText">Live</span></div>
     <button type="button" class="flip" id="flipBtn">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M20.5 11A8.5 8.5 0 0 0 5.6 6.4L3.5 8.5"/><path d="M3.5 4v4.5H8"/>
         <path d="M3.5 13a8.5 8.5 0 0 0 14.9 4.6l2.1-2.1"/><path d="M20.5 20v-4.5H16"/>
       </svg>
@@ -252,7 +252,7 @@
       <p class="status-fix" id="statusFix" hidden></p>
       <a class="status-link" id="statusLink" href="#" hidden>
         <span id="statusLinkText">Open the https page</span>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M7 17 17 7"/><path d="M9 7h8v8"/>
         </svg>
       </a>
@@ -261,11 +261,11 @@
 
   <div class="controls">
     <button type="button" class="btn primary" id="startBtn">
-      <svg id="iconStart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg id="iconStart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M14.5 4h-5L7.5 6.5H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2.5z"/>
         <circle cx="12" cy="13" r="3.5"/>
       </svg>
-      <svg id="iconStop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+      <svg id="iconStop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
         <rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/>
       </svg>
       <span id="startLabel">Start camera</span>
@@ -276,7 +276,7 @@
     <h2 id="howTitle" data-i18n="howTitle">How it works</h2>
     <p data-i18n="how">Prop the phone up across the table from you, where the robot would be, facing you about 1–2 m away so your upper body is in view. Keep this page open.</p>
     <p class="note">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <rect x="5" y="11" width="14" height="9.5" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>
       </svg>
       <span data-i18n="privacy">Frames go only to the PhysicsClay server on your network.</span>
@@ -288,7 +288,7 @@
   <nav class="foot">
     <a class="applink" href="/">
       <span data-i18n="openApp">Open the full app</span>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
         <path d="M7 17 17 7"/><path d="M9 7h8v8"/>
       </svg>
     </a>

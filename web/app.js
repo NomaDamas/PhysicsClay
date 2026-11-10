@@ -726,7 +726,7 @@
     if (k === "user") { addLine("user", text); showOverlay("subtitle", text, 3000); return; }
     const d = addLine("robot", text);
     if (k === "vision") {
-      d.classList.add("vision"); const tag = document.createElement("span"); tag.className = "vtag"; tag.textContent = "VISION";
+      d.classList.add("vision"); const tag = document.createElement("span"); tag.className = "vtag"; tag.textContent = "Vision";
       d.querySelector(".txt").prepend(tag);
     }
     speak(text, "en-US");
@@ -971,8 +971,8 @@
     } catch (e) { saying = false; }
   }
   // Settings → Voice: a voice per language + Test
-  const VOICE_LANGS = [["en-US", "English", "Hi! I'm your robot. Tell me, point, or show me what to do."],
-    ["ko-KR", "한국어", "안녕하세요! 말로 하거나, 가리키거나, 직접 보여 주세요."]];
+  const VOICE_LANGS = [["en-US", "English", "Hi, I'm your robot. Tell me, point at, or show me what to do."],
+    ["ko-KR", "한국어", "안녕하세요. 말로 하거나, 가리키거나, 직접 보여 주세요."]];
   function renderVoiceSettings() {
     const host = $("voicePickers"); if (!host) return;
     if (!host.dataset.built) {
