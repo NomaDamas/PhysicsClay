@@ -36,7 +36,8 @@ recording with its own clock (frame i at t0 + i / fps): every frame reaches the 
 doesn't depend on the server's frame rate. A live camera gives one reading per frame, the latest.
 
 Per frame, `store["copresence"]["samples"]` lists the new readings [(t, J or None)] (watch.py's person model and its
-demonstration recorder take them all); `J` is the latest.
+demonstration recorder take them all); `J` is the live reading (the current frame, smoothed per server frame, for
+safety, pointing and handovers).
 
 State: copresence = {on, view, source, joints: {name: [x,y,z]}, pointing: {side, from, dir, hit, armed, target,
 candidates} | None, hand_open: {l, r}, offer: side | None, attention: {kind, name?, pos} | None,
@@ -350,7 +351,11 @@ def on_feed(ctx, msg):
     frames = [f for f in (msg.get("frames") or []) if isinstance(f, dict)]
     st["feed"] = {"frames": frames, "fps": float(msg.get("fps") or 20), "t0": time.time(),
                   "hold": float(msg.get("hold") or 0.0), "next": 0} if frames else None
-    st["arm"], st["J"] = None, None
+    st["arm"], st["J"], st["Js"] = None, None, None
+
+
+def _smooth(J, prev):
+    return {k: (SMOOTH * v + (1 - SMOOTH) * prev[k]) if k in prev else v for k, v in J.items()}
 
 
 def _feed_due(feed, now):
@@ -396,15 +401,21 @@ def copresence_tick(ctx):
     due = _feed_due(feed, now) if feed is not None else None
     lm, src = _landmarks(ctx, st, now)
     st["src"] = src
-    readings = due if (due is not None and src == "feed") else [(now, lm)]
-    J, samples = st["J"], []
-    for t, lm_k in readings:
-        Jk = to_world(lm_k, st["anchor"]) if (st["on"] and lm_k) else None
-        if Jk is not None and J is not None:
-            Jk = {k: (SMOOTH * v + (1 - SMOOTH) * J[k]) if k in J else v for k, v in Jk.items()}
-        J = Jk
-        samples.append((t, J))
-    st["J"], st["samples"] = J, samples
+    J = to_world(lm, st["anchor"]) if (st["on"] and lm) else None
+    if J is not None and st["J"] is not None:
+        J = _smooth(J, st["J"])
+    st["J"] = J                         # live (safety, pointing, handover): the current frame, smoothed per tick
+    if due is not None and src == "feed":   # the person model: every frame of a played feed, on the feed's own clock
+        Js, samples = st.get("Js"), []
+        for t, lm_k in due:
+            Jk = to_world(lm_k, st["anchor"]) if (st["on"] and lm_k) else None
+            if Jk is not None and Js is not None:
+                Jk = _smooth(Jk, Js)
+            Js = Jk
+            samples.append((t, Jk))
+        st["Js"], st["samples"] = Js, samples
+    else:
+        st["Js"], st["samples"] = None, [(now, J)]
     _pointing(ctx, st, J, src, now)
     _track_hands(st, J, now)
     _handover_tick(ctx, st, J, now)
