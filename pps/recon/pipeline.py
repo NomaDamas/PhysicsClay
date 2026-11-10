@@ -7,6 +7,7 @@ import time
 import cv2
 import numpy as np
 
+from .. import diskguard
 from . import depth as depthmod
 from . import fit, library, physical, recognize, scale, segment
 from .base import ReconError, slug
@@ -200,9 +201,17 @@ def save_to_library(job, name=None):
             "scale_source": s["scale"]["source"], "scale_label": s["scale"]["label"], "scale_confidence": s["scale"]["confidence"],
             "confidence": s["confidence"], "recognized_by": s["recognized_by"], "notes": s["notes"],
             "rgba": list(job.data["recon"].rgba)}
+    _room()
     m = library.save(prep, meta, job.data.get("photo"))
     job.added = {"lib": m["id"]}
     return m["id"]
+
+
+def _room():
+    """Refuse to save another object when the disk is nearly full (or the public server's library is at its cap)."""
+    ok, why = diskguard.check(library.path("x").parent, "library")
+    if not ok:
+        raise ReconError(why)
 
 
 def spec_object(lib_id, name=None, height_m=None, pos=None, movable=True):
@@ -280,6 +289,7 @@ def shape_layout(job):
             continue
         r.mesh.apply_scale(o["size_m"][2] / max(float(r.mesh.extents[2]), 1e-9))
         prep = physical.prepare(r.mesh, r.colors, o["material"], recognize.classify(o["label"])[2])
+        _room()
         m = library.save(prep, {"label": o["label"], "name": o["name"], "kind": o["kind"], "material": o["material"], "provider": "primitive",
                                 "provider_label": prov.label, "license": r.license, "shape": r.shape, "scale_source": layout["scale"]["source"],
                                 "confidence": round(min(r.confidence, layout["scale"]["confidence"] or 0.2), 2), "from": "scan",

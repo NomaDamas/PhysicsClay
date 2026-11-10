@@ -529,4 +529,21 @@ MESSAGES = {
         "RuntimeError: video encoding failed: {bad}",
         "RuntimeError: 영상 인코딩에 실패했어요: {bad}",
     ),
+    # -------------------------------------------------------- pps/diskguard.py: disk guard for visitor-made files
+    "disk.full_datasets": (
+        "The server's disk is nearly full ({free} GB free), so I won't save more dataset recordings right now.",
+        "서버 디스크가 거의 찼어요(남은 공간 {free} GB). 지금은 데이터셋을 더 녹화하지 않을게요.",
+    ),
+    "disk.full_library": (
+        "The server's disk is nearly full ({free} GB free), so I won't save more imported objects right now.",
+        "서버 디스크가 거의 찼어요(남은 공간 {free} GB). 지금은 가져온 물체를 더 저장하지 않을게요.",
+    ),
+    "disk.cap_datasets": (
+        "This public server keeps at most {cap} MB of dataset recordings, and it's full. Run PhysicsClay locally to keep more.",
+        "이 공개 서버는 데이터셋을 최대 {cap} MB까지만 보관하는데, 가득 찼어요. 더 녹화하려면 PhysicsClay를 직접 설치해 실행해 주세요.",
+    ),
+    "disk.cap_library": (
+        "This public server keeps at most {cap} MB of imported objects, and it's full. Run PhysicsClay locally to keep more.",
+        "이 공개 서버는 가져온 물체를 최대 {cap} MB까지만 보관하는데, 가득 찼어요. 더 저장하려면 PhysicsClay를 직접 설치해 실행해 주세요.",
+    ),
 }
