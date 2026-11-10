@@ -71,6 +71,8 @@
     if (!hits.length && /\blast\b|마지막/.test(t)) hits = options.slice(-1);
     if (!hits.length && /\bleft\b|왼/.test(t)) hits = options.slice(0, 1);
     if (!hits.length && /\bright\b|오른/.test(t)) hits = options.slice(-1);
+    if (!hits.length) hits = options.filter((o) => String(o.label || "").toLowerCase().split(/\s+/)   // "the weave", "wiping"
+      .some((w) => w.length > 3 && (word(t, w) || word(t, w.replace(/e$/, "") + "ing"))));
     return hits.length === 1 ? hits[0].key : null;
   }
 

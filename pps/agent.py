@@ -204,6 +204,12 @@ def system_prompt(st, confirm):
     own = PROMPTS / f"{rid}.md"
     if own.exists():
         text += "\n\n" + own.read_text()
+    pack = ((st.get("world") or {}).get("scene") or {}).get("pack") if isinstance(st.get("world"), dict) else None
+    if pack:                     # P4 demo packs add what the robot should know about their scene
+        from .world import packs
+        add = packs.prompt(pack)
+        if add:
+            text += "\n\n" + add
     text += "\n\n## Right now\n" + json.dumps(context(st, confirm), ensure_ascii=False, separators=(",", ":"))
     return text
 
@@ -253,6 +259,18 @@ def context(st, confirm=True):
     tj = trajectory_summary(st)
     if tj:
         ctx["trajectory"] = tj
+    sb = st.get("skillbook") if isinstance(st.get("skillbook"), dict) else {}
+    if sb.get("skills"):        # P4: parametric skills learned from demonstrations (and the one on screen)
+        ctx["learned_skills"] = [f"{k.get('name')} ({k.get('kind')}): {k.get('describe')}" + ("" if k.get("ok", True) else " [not on this robot]")
+                                 for k in sb["skills"][:12]]
+        if sb.get("current") and sb["current"].get("phase") in ("proposed", "running", "blocked"):
+            c = sb["current"]
+            ctx["skill_on_screen"] = {"name": c.get("name"), "kind": c.get("kind"), "describe": c.get("describe"),
+                                      "target": (c.get("target") or {}).get("label"), "phase": c.get("phase")}
+    if sb.get("seams"):
+        ctx["seams"] = [f"{x.get('name')} = {x.get('label')}" for x in sb["seams"]]
+    if sb.get("pack"):
+        ctx["demo_pack"] = sb["pack"].get("label")
     return ctx
 
 
@@ -454,6 +472,44 @@ def tool_specs(st, confirm=True):
         _fn("mirror_person", "Start or stop copying the person live (shortcut for set_watch_mode mirror / off).",
             {"enabled": {"type": "boolean"}}, ["enabled"]),
     ]
+    # P4 skills from demonstration: the person's style as parameters, applied to the scene's geometry
+    sk_names = [k.get("name") for k in ((st.get("skillbook") or {}).get("skills") or []) if k.get("name")] if isinstance(st.get("skillbook"), dict) else []
+    T += [
+        _fn("learn_skill_from_demo", "Turn the person's last demonstration (or a named one) into a parametric skill: how they did it "
+                                     "(weave width and frequency, travel speed, torch angle, wipe pattern, stir radius, press force, "
+                                     "when to help a lift) separate from where (the seam, area, container or target comes from the "
+                                     "scene). It is proposed on the scene with a plan card; read its one sentence back and ask "
+                                     "'right?'. Usually it happens by itself when learn_from_demo stops; call this to pick another "
+                                     "kind or target." + moving,
+            {"demo": {"type": "string", "description": "Demonstration name (default: the last one)."},
+             "kind": {"type": "string", "enum": ["weave_seam", "wipe", "stir", "press", "spot"],
+                      "description": "Force the kind (default: the best fit; the robot asks when two fit)."},
+             "name": {"type": "string", "description": "Name to save the skill under."},
+             "target": {"type": "string", "description": "Where to apply it: a seam (seam_a, seam_l, 'the L seam'), an object, or a region."}}),
+        _fn("list_skills", "The parametric skills the robot has learned (and examples), with a one-line description each and "
+                           "whether this robot can run them."),
+        _fn("apply_skill", "Run a learned skill on this scene: a weave on a seam, a wipe on an object, a stir in a container, a press "
+                           "on a target, a spot of the person's lift. overrides change parameters for this time only "
+                           "(e.g. {\"weave.amp\": 0.006})." + moving,
+            {"name": {"type": "string", "description": "Skill name" + (f" ({', '.join(sk_names[:10])})" if sk_names else "") + "."},
+             "target": {"type": "string", "description": "Seam / object / region / container to apply it to (default: the obvious one)."},
+             "overrides": {"type": "object", "description": "Dotted parameter -> value for this run only.",
+                           "additionalProperties": {"type": ["number", "string"]}}},
+            ["name"]),
+        _fn("edit_skill_params", "Change a skill's parameters from the person's correction and re-propose it: give their words in "
+                                 "text ('wider', 'a bit slower', 'more push', 'closer', '6 mm', '3 Hz', 'harder') and/or exact "
+                                 "changes as dotted parameter -> value, or {\"mul\": f} / {\"add\": d} (weave.amp, weave.freq, "
+                                 "weave.kind, travel_speed, travel_angle, work_angle, standoff, force, spacing, pattern, passes, "
+                                 "radius, freq, depth, turns, hold_s, max_force, assist_when.bar_velocity_below, lift_cm).",
+            {"name": {"type": "string", "description": "Skill name (default: the one on screen)."},
+             "text": {"type": "string", "description": "The person's correction in their words."},
+             "changes": {"type": "object", "description": "{dotted param: number | string}", "additionalProperties": {"type": ["number", "string"]}}}),
+    ]
+    if has_world:
+        T.append(_fn("load_pack", "Set up a demo pack scene: weld_cell (steel plates with a straight and an L seam, a welding torch on "
+                                  "the arm), gym (bench, 20 kg barbell; coach squats, spot lifts), workshop (wrench, screwdriver, brush; "
+                                  "'when I put my hand out, give me the wrench' is on). 'Set up a weld cell' -> weld_cell.",
+                     {"name": {"type": "string", "enum": ["weld_cell", "gym", "workshop"]}}, ["name"]))
     if "follow_me" in caps:
         T.append(_fn("follow_me", "Start or stop copying the user's body from their camera.", {"enabled": {"type": "boolean"}}, ["enabled"]))
     if "teach_by_showing" in caps:
@@ -1128,10 +1184,91 @@ class Agent:
         res = self._watch(msg, 8)
         if op == "stop" and res.get("ok"):
             res["next"] = "Tell the person what you learned in one sentence and offer to repeat it (learn_from_demo replay)."
+            name = (res.get("demo") or {}).get("name")
+            if name:              # P4: the server turns the demonstration into a skill and may propose it right away
+                r, st = self._wait(lambda s: ((s.get("skillbook") or {}).get("reply") or {})
+                                   if ((s.get("skillbook") or {}).get("reply") or {}).get("id") == f"auto-{name}" else None, 4)
+                if r:
+                    res["skill"] = {k: r.get(k) for k in ("ok", "message", "skill", "notes", "question") if r.get(k)}
+                    p = st.get("plan") or {}
+                    if r.get("plan") and p.get("id") == r.get("plan") and p.get("phase") == "proposing":
+                        self._proposed = p.get("id")
+                        self._mine(p.get("id"))
+                        res["next"] = ("The demonstration became a skill, proposed on the scene with a plan card. Say its one sentence "
+                                       "(skill.message) and ask 'right?'; corrections go to edit_skill_params, 'go' to confirm_plan.")
+                    elif r.get("question"):
+                        res["next"] = "Ask the person which kind of skill it was (skill.question); answer with choose_candidate."
         return res
 
     def t_mirror_person(self, a, confirm):
         return self._watch({"op": "mode", "mode": "mirror" if a.get("enabled", True) else "off"})
+
+    # ---- skills from demonstration (P4: {type:"skill", ...}; state.skillbook)
+    def _skill(self, msg, timeout=8):
+        rid = self._tid("skill")
+        self.push(dict(msg, type="skill", id=rid, source="agent"))
+        r, st = self._wait(lambda s: (s.get("skillbook") or {}).get("reply") if ((s.get("skillbook") or {}).get("reply") or {}).get("id") == rid else None,
+                           timeout)
+        if r is None:
+            return None, st, {"ok": False, "message": "Skills aren't available on this server."}
+        res = {"ok": bool(r.get("ok")), "message": r.get("message")}
+        for k in ("skill", "notes", "changed", "question", "options", "skills"):
+            if r.get(k):
+                res[k] = r[k]
+        p = st.get("plan")
+        if r.get("plan") and p and p.get("id") == r.get("plan"):
+            res["plan"] = {k: p.get(k) for k in ("phase", "verdict", "intent") if p.get(k)}
+            if p.get("phase") == "proposing":
+                self._proposed = p.get("id")
+                self._mine(p.get("id"))
+                res["next"] = ("A plan card shows the skill on the scene. Say its one sentence to the person and ask 'right?'. They can say "
+                               "go, or correct it (edit_skill_params with their words).")
+        if r.get("question"):
+            res["next"] = "Ask the person the question (which kind of skill it was); choose_candidate with their answer."
+        return r, st, res
+
+    def t_learn_skill_from_demo(self, a, confirm):
+        msg = {"op": "extract", "propose": True}
+        for k in ("demo", "kind", "name", "target"):
+            if str(a.get(k) or "").strip():
+                msg[k] = str(a[k]).strip()
+        return self._skill(msg, 10)[2]
+
+    def t_list_skills(self, a, confirm):
+        return self._skill({"op": "list"}, 4)[2]
+
+    def t_apply_skill(self, a, confirm):
+        if self._proposed and confirm:
+            p = self.state_now().get("plan") or {}
+            if p.get("phase") == "proposing":
+                return {"ok": False, "error": f"Plan {self._proposed} is already waiting for the user. Ask them to say go, or change it "
+                                              "with edit_skill_params."}
+        msg = {"op": "apply", "name": str(a.get("name") or ""), "preview": bool(confirm)}
+        if str(a.get("target") or "").strip():
+            msg["target"] = str(a["target"]).strip()
+        ov = {k: v for k, v in (a.get("overrides") or {}).items() if v not in (None, "")} if isinstance(a.get("overrides"), dict) else {}
+        if ov:
+            msg["overrides"] = ov
+        r, st, res = self._skill(msg, 10)
+        if r is not None and not confirm and r.get("task"):
+            return self._traj_wait_run(r.get("task"), res)
+        return res
+
+    def t_edit_skill_params(self, a, confirm):
+        msg = {"op": "edit"}
+        if str(a.get("name") or "").strip():
+            msg["name"] = str(a["name"]).strip()
+        if str(a.get("text") or "").strip():
+            msg["text"] = str(a["text"]).strip()
+        ch = {k: v for k, v in (a.get("changes") or {}).items() if v not in (None, "")} if isinstance(a.get("changes"), dict) else {}
+        if ch:
+            msg["changes"] = ch
+        if "text" not in msg and "changes" not in msg:
+            return {"ok": False, "error": "give the person's words (text) or changes"}
+        return self._skill(msg, 10)[2]
+
+    def t_load_pack(self, a, confirm):
+        return self._world({"op": "pack", "name": str(a.get("name") or "")})
 
     # ---- world (World workstream: {type:"world", ...}; state.world)
     def _world(self, msg, timeout=40):
@@ -1203,7 +1340,9 @@ def _summary(name, res):
     if name in ("add_zone", "remove_zone", "clear_zones"):
         zs = res.get("zones") or []
         return res.get("message") or (f"{len(zs)} zone{'s' if len(zs) != 1 else ''}: " + ", ".join(z.get("label") or z.get("id") for z in zs) if zs else "no zones")
-    if name in ("set_robot", "build_scene", "add_object", "remove_object") and res.get("ok"):
+    if name == "list_skills" and res.get("ok"):
+        return f"{len(res.get('skills') or [])} skills: " + ", ".join(k.get("name") for k in (res.get("skills") or [])[:6])
+    if name in ("set_robot", "build_scene", "add_object", "remove_object", "load_pack") and res.get("ok"):
         r = res.get("robot") or {}
         return f"{r.get('label') or r.get('id') or 'world'} · {len(res.get('objects') or [])} objects"
     return str(res.get("message") or res.get("status") or ("ok" if res.get("ok") else "failed"))

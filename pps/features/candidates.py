@@ -139,12 +139,18 @@ def pick_option(options, text):
         hits = [options[0]]
     if not hits and any(_word(t, w) for w in ("right", "오른")):
         hits = [options[-1]]
+    if not hits:                                        # a word of the option's label ("the weave", "wiping")
+        hits = [o for o in options if any(len(w) > 3 and (_word(t, w) or _word(t, w.rstrip("e") + "ing"))
+                                          for w in str(o["label"]).lower().split())]
     return hits[0] if len(hits) == 1 else None
 
 
 def resume(ctx, opt):
     ch = ctx.store.pop("choices", None)
     if not ch:
+        return
+    if ch["msg"].get("type") not in (None, "task"):      # another feature's question (P4: "was that a weave or a wipe?")
+        ext.handle(ctx, dict(ch["msg"], **{ch.get("field") or "object": opt["name"]}, _chosen=True))
         return
     m = dict(ch["msg"], object=opt["name"], _chosen=True)
     m.pop("object_uv", None), m.pop("object_pos", None)
@@ -164,8 +170,8 @@ def on_choose(ctx, msg):
         ctx.tasks.set_task(ch["id"], ch["msg"].get("action", "pick_place"), "failed", "Okay, I left everything where it is.")
         return
     opt = None
-    p = msg.get("pos")
-    if p is None and msg.get("uv") is not None and ctx.cam_params is not None:
+    p = msg.get("pos") if all(o["name"] in ctx.tasks.objs for o in ch["options"]) else None
+    if p is None and msg.get("uv") is not None and ctx.cam_params is not None and all(o["name"] in ctx.tasks.objs for o in ch["options"]):
         p = ctx.tasks.raycast(ctx.cam_params, float(msg["uv"][0]), float(msg["uv"][1]), ctx.aspect)
     if p is not None:
         near = near_point(ctx.tasks, p, [o["name"] for o in ch["options"]])
@@ -189,6 +195,8 @@ def watch(ctx):
     if not t or t.get("id") != ch["id"] or t.get("status") != "asking" or time.time() - ch["t"] > EXPIRE_S:
         ctx.store.pop("choices", None)      # superseded (new task, stop, reset) or abandoned
         return
+    if any(o["name"] not in ctx.tasks.objs for o in ch["options"]):
+        return                              # not a question about objects: pointing doesn't answer it
     # pointing while asked: a new or moved marker (body pointing sets P, a tap adds A-F) next to one candidate
     for mk in ctx.tasks.markers:
         old = ch["markers"].get(mk["id"])
@@ -215,6 +223,9 @@ def choices_state(ctx):
         return {"choices": None}
     out = []
     for o in ch["options"]:
+        if o["name"] not in ctx.tasks.objs:                 # an option that isn't an object (a skill kind): no badge
+            out.append(dict(o, pos=None, uv=None))
+            continue
         p = ctx.tasks.mug_center(o["name"])
         uv = Tasks.project(ctx.cam_params, p, ctx.aspect) if ctx.cam_params is not None else None
         out.append(dict(o, pos=[round(float(x), 3) for x in p], uv=uv))

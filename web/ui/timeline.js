@@ -136,7 +136,7 @@
       <ol class="tl-row tl-steps" aria-label="Taught steps"></ol>
     </div>
     <div class="tl-sec tl-skills" hidden>
-      <div class="tl-head"><span class="tl-title">Skills</span><span class="tl-q tl-skq">Tap play to run one. Motion skills can be edited.</span></div>
+      <div class="tl-head"><span class="tl-title">Skills</span><span class="tl-q tl-skq">Tap play to run one (skills you showed me are proposed on this scene first). Motion skills can be edited.</span></div>
       <ul class="tl-row tl-sklist" aria-label="Saved skills"></ul>
       <div class="tl-ed" hidden></div>
     </div>
@@ -396,7 +396,14 @@
     // whole-body motion skills (dance, video imitation) only play on bodies that can imitate; taught tasks work everywhere
     const w = s.world && s.world.robot, caps = w && Array.isArray(w.capabilities) ? w.capabilities : null;
     const canMotion = !caps || caps.includes("imitate_video");
-    return arr(s.skills).map(String).map((name) => ({ name, motion: meta.has(name), dur: meta.get(name) || 0 })).filter((k) => canMotion || !k.motion);
+    const out = arr(s.skills).map(String).map((name) => ({ name, motion: meta.has(name), dur: meta.get(name) || 0 })).filter((k) => canMotion || !k.motion);
+    // P4: parametric skills learned from demonstrations (state.skillbook), shown for every body that can run them
+    const sb = s.skillbook && typeof s.skillbook === "object" ? s.skillbook : {};
+    for (const k of arr(sb.skills)) {
+      if (!k || !k.name || k.ok === false || k.fits === false || out.some((x) => x.name === k.name)) continue;
+      out.push({ name: k.name, param: true, kind: k.kind, describe: k.describe || "", example: !!k.example, dur: 0 });
+    }
+    return out;
   }
   function playState(s) {
     const t = s.task || {}, ph = (s.teach || {}).phase;
@@ -415,7 +422,7 @@
       skKey = key;
       const keep = document.activeElement && ui.sklist.contains(document.activeElement) ? [document.activeElement.closest(".tl-card").dataset.n, document.activeElement.dataset.a] : null;
       ui.sklist.innerHTML = list.map((k) => `<li class="tl-card tl-sk${k.name === ed.name ? " on" : ""}${k.name === now ? " playing" : ""}" data-n="${esc(k.name)}">
-        <span class="nm"><b title="${esc(k.name)}">${esc(k.name.replace(/_/g, " "))}</b><small>${k.name === now ? "playing…" : k.motion ? `motion · ${k.dur.toFixed(1)} s` : "taught task"}</small></span>
+        <span class="nm"><b title="${esc(k.param ? `${k.name}: ${k.describe}` : k.name)}">${esc(k.name.replace(/_/g, " "))}</b><small title="${esc(k.describe || "")}">${k.name === now ? "playing…" : k.param ? `${esc(String(k.kind || "").replace(/_/g, " "))}${k.example ? " · example" : ""}` : k.motion ? `motion · ${k.dur.toFixed(1)} s` : "taught task"}</small></span>
         <button type="button" class="tl-ib play" data-a="play" aria-label="Play ${esc(k.name)}" title="Play">${ic("play", 18)}</button>
         ${k.motion ? `<button type="button" class="tl-ib" data-a="edit" aria-expanded="${k.name === ed.name}" aria-label="Edit ${esc(k.name)}" title="Edit a part of this motion">${ic("edit", 18)}</button>` : ""}
       </li>`).join("");
@@ -448,6 +455,11 @@
   ui.sklist.addEventListener("click", (ev) => {
     const b = ev.target.closest("button[data-a]"); if (!b) return;
     const name = b.closest(".tl-card").dataset.n;
+    const pk = skillModel(U.state).find((k) => k.name === name && k.param);
+    if (b.dataset.a === "play" && pk) {      // a parametric skill: compile it on this scene and propose it (plan card)
+      if (send({ type: "skill", op: "apply", name, id: `ui-sk-${Date.now() % 1e7}` })) announce(`Proposing ${name.replace(/_/g, " ")}: ${pk.describe}.`);
+      return;
+    }
     if (b.dataset.a === "play") { playing = name; playT = Date.now(); runTask("play_skill", { name }); announce(`Playing ${name}.`); renderSkills(U.state, true); }
     else if (b.dataset.a === "edit") {
       if (ed.name === name) ed.name = "";

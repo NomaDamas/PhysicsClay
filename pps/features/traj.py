@@ -145,6 +145,7 @@ def _checkers(ctx, palm, tr_world, dense, world):
                     grasped.add(n)
     carry0 = world.get("carrying")
     drop0 = float(world.get("carry_drop", 0.0))
+    work = set((tr_world.get("meta") or {}).get("work_on") or [])     # P4 skills: the plates welded on, the bowl stirred in
 
     def objects(pts, qs, info):
         na, idx = info["n_approach"], info["idx"]
@@ -155,7 +156,7 @@ def _checkers(ctx, palm, tr_world, dense, world):
             drop = drop0 if carry0 else drop_planned
             hit = None
             for n, o in world["objects"].items():
-                if n in grasped:
+                if n in grasped or n in work:
                     continue
                 c, r, hh = o["pos"], o["r"], o["h"]
                 dh = np.hypot(p[0] - c[0], p[1] - c[1])

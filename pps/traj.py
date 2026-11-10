@@ -18,7 +18,8 @@ Pure (numpy only, no server, no MuJoCo), so it is unit tested in tests/test_traj
 The trajectory object (docs/V1.md P2, docs/PROTOCOL.md v7):
   {"id", "role": "right"|"left", "frame": "world"|"object:<name>", "source": "draw|vr|language|demo|keyframes|skill",
    "label", "points": [{"p": [x,y,z], "q": [w,x,y,z]|null, "t": s|null, "grip": 0..1|null, "speed": m/s|null,
-                        "force": N|null, "tol": m|null, "note": str|null, + optional "yaw" (deg), "tilt" (deg), "hold" (s)}],
+                        "force": N|null, "tol": m|null, "note": str|null, + optional "yaw" (deg), "tilt" (deg), "roll" (deg),
+                        "hold" (s)}],
    "pattern": {"kind": "zigzag|circle|figure8", "amp": m, "freq": Hz, "axis": "lateral|normal|vertical",
                "span": [i0, i1]?} | null,
    "check": {"ok": [bool per point], "why": str|null, "duration": s} | null, "meta"?: {...}}
@@ -143,7 +144,7 @@ def qangle(a, b):
 
 # ---------------------------------------------------------------------------- schema
 POINT_KEYS = ("p", "q", "t", "grip", "speed", "force", "tol", "note")
-EXTRA_KEYS = ("yaw", "tilt", "hold")
+EXTRA_KEYS = ("yaw", "tilt", "roll", "hold")
 
 
 def normalize_point(pt, i=0):
@@ -173,6 +174,8 @@ def normalize_point(pt, i=0):
         out["yaw"] = _r(180.0 if y == -180.0 else y, 2)
     if pt.get("tilt") is not None:
         out["tilt"] = _r(_num(pt["tilt"], -80.0, 80.0, "tilt"), 2)
+    if pt.get("roll"):          # P4: lean sideways about the direction of travel (a weld's work angle)
+        out["roll"] = _r(_num(pt["roll"], -60.0, 60.0, "roll"), 2)
     if pt.get("hold") is not None and _num(pt["hold"], 0.0, 30.0, "hold") > 0:
         out["hold"] = _r(_num(pt["hold"], 0.0, 30.0, "hold"), 3)
     return out
@@ -295,7 +298,8 @@ def _tangents(P):
 
 def point_quat(pt, q0, tangent):
     """Absolute q wins; otherwise the default orientation q0 turned by yaw (about the vertical) then tilted toward the
-    direction of travel (tilt > 0 leans the tool's tip forward along the path)."""
+    direction of travel (tilt > 0 leans the tool's tip forward along the path) and rolled about it (roll > 0 leans the
+    tip to the left of the travel)."""
     if pt.get("q") is not None:
         return qnorm(pt["q"])
     q = qnorm(q0 if q0 is not None else [1, 0, 0, 0])
@@ -304,6 +308,8 @@ def point_quat(pt, q0, tangent):
     if pt.get("tilt"):
         axis = _unit(np.cross(DOWN, tangent), [0, -1, 0])
         q = qmul(qaxis(axis, math.radians(pt["tilt"])), q)
+    if pt.get("roll"):
+        q = qmul(qaxis(_unit([tangent[0], tangent[1], 0.0], [1, 0, 0]), math.radians(pt["roll"])), q)
     return qnorm(q)
 
 
@@ -1253,7 +1259,7 @@ def describe(traj_world, world=None):
         e = {"i": i, "h": round(xyz[2] - surface, 3)}
         if near is not None and bd < 0.12:
             e["near"] = near
-        for k in ("speed", "force", "grip", "yaw", "tilt", "hold", "note"):
+        for k in ("speed", "force", "grip", "yaw", "tilt", "roll", "hold", "note"):
             if p.get(k) is not None:
                 e[k] = p[k]
         out.append(e)

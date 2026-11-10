@@ -569,3 +569,29 @@ start; 3 s without a command ends teleop.
 `state.teleop = {active, role, src, rate (commands in the last second), lag_ms (age of the newest), stale, echo (its t),
 held (why the last command was not applied | null), clamped, scale (safety speed scale), hands: {right|left: {p, q, ee,
 grip, holding}}, reply, events}`.
+## v8 · Skills from demonstration + demo packs (v1 P4, `pps/skills/`, `pps/features/skills.py`, `web/ui/skills.js`)
+Details: `docs/skills.md` and `docs/packs.md`; as-built notes in `docs/V1.md` (P4).
+- `{type:"skill", op:"extract", demo?, kind?, name?, target?, propose?}` a demonstration (default: the last `learn`) →
+  a parametric skill saved in `skills/<name>.json` and, when the scene has something to apply it to, proposed as a P2
+  trajectory (`source: "skill"`) with a plan card whose `say` is the one sentence to confirm ("… Right?"). When two kinds
+  fit about equally the robot asks through `state.choices` (options are skill kinds, answered with `choose`). `learn`'s
+  stop triggers it by itself.
+- `{op:"apply", name, target?, overrides?, preview?, task_id?}` compile on this scene → `traj propose` (preview) /
+  `traj set` + run, the watch `assist` behaviour (`spot`) or `play_skill` (`mirror_motion`).
+- `{op:"edit", name?, changes? | text?}` parameters (dotted paths, values or `{mul}` / `{add}`; or the person's words:
+  "wider", "a bit slower", "more push", "closer", "6 mm", "3 Hz") → saved → recompiled → re-proposed under the same plan id.
+- `{op:"list"}`, `{op:"delete", name}`, `{op:"bead_clear"}`, `{op:"pack_demo"}` (the loaded pack's synthetic person).
+- Replies: `state.skillbook.reply = {id, op, ok, message, skill?, notes?, plan?, question?, changed?, task?}`.
+- `state.skillbook = {skills, current, reply, rev, seams, pack, beads: [{id, seam, r, live, pts}], spot, bar, kinds}`;
+  `state.plan.skill = {name, kind, describe, label, target}` while a skill is proposed.
+- `{type:"world", op:"pack", name, robot?}` loads a demo pack (`weld_cell`, `gym`, `workshop`). `state.world.packs`
+  lists them, `state.world.pack` names the loaded one; `state.world.robot.tool = {kind, label, tcp}` when a tool is
+  mounted. Scene spec additions: `pack`, `tool`, `seams`, per object `exact` and `mass`; kinds `steel_plate`, `bench`,
+  `barbell`, `wrench`, `screwdriver`, `brush`; template `gym`.
+- P2 point addition: `roll` (degrees, lean about the travel direction). Trajectory `meta.work_on`: objects the P2 object
+  check lets the tool touch or enter; `meta.skill`: the skill, its target and (welds) the seam polyline and arc span.
+- Watch additions: `op:"mode"` takes `quiet` and, for `assist`, `spot: {v_min, for_s, lift, bar?, skill?}` (help when the
+  bar, the hands' midpoint, is mid-range and slower than `v_min` for `for_s`); `state.watch.assist.bar = {vz, stalled,
+  slow_s, range}`. Demonstrations skip the synthetic no-camera person and record `smoothing: {ema, dt}`.
+- With P0 physics the server sends itself `{type:"physics", op:"set", params:{impedance, force_limit}}` around spotting.
+- Agent tools: `learn_skill_from_demo`, `list_skills`, `apply_skill`, `edit_skill_params`, `load_pack`.

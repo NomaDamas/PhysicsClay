@@ -1,0 +1,26 @@
+{
+  "id": "gym",
+  "label": "Gym",
+  "icon": "gym",
+  "summary": "A bench and a 20 kg barbell. The humanoid counts your squats and corrects your form, and spots your lift: it follows the bar under your hands and helps, force-limited, when it stalls.",
+  "robot": "g1",
+  "robots": ["g1", "apollo"],
+  "scene": {
+    "template": "gym",
+    "objects": [
+      {"name": "bench", "kind": "bench", "color": "black", "size": [1.10, 0.30, 0.43], "pos": [0.80, 0.80], "movable": false, "exact": true},
+      {"name": "barbell", "kind": "barbell", "color": "black", "size": [0.45, 1.30, 0.45], "pos": [0.66, 0.0], "movable": true, "exact": true, "mass": 20.0}
+    ]
+  },
+  "examples": [
+    "Coach my squats",
+    "Spot me",
+    "Help me earlier",
+    "Stop watching"
+  ],
+  "setup": {
+    "say": "Gym ready. Say “coach me” and squat, or pick up the bar and say “spot me”: I'll follow it under your hands and push when you get stuck."
+  },
+  "demo": {"kind": "squat", "seconds": 9.0, "reps": 3, "bar": true, "stall_at": [2, 0.4], "name": "squat_demo"},
+  "physics": "The barbell is a 20 kg free body with P0 physics. The person is your camera pose (or a synthetic lifter), never a simulated body in contact. Spotting force is requested through P0 impedance (force_limit = the skill's max force); kinematic mode only moves the hands."
+}

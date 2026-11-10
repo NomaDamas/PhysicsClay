@@ -363,12 +363,17 @@ def _assist(ctx, w, h, now):
         focus = np.mean(ws, axis=0) - np.array([0.0, 0.0, ASSIST_BELOW])
     dt = min(0.1, now - a.get("t", now)) if a.get("t") else 0.0
     lift = float(a.get("lift", 0.0))
-    if h.get("stalled"):
+    spot = w["opts"].get("spot") or {}          # P4 spot skill: help when the bar slows below v_min for for_s, mid-range
+    bar = _bar_stall(w.setdefault("bar_mem", {}), J, now, spot) if spot else None
+    stalled = bool(h.get("stalled")) or bool(bar and bar["stalled"])
+    if stalled:
         if a.get("phase") != "helping":
             mf = float(w["opts"].get("max_force") or 40.0)
-            _event(w, "assist", f"You stalled: helping, capped at {mf:.0f} N.")
+            why = (f"the bar slowed below {spot.get('v_min', 0) * 100:.0f} cm/s" if bar and bar["stalled"] and not h.get("stalled")
+                   else "you stalled")
+            _event(w, "assist", f"{why[:1].upper()}{why[1:]}: helping, capped at {mf:.0f} N.")
             _say(ctx, "I've got you. Push.")
-        lift = min(ASSIST_LIFT, lift + ASSIST_V * dt)
+        lift = min(float(spot.get("lift") or ASSIST_LIFT), lift + ASSIST_V * dt)
         phase = "helping"
     else:
         lift = max(0.0, lift - ASSIST_V * dt)
@@ -385,7 +390,33 @@ def _assist(ctx, w, h, now):
         ees[palm.replace("_palm", "")] = _r(d.site_xpos[rt.palm_sid[palm]])
     mf = float(w["opts"].get("max_force") or 40.0)
     w["assist"] = {"phase": phase, "target": tgt, "focus": _r(focus), "lift": round(lift, 3), "t": now, "ee": ees,
-                   "max_force": mf, "request": {"force_n": mf, "dir": [0.0, 0.0, 1.0]} if phase == "helping" else None}
+                   "max_force": mf, "request": {"force_n": mf, "dir": [0.0, 0.0, 1.0]} if phase == "helping" else None,
+                   "bar": None if bar is None else {k: bar[k] for k in ("vz", "stalled", "slow_s", "range")},
+                   "skill": spot.get("skill")}
+
+
+def _bar_stall(a, J, now, spot):
+    """The bar (the hands' midpoint) is mid-range and has moved slower than spot.v_min for spot.for_s seconds.
+    Uses its own height history, so it works when the activity reader doesn't know the lift (a bench press)."""
+    ws = [np.asarray(J[k], float) for k in ("l_wrist", "r_wrist") if k in J]
+    if not ws:
+        return None
+    z = float(np.mean(ws, axis=0)[2])
+    hist = [x for x in (a.get("hist") or []) if now - x[0] <= 6.0] + [(now, z)]
+    a["hist"] = hist
+    recent = [x for x in hist if now - x[0] <= 0.3]
+    vz = (recent[-1][1] - recent[0][1]) / max(1e-3, recent[-1][0] - recent[0][0]) if len(recent) >= 2 else 0.0
+    zs = [x[1] for x in hist]
+    lo, hi = min(zs), max(zs)
+    mid = hi - lo > 0.10 and z < hi - 0.2 * (hi - lo)          # in the middle of a rep, not resting at the top
+    slow = abs(vz) < float(spot.get("v_min") or 0.05) and mid
+    t0 = a.get("slow_t") if slow else None
+    if slow and t0 is None:
+        t0 = now
+    a["slow_t"] = t0
+    slow_s = now - t0 if t0 is not None else 0.0
+    return {"vz": round(vz, 3), "stalled": slow and slow_s >= float(spot.get("for_s") or 0.5), "slow_s": round(slow_s, 2),
+            "range": round(hi - lo, 3)}
 
 
 # ---------------------------------------------------------------------- coach
@@ -543,6 +574,9 @@ def _set_mode(ctx, w, mode, msg, quiet=False):
     for k in ("hand", "target", "max_force"):
         if msg.get(k) is not None:
             w["opts"][k] = msg[k]
+    if mode == "assist":                         # P4 spot skill parameters (or the plain stall rule without them)
+        w["opts"]["spot"] = msg.get("spot") if isinstance(msg.get("spot"), dict) else None
+        w["bar_mem"] = {}
     if mode == prev and mode != "learn":
         return True, f"Already in {mode}."
     note = ""
@@ -584,6 +618,10 @@ def _finish_demo(ctx, w, name=None):
     demo = rec.finish(getattr(ctx.rt, "profile_id", None))
     if demo is None:
         return "I didn't see enough to learn from."
+    ts = [f["t"] for f in demo["frames"]]           # P4: the co-presence smoothing the path went through (skills undo its
+    if len(ts) > 2:                                 # known gain at the weave frequency)
+        from .copresence import SMOOTH
+        demo["smoothing"] = {"ema": SMOOTH, "dt": round(float(np.median(np.diff(ts))), 4)}
     path = demo_mod.save(demo)
     w["demos_cache"] = None
     w["last_demo"] = {"name": demo["name"], "path": str(path), "duration": demo["duration"], "hand": demo["hand"],
@@ -637,7 +675,7 @@ def on_watch(ctx, msg):
         if mode not in MODES:
             _reply(w, msg, False, f"Unknown mode '{mode}'. Modes: {', '.join(MODES)}.")
             return
-        ok, text = _set_mode(ctx, w, mode, msg)
+        ok, text = _set_mode(ctx, w, mode, msg, quiet=bool(msg.get("quiet")))
         _reply(w, msg, ok, text, mode=w["mode"], demo=w["last_demo"] if mode != "learn" else None)
     elif op == "rule":
         ok, text, r = add_rule(ctx, w, msg)

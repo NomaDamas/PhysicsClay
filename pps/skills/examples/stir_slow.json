@@ -1,0 +1,3 @@
+{"version": 1, "name": "stir_slow", "kind": "stir",
+ "params": {"container": null, "radius": 0.03, "freq": 0.6, "depth": 0.03, "turns": 3, "direction": "ccw"},
+ "created": 1762732800.0, "source": {"demo": null, "note": "example"}, "measured": {}, "notes": []}

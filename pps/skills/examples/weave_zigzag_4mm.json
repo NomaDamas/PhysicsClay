@@ -1,0 +1,4 @@
+{"version": 1, "name": "weave_zigzag_4mm", "kind": "weave_seam",
+ "params": {"seam": null, "travel_speed": 0.008, "work_angle": 90.0, "travel_angle": 10.0, "standoff": 0.015,
+            "weave": {"kind": "zigzag", "amp": 0.004, "freq": 2.0}, "direction": "auto"},
+ "created": 1762732800.0, "source": {"demo": null, "note": "example: a common MIG weave"}, "measured": {}, "notes": []}
