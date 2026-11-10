@@ -593,6 +593,7 @@ class Tasks:
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         side = "right" if palm.startswith("right") else "left"
         self.rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
+        self.rt.path["src"] = "draw"     # P2 hook: pps/features/traj.py adopts drawn / 3D-editor paths as trajectories
         bad = sum(1 for o in ok if not o)
         self.rt.path_msg = (f"{self.limb(side).capitalize()} path: {len(pts)} waypoints, all reachable. Say 'go' or press F."
                             if bad == 0 else f"{self.limb(side).capitalize()} path: {bad}/{len(pts)} waypoints out of reach (red).")

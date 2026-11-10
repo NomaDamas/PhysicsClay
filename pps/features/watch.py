@@ -603,9 +603,18 @@ def replay(ctx, w, name=None, preview=True, tid=None):
     demo = demo_mod.load(name) if name else None
     if demo is None:
         return False, "I have no demonstration to repeat yet. Say 'watch and learn' and show me."
-    traj = demo.get("trajectory") or demo_mod.to_trajectory(demo)
     tasks, rt = ctx.tasks, ctx.rt
     anchor = (demo.get("anchor") or {}).get("object")
+    tid = tid or f"watch-replay-{int(time.time() * 1000) % 100000}"
+    if "traj" in ext.HANDLERS:     # P2: the demo keeps its timing, gripper and object frame (pps/features/traj.py)
+        ext.handle(ctx, {"type": "traj", "op": "propose" if preview else "set", "run": not preview, "demo": demo["name"],
+                         "task_id": tid, "id": tid})
+        r = (ctx.store.get("traj") or {}).get("reply") or {}
+        if r.get("id") == tid and (r.get("ok") or r.get("plan")):
+            where = f"over the {anchor.replace('_', ' ')}" if anchor in getattr(tasks, "objs", {}) else "from where my hand is"
+            why = "" if r.get("ok") else " " + (r.get("message") or "")
+            return True, f"My version of '{demo['name']}' {where}: {r.get('n')} points, {r.get('duration') or 0:.1f} s.{why}"
+    traj = demo.get("trajectory") or demo_mod.to_trajectory(demo)
     palm = _palms(rt)[0]
     start = rt.data.site_xpos[rt.palm_sid[palm]].copy()
     if anchor in getattr(tasks, "objs", {}):
@@ -614,7 +623,7 @@ def replay(ctx, w, name=None, preview=True, tid=None):
     else:
         pts = demo_mod.place(traj, None, start)
     tasks.set_path_world(pts, palm.replace("_palm", ""))
-    _run_task(ctx, {"action": "follow_path"}, tid or f"watch-replay-{int(time.time() * 1000) % 100000}", preview=preview)
+    _run_task(ctx, {"action": "follow_path"}, tid, preview=preview)
     where = f"over the {anchor.replace('_', ' ')}" if anchor in getattr(tasks, "objs", {}) else "from where my hand is"
     return True, f"My version of '{demo['name']}' {where}: {len(pts)} points."
 

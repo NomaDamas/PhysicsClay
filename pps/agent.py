@@ -250,7 +250,34 @@ def context(st, confirm=True):
     if wt.get("mode") and (wt.get("mode") != "off" or wt.get("rules")):
         ctx["watch"] = {"mode": wt.get("mode"), "rules": [f"{r.get('id')}: when {r.get('when') or r.get('expr')} -> {r.get('do')}"
                                                           for r in wt.get("rules") or []]}
+    tj = trajectory_summary(st)
+    if tj:
+        ctx["trajectory"] = tj
     return ctx
+
+
+def trajectory_summary(st):
+    """The trajectory on screen (P2, state.traj) in a few tokens: which one, its points (1-based, what they are near,
+    height above the table) and the verdict, so 'higher there' / 'slower near the vase' can name points."""
+    tj = st.get("traj") if isinstance(st.get("traj"), dict) else {}
+    tr = tj.get("proposed") or tj.get("current")
+    if not tr:
+        return None
+    pts = []
+    for e in (tj.get("info") or [])[:24]:
+        d = {"n": e.get("i", 0) + 1, "h_cm": round(100 * float(e.get("h") or 0))}
+        for k in ("near", "speed", "force", "grip", "yaw", "tilt", "hold"):
+            if e.get(k) is not None:
+                d[k] = e[k]
+        pts.append(d)
+    out = {"state": "proposed (waiting for go)" if tj.get("proposed") else ("running" if tj.get("running") else "ready"),
+           "label": tr.get("label"), "source": tr.get("source"), "frame": tr.get("frame"), "points": pts,
+           "duration_s": ((tr.get("check") or {}).get("duration")), "ok": tj.get("ok")}
+    if tj.get("why"):
+        out["why"] = tj["why"]
+    if tr.get("pattern"):
+        out["pattern"] = tr["pattern"]
+    return out
 
 
 # ---------------------------------------------------------------------------- tools
@@ -263,6 +290,64 @@ XYZ = {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 
        "description": "A point on the table in metres, robot frame [x forward, y left, z up]."}
 TARGET = {"type": "string", "description": "Region (left, right, center, front, back), an object ('next to the vase'), "
                                            "a marker letter (A-F, P) or 'along my path' to carry it along the user's drawn route."}
+_N = lambda d: {"type": "number", "description": d}
+# P2: one point of a trajectory, written by the model relative to what it sees (compiled by pps/traj.py from_keypoints)
+KEYPOINT = {"type": "object", "additionalProperties": False, "required": ["where"],
+            "description": "One point of the path. `where` picks how it is placed; only that form's fields are read: "
+                           "object = `of` + `rel` (+ dz, dist, dx, dy, height); pass = go by `of` without stopping, `via` "
+                           "over / around_left / around_right (+ clearance); point = `xyz`; step = `dxyz` from the previous "
+                           "point; marker = `marker` (+ dz); region = `region` (+ dz); hand = start where the hand is now "
+                           "(first point only). speed, force, grip, tol, yaw, tilt, hold, note and pattern apply to every form. "
+                           "Leave out the fields you don't need.",
+            "properties": {
+                "where": {"type": "string", "enum": ["object", "pass", "point", "step", "marker", "region", "hand"],
+                          "description": "Which kind of point this is (see above)."},
+                "of": {"type": "string", "description": "Object name as in the context (e.g. 'red_cup'), or a marker letter, or a region."},
+                "rel": {"type": "string", "enum": ["above", "at", "left_of", "right_of", "in_front_of", "behind", "beside", "around"],
+                        "description": "Where relative to `of` (robot's view; in_front_of = toward the robot). above: dz over its "
+                                       "top (default 0.10 m). at: just on its top (0.02 m). left_of/right_of/in_front_of/behind/"
+                                       "beside: dist from its side (default 0.06 m), dz above the table (default 0.10 m). "
+                                       "around: a loop around it (dist from its side, turns, dir)."},
+                "via": {"type": "string", "enum": ["over", "around_left", "around_right"],
+                        "description": "Pass by `of` without stopping: over its top + clearance, or around one side of it."},
+                "xyz": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                        "description": "Absolute point in metres, robot frame [x forward, y left, z up]."},
+                "dxyz": {"type": "array", "items": {"type": "number"}, "minItems": 3, "maxItems": 3,
+                         "description": "Move by [dx, dy, dz] metres from the previous point ('then 10 cm forward')."},
+                "marker": {"type": "string", "description": "Marker letter the user placed (A-F, P = where they point)."},
+                "region": {"type": "string", "enum": ["left", "right", "center", "front", "back"]},
+                "from": {"type": "string", "enum": ["hand"], "description": "Start exactly where the hand is now."},
+                "dz": _N("Height in metres: over the object's top (above, at) or over the table (beside, around)."),
+                "dist": _N("Gap in metres from the object's side (beside / left_of / ... / around)."),
+                "dx": _N("Extra shift in metres along x (forward)."), "dy": _N("Extra shift in metres along y (left)."),
+                "height": _N("Absolute height in metres above the table; overrides dz."),
+                "clearance": _N("Gap in metres over the object for via over (default 0.05)."),
+                "turns": _N("around: how many loops (default 1)."),
+                "dir": {"type": "string", "enum": ["ccw", "cw"], "description": "around: direction seen from above."},
+                "speed": _N("Speed in m/s passing this point (0.03 very slow, 0.1 careful, 0.2 normal, 0.3 fast)."),
+                "force": _N("Pressing force in newtons from here on (wiping, pressing, sanding); 0 stops pressing."),
+                "grip": _N("Gripper from here on: 0 open, 1 closed (close next to an object to grasp it)."),
+                "tol": _N("Position tolerance in metres (default: the robot's)."),
+                "yaw": _N("Wrist turn in degrees about the vertical (+ = counter-clockwise from above)."),
+                "tilt": _N("Tool lean in degrees toward the direction of travel (a push angle)."),
+                "hold": _N("Stop here for this many seconds."),
+                "note": {"type": "string", "description": "Short note shown on the point (e.g. 'slow here')."},
+                "pattern": {"type": "boolean", "description": "The pattern runs between the first and last points marked true."}}}
+PATTERN = {"type": "object", "additionalProperties": False,
+           "description": "A small motion superimposed on the path: zigzag (weave), circle or figure8.",
+           "properties": {"kind": {"type": "string", "enum": ["zigzag", "circle", "figure8"]},
+                          "amp": _N("Amplitude in metres (e.g. 0.004 for a 4 mm weave)."), "freq": _N("Cycles per second."),
+                          "axis": {"type": "string", "enum": ["lateral", "vertical"],
+                                   "description": "lateral = sideways across the path (default), vertical = up and down."}},
+           "required": ["kind", "amp", "freq"]}
+CHANGES = {"type": "object", "additionalProperties": False, "description": "What to change at the chosen points (leave out the rest).",
+           "properties": {"dz": _N("Raise (+) or lower (-) by metres ('higher' = +0.05)."), "dx": _N("Shift forward (+) / back (-), m."),
+                          "dy": _N("Shift left (+) / right (-), m."), "height": _N("Set the height above the table, m."),
+                          "speed": _N("Set the speed, m/s."), "speed_factor": _N("Multiply the speed ('slower' = 0.5, 'faster' = 1.5)."),
+                          "force": _N("Pressing force, N."), "grip": _N("0 open, 1 closed."), "tol": _N("Tolerance, m."),
+                          "yaw": _N("Wrist turn about the vertical, degrees (absolute)."), "tilt": _N("Tool lean along the path, degrees."),
+                          "hold": _N("Pause here, seconds."), "note": {"type": "string"},
+                          "remove": {"type": "boolean", "description": "Delete the chosen points."}}}
 
 
 def tool_specs(st, confirm=True):
@@ -280,6 +365,29 @@ def tool_specs(st, confirm=True):
                      {"target": TARGET, "marker": {"type": "string"}, "xyz": XYZ}))
     if "follow_path" in caps:
         T.append(_fn("follow_path", "Trace the route the user drew (on the robot view or in 3D) with a hand." + moving))
+        T.append(_fn("make_trajectory", "Make a 3D path for the hand from a description ('over the vase to the right of the bowl', "
+                                        "'wipe the plate slowly pressing 5 N', 'weave 4 mm along the seam'). You write the keypoints "
+                                        "relative to the objects you see; the robot turns them into a smooth, checked trajectory, lifts "
+                                        "it over obstacles in the way and shows it as a ghost. Use this instead of asking the person "
+                                        "to draw. Starts from where the hand is." + moving,
+                     {"description": {"type": "string", "description": "The person's request in a few words (shown on the plan card)."},
+                      "keypoints": {"type": "array", "items": KEYPOINT, "minItems": 1, "maxItems": 30},
+                      "object": {"type": "string", "description": "The object the path belongs to (it moves with it), e.g. the plate being wiped."},
+                      "role": {"type": "string", "enum": ["auto", "right", "left"],
+                               "description": "Which hand on two-armed robots; auto (default) = the hand on the path's side."},
+                      "speed": _N("Default speed for every point, m/s."), "force": _N("Default pressing force, N."),
+                      "clearance": _N("Gap over obstacles, m (default 0.05)."), "pattern": PATTERN},
+                     ["description", "keypoints"]))
+        T.append(_fn("edit_trajectory", "Change the trajectory on screen instead of starting over: 'higher there', 'slower near the "
+                                        "vase', 'turn the wrist 45 degrees at the end', 'remove the last point'. Choose points with "
+                                        "point (number as shown, -1 = last) or near ('there' = where the person points, a marker "
+                                        "letter, an object name, 'start', 'end', 'middle', 'all'); with neither, every point changes.",
+                     {"point": {"type": "integer", "description": "Point number (1 = first, -1 = last)."},
+                      "near": {"type": "string", "description": "'there', a marker letter, an object name, 'start', 'end', 'middle' or 'all'."},
+                      "changes": CHANGES, "pattern": PATTERN,
+                      "remove_pattern": {"type": "boolean", "description": "Take the pattern off."}}))
+        T.append(_fn("run_trajectory", "Run the trajectory on screen. When confirm before moving is on, only after the person "
+                                       "clearly approved it (go, yes, do it) in their latest message."))
     if st.get("skills"):
         T.append(_fn("play_skill", "Replay a learned skill by name." + moving, {"name": {"type": "string", "enum": list(st["skills"])}}, ["name"]))
     T += [
@@ -711,6 +819,115 @@ class Agent:
     def t_play_skill(self, a, confirm):
         return self._motion("play_skill", {"name": str(a.get("name") or "")}, confirm)
 
+    # ---- trajectories (P2: {type:"traj", ...}; state.traj)
+    def _traj(self, msg, timeout=10):
+        rid = msg.get("id") or self._tid("traj")
+        self.push(dict(msg, type="traj", id=rid))
+        r, st = self._wait(lambda s: (s.get("traj") or {}).get("reply") if ((s.get("traj") or {}).get("reply") or {}).get("id") == rid else None,
+                           timeout)
+        if r is None:
+            return None, st, {"ok": False, "message": "Trajectories aren't available on this server."}
+        res = {"ok": bool(r.get("ok")), "message": r.get("message")}
+        tj = trajectory_summary(st)
+        if tj:
+            res["trajectory"] = tj
+        return r, st, res
+
+    def _traj_wait_run(self, tid, res):
+        """Confirm before moving is off: the path runs right away; report how it ended."""
+        if not tid:
+            return res
+        self._mine(tid)
+        self.waiting_on = tid
+        t, _ = self._wait(lambda s: (s.get("task") or {}) if (s.get("task") or {}).get("id") == tid
+                          and (s.get("task") or {}).get("status") in ("done", "failed") else None, 75)
+        self.waiting_on = None
+        if t is None:
+            self.mine[tid] = None
+            return dict(res, status="running", note="Still running; I'll report when it ends.")
+        self.mine[tid] = t.get("status")
+        return dict(res, ok=t.get("status") == "done", status=t.get("status"), message=t.get("message"))
+
+    def t_make_trajectory(self, a, confirm):
+        if self._proposed:
+            return {"ok": False, "error": f"Plan {self._proposed} is already waiting for the user. Stop and ask them to say go, "
+                                          "or change it with edit_trajectory after they answer."}
+        kps = [_clean_keypoint(k) for k in a.get("keypoints") or [] if isinstance(k, dict)]
+        kps = [k for k in kps if k]
+        for key in ("grip", "force"):     # 0 on every point is a filled-in default, not "open the gripper here" (it would drop what I hold)
+            vals = [k.get(key) for k in kps]
+            if vals and all(v is not None and float(v) == 0.0 for v in vals):
+                for k in kps:
+                    k.pop(key, None)
+        if not kps:
+            return {"ok": False, "error": "give at least one keypoint (where the hand should go)"}
+        spec = {"label": str(a.get("description") or "")[:120], "keypoints": kps}
+        if str(a.get("object") or "").strip():
+            spec["object"] = str(a["object"]).strip()
+        if str(a.get("role") or "").strip().lower() in ("left", "right"):
+            spec["role"] = str(a["role"]).strip().lower()
+        for k in ("speed", "force", "clearance"):
+            if isinstance(a.get(k), (int, float)) and a[k] > 0:
+                spec[k] = float(a[k])
+        if isinstance(a.get("pattern"), dict) and a["pattern"].get("kind") and a["pattern"].get("amp"):
+            spec["pattern"] = a["pattern"]
+        rid = self._tid("traj")
+        msg = {"op": "propose" if confirm else "set", "spec": spec, "id": rid}
+        if confirm:
+            msg["task_id"] = rid
+        else:
+            msg["run"] = True
+        r, st, res = self._traj(msg)
+        if r is None or not r.get("ok"):
+            if r is not None and r.get("plan"):
+                res["next"] = ("The path is blocked; the card shows why. Explain in one sentence and offer a fix (edit_trajectory, "
+                               "e.g. higher or around), or ask the person to drag the red points.")
+            return res
+        if confirm:
+            self._mine(rid)
+            self._proposed = rid
+            res["next"] = ("The path is showing as a ghost with a plan card. Tell the person in one sentence what it does and that "
+                           "they can say go, drag a point, or say what to change. Don't run it yourself.")
+            return res
+        return self._traj_wait_run(r.get("task"), res)
+
+    def t_edit_trajectory(self, a, confirm):
+        msg = {"op": "edit"}
+        pt = a.get("point")
+        if isinstance(pt, (int, float)) and int(pt) != 0:
+            msg["index"] = int(pt) - 1 if pt > 0 else int(pt)
+        elif str(a.get("near") or "").strip():
+            msg["near"] = str(a["near"]).strip()
+        ch = {k: v for k, v in (a.get("changes") or {}).items() if v not in (None, "") and not (k != "remove" and v is False)
+              and not (k in ("dx", "dy", "dz", "height", "speed", "speed_factor", "tol", "hold") and v == 0)}   # filled-in zeros
+        if ch:
+            msg["changes"] = ch
+        if a.get("remove_pattern"):
+            msg["pattern"] = None
+        elif isinstance(a.get("pattern"), dict) and a["pattern"].get("kind"):
+            msg["pattern"] = a["pattern"]
+        if "changes" not in msg and "pattern" not in msg:
+            return {"ok": False, "error": "say what to change (changes, pattern or remove_pattern)"}
+        r, st, res = self._traj(msg)
+        p = st.get("plan") or {}
+        if r is not None and p.get("phase") == "proposing" and confirm:
+            self._proposed = p.get("id")
+            res["next"] = "The changed path is showing. Tell the person what changed in a few words and that they can say go."
+        return res
+
+    def t_run_trajectory(self, a, confirm):
+        r, st, res = self._traj({"op": "run"})
+        if r is None or not r.get("ok"):
+            return res
+        self._proposed = None
+        tid = r.get("task")
+        if not tid:
+            return res
+        self._mine(tid)
+        t, _ = self._wait(lambda s: (s.get("task") or {}) if (s.get("task") or {}).get("id") == tid
+                          and (s.get("task") or {}).get("status") in ("running", "done", "failed") else None, 5)
+        return dict(res, status=(t or {}).get("status"), note="Running; I'll report when it ends.")
+
     def _simple(self, action, extra=None, timeout=8):
         tid = self._tid(action)
         self.push(dict(extra or {}, type="task", id=tid, action=action))
@@ -950,6 +1167,25 @@ class Agent:
 
     def t_remove_object(self, a, confirm):
         return self._world({"op": "remove_object", "name": str(a.get("name") or "")}, 20)
+
+
+def _clean_keypoint(k):
+    """Models often fill every optional field ("", 0, [0, 0, 0], and an enum value for every enum): keep only the fields
+    of the keypoint's form (`where`, pps/traj.py keypoint_form), and treat an empty or zero field as 'not given' (a
+    speed or height of exactly 0 is never what they meant)."""
+    from .traj import keypoint_form
+    k = {key: v for key, v in k.items() if not (isinstance(v, list) and v and all(isinstance(x, (int, float)) and x == 0 for x in v))}
+    form, k = keypoint_form(k)
+    out = {"where": form}
+    for key, v in k.items():
+        if v is None or v == "" or v is False:
+            continue
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v == 0 and key not in ("grip", "force"):
+            continue
+        if isinstance(v, list) and (not v or all(isinstance(x, (int, float)) and x == 0 for x in v)):
+            continue
+        out[key] = v
+    return out
 
 
 def _summary(name, res):
