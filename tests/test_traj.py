@@ -237,6 +237,80 @@ def test_keypoints_filled_in_by_a_model_use_their_form():
     assert c == {"where": "region", "region": "left", "dz": 0.1, "height": 0.1, "speed": 0.05, "tol": 0.01}
 
 
+def hanging(below=0.06, foot=0.05):
+    """A gripper as points around its TCP: the TCP, a ring of `foot` radius `below` m under it (fingertips, pads)."""
+    return [[0.0, 0.0, 0.0]] + [[foot * math.cos(a), foot * math.sin(a), -below] for a in np.linspace(0, 2 * math.pi, 8, endpoint=False)]
+
+
+def test_keypoint_lifts_clear_a_hanging_gripper():
+    """With the hand's real extent the bottom of the gripper clears the obstacle by the margin (not the TCP); without one
+    the lift is the TCP's, as before."""
+    spec = {"keypoints": [{"rel": "above", "of": "red_cup", "dz": 0.05}, {"rel": "left_of", "of": "bowl", "dz": 0.05}]}
+    vase = WORLD["objects"]["vase"]
+    top = vase["pos"][2] + vase["h"]
+
+    def lowest_over(tr, reach):
+        d = T.densify(tr)
+        over = [p for p in d["p"] if math.hypot(p[0] - vase["pos"][0], p[1] - vase["pos"][1]) < vase["r"] + reach]
+        return min(p[2] for p in over)
+    shaped_world = dict(WORLD, hand_shape=hanging(0.06, 0.05))
+    plain, _ = T.from_keypoints(spec, WORLD)
+    shaped, _ = T.from_keypoints(spec, shaped_world)
+    assert T.hand_extent(WORLD) == (0.0, T.HAND_R) and T.hand_extent(shaped_world) == pytest.approx((0.06, 0.05))
+    assert lowest_over(plain, 0.04) == pytest.approx(top + T.CLEARANCE, abs=0.005)              # unchanged without a shape
+    assert lowest_over(shaped, 0.05) - 0.06 >= top + T.CLEARANCE - 0.005                        # the fingertips clear it,
+    assert "vase" in shaped["meta"]["lifted"]                                                     # wherever they are over it
+    # 'via over', and a carried object: the lower of the two hangs `clearance` over the top
+    tr, _ = T.from_keypoints({"keypoints": [{"via": "over", "of": "vase"}]}, shaped_world)
+    assert any(abs(p["p"][2] - (top + T.CLEARANCE + 0.06)) < 1e-6 for p in tr["points"])
+    tr, _ = T.from_keypoints({"keypoints": [{"via": "over", "of": "vase"}]}, dict(shaped_world, carry_drop=0.09))
+    assert any(abs(p["p"][2] - (top + T.CLEARANCE + 0.09)) < 1e-6 for p in tr["points"])
+
+
+def test_keypoint_lifts_count_only_the_parts_of_the_hand_over_the_object():
+    """A gripper that reaches back from its TCP (the G1's hand turned up: the gripper hangs behind and below the TCP) is
+    lifted where that part passes over the vase, not where only the TCP's empty side does."""
+    behind = [[-0.08, dy, -0.06] for dy in (-0.02, 0.0, 0.02)]
+    world = dict(WORLD, hand_shape=behind, hand_r=0.02)
+    vase = WORLD["objects"]["vase"]
+    top = vase["pos"][2] + vase["h"]
+    past = {"keypoints": [{"xyz": [0.51, -0.25, 0.95]}, {"xyz": [0.51, 0.25, 0.95]}]}      # TCP 9 cm in front of the vase
+    tr, _ = T.from_keypoints(past, world)
+    low = min(p[2] for p in T.densify(tr)["p"] if abs(p[1]) < vase["r"] + 0.02 + 0.02)    # the gripper over the vase
+    assert "vase" in tr["meta"]["lifted"] and low >= top + T.CLEARANCE + 0.06 - 0.005
+    short = {"keypoints": [{"xyz": [0.33, -0.25, 0.95]}, {"xyz": [0.33, 0.25, 0.95]}]}     # 9 cm behind it: the gripper is away
+    tr, _ = T.from_keypoints(short, world)
+    assert "vase" not in tr["meta"]["lifted"] and len(tr["points"]) == 2
+
+
+def test_lead_in_to_the_start_is_lifted_with_the_gripper():
+    """The move from the hand to a trajectory's start goes over what is in the way with the gripper's extent, up first
+    from below the surface's near edge or off an object the hand is over; straight when nothing is in the way."""
+    world = dict(WORLD, hand_shape=hanging(0.06, 0.05), edge=0.22)
+    vase = world["objects"]["vase"]
+    top = vase["pos"][2] + vase["h"]
+    a, b = np.array([0.42, -0.25, 0.86]), np.array([0.42, 0.25, 0.86])          # either side of the vase, at hand height
+    via = T.lead_in(a, b, world)
+    pts = T.approach_points(a, b, via=via)
+    assert via and len(pts) > 10
+    for p in pts:                                                                 # the fingertips never go into the vase
+        if math.hypot(p[0] - vase["pos"][0], p[1] - vase["pos"][1]) < vase["r"] + 0.05:
+            assert p[2] - 0.06 >= top + T.CLEARANCE - 0.005
+    sphere = T.lead_in(a, b, dict(world, hand_shape=None))                       # the sphere hand is lifted less
+    assert sphere and max(v[2] for v in sphere) < max(v[2] for v in via)
+    # nothing in the way, or already there: straight
+    assert T.lead_in([0.30, -0.30, 0.95], [0.30, -0.36, 0.95], world) == []
+    assert T.lead_in([0.30, 0.05, 1.2], [0.31, 0.05, 1.2], world) == []
+    # a hand hanging below the surface in front of its edge (a humanoid's) comes up over the edge first
+    via = T.lead_in([0.0, -0.36, 0.5], [0.30, -0.35, 0.86], world)
+    assert np.allclose(via[0][:2], [0.0, -0.36]) and via[0][2] >= 0.74 + 0.10 - 1e-9
+    # a hand right over the cup it just let go of goes straight up off it before moving away
+    via = T.lead_in([0.35, -0.2, 0.84], [0.30, -0.40, 0.84], world)
+    assert np.allclose(via[0][:2], [0.35, -0.2]) and via[0][2] >= 0.82 + T.CLEARANCE + 0.06 - 1e-9
+    # ... but not when the start is on that same cup (the trajectory goes down onto it on purpose)
+    assert T.lead_in([0.35, -0.2, 0.90], [0.35, -0.2, 0.84], world) == []
+
+
 def test_keypoint_errors_name_what_is_there():
     with pytest.raises(T.TrajError) as e:
         T.from_keypoints({"keypoints": [{"rel": "above", "of": "banana"}]}, WORLD)
@@ -369,6 +443,32 @@ def test_follow_step_runs_the_samples_in_time():
         T.follow_step(rt, 0.01)
         steps += 1
     assert abs(steps * 0.01 - 2 * (ta + d["duration"])) < 0.06
+
+
+def test_follow_step_leads_in_through_the_lifted_way():
+    """path["lead_in"](p0) -> via points: the hand goes to the start through them (one min-jerk move along the polyline),
+    then runs the samples as before."""
+    tr = T.normalize({"points": [[0.3, 0.1, 0.9], [0.35, 0.1, 0.9]]})
+    d = T.densify(tr, q0=DOWN_Q)
+    up = [np.array([0.2, 0.0, 1.05]), np.array([0.3, 0.1, 1.05])]
+    seen = []
+    path = {"pts": d["p"][d["key"]], "palm": "right_palm", "i": 0, "lead_in": lambda p0: seen.append(p0.copy()) or up,
+            "dense": dict(d, di=np.searchsorted(d["key"], np.arange(len(d["t"])), side="right") - 1)}
+    rt = FakeRT(path)
+    top, steps = 0.0, 0
+    while rt.mode == "FOLLOW" and steps < 5000:
+        T.follow_step(rt, 0.01)
+        top = max(top, float(rt.data.mocap_pos[0][2]))
+        steps += 1
+    L = 0.15 + float(np.linalg.norm(up[1] - up[0])) + 0.15
+    assert len(seen) == 1 and np.allclose(seen[0], [0.2, 0.0, 0.9])
+    assert abs(top - 1.05) < 1e-6 and path["_run"]["Ta"] == pytest.approx(T.approach_time(L, T.FALLBACK_SPEED))
+    assert np.allclose(rt.data.mocap_pos[0], [0.35, 0.1, 0.9])
+    assert np.allclose(T._along(np.array([[0, 0, 0], [0, 0, 1.0], [1.0, 0, 1.0]]), 0.75), [0.5, 0, 1.0])
+    bad = dict(path, lead_in=lambda p0: 1 / 0, _run=None)                       # a broken lead-in: straight, as before
+    rt = FakeRT(bad)
+    T.follow_step(rt, 0.01)
+    assert bad["_run"]["lead"] is None
 
 
 def test_follow_step_follows_points_nudged_while_running():
