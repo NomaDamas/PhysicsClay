@@ -1,4 +1,5 @@
 """pps/slicing.py: planning jobs that pause at points and hand the server loop its frames (no MuJoCo needed)."""
+
 import time
 
 import pytest
@@ -37,12 +38,12 @@ def test_job_runs_across_steps_and_swaps_state():
     log = []
     job = slicing.Job(lambda: _planner(s, log=log), sw, keep=False)
     steps = 0
-    while not job.step(0.0):                      # budget 0: it pauses at every point
+    while not job.step(0.0):  # budget 0: it pauses at every point
         steps += 1
-        assert (s.task, s.hand) == ("main", -1)   # between slices the loop sees its own state
+        assert (s.task, s.hand) == ("main", -1)  # between slices the loop sees its own state
     assert job.result == "plan" and job.error is None and steps >= 5
-    assert log == list(range(6))                  # after a pause the planner sees its own state again
-    assert (s.task, s.hand) == ("main", -1)       # keep=False (a dry run) leaves nothing behind
+    assert log == list(range(6))  # after a pause the planner sees its own state again
+    assert (s.task, s.hand) == ("main", -1)  # keep=False (a dry run) leaves nothing behind
     assert job.slices == steps + 1
 
 
@@ -58,7 +59,7 @@ def test_the_loop_keeps_its_own_changes_between_slices():
     s, sw = _box()
     job = slicing.Job(lambda: _planner(s), sw, keep=False)
     job.step(0.0)
-    s.task = "the loop changed it"                # (e.g. a stop): survives the next slice and the end
+    s.task = "the loop changed it"  # (e.g. a stop): survives the next slice and the end
     while not job.step(0.0):
         assert s.task == "the loop changed it"
     assert s.task == "the loop changed it"
@@ -74,13 +75,14 @@ def test_absent_attributes_stay_absent():
     s = Box()
 
     def fn():
-        s.patched = lambda: 1                     # (a dry run's stand-in method)
+        s.patched = lambda: 1  # (a dry run's stand-in method)
         slicing.point()
         assert s.patched() == 1
         return True
+
     job = slicing.Job(fn, slicing.Swap().attrs(s, ("patched",)))
     assert not job.step(0.0)
-    assert not hasattr(s, "patched")              # the loop never sees the stand-in
+    assert not hasattr(s, "patched")  # the loop never sees the stand-in
     assert job.step(0.0) and job.result is True
     assert not hasattr(s, "patched")
 
@@ -96,8 +98,9 @@ def test_cancel_unwinds_in_the_planner_state():
             while True:
                 slicing.point()
         finally:
-            seen["v"] = s.v                       # the planner's finally runs with its own state in place
+            seen["v"] = s.v  # the planner's finally runs with its own state in place
             s.v = "unwound"
+
     job = slicing.Job(fn, slicing.Swap().attrs(s, ("v",)))
     assert not job.step(0.0)
     assert s.v == "main"
@@ -111,6 +114,7 @@ def test_errors_are_handed_to_the_owner():
     def fn():
         slicing.point()
         raise ValueError("boom")
+
     job = slicing.Job(fn, None)
     while not job.step(0.0):
         pass
@@ -123,15 +127,16 @@ def test_frame_allowance_is_shared():
             time.sleep(0.005)
             slicing.point()
         return 1
+
     slicing.new_frame(0.05)
     try:
         a, b = slicing.Job(slow, None), slicing.Job(slow, None)
-        assert not a.step()                       # uses (about) the frame's 50 ms
+        assert not a.step()  # uses (about) the frame's 50 ms
         assert slicing.allowance() < 0.01
-        b.step()                                  # what is left: at most one point's worth
+        b.step()  # what is left: at most one point's worth
         assert b.busy < 0.03
         t0 = time.time()
-        assert a.step() is False and time.time() - t0 < 0.01   # nothing left: it waits for the next frame
+        assert a.step() is False and time.time() - t0 < 0.01  # nothing left: it waits for the next frame
         slicing.new_frame(10.0)
         assert a.step() and a.result == 1
     finally:
@@ -147,6 +152,7 @@ def test_jobs_without_points_finish_in_one_step(n):
 def test_drain_closes_a_dropped_step():
     """tasks._drain: a step dropped while paused between its yields is closed in the planner (its finally runs then)."""
     from pps.tasks import _drain
+
     s = Box()
     s.v, out = "main", []
 
@@ -157,6 +163,7 @@ def test_drain_closes_a_dropped_step():
                 yield
         finally:
             out.append(s.v)
+
     job = slicing.Job(lambda: _drain(gen()), slicing.Swap().attrs(s, ("v",)))
     assert not job.step(0.0)
     job.cancel()

@@ -1,5 +1,6 @@
 """The scripted demo and the robot line (state.say): a demo line never covers a real one, the demo stops when the person
 or the agent speaks, and nothing of it keeps running afterwards (pps/demo.py, pps/mock.py, pps/features/agent.py)."""
+
 from types import SimpleNamespace
 
 from pps.demo import Demo
@@ -28,12 +29,12 @@ def test_a_demo_line_never_covers_a_fresh_real_line():
     demo, brain = _demo()
     _run(demo, [demo.cap("first caption"), demo.cap("second caption")])
     demo.tick()
-    brain.utter("I'll put the mug beside the vase.", "robot")          # e.g. the agent's reply
-    demo.t_wait = 0.0                                                   # (its own spacing is over)
+    brain.utter("I'll put the mug beside the vase.", "robot")  # e.g. the agent's reply
+    demo.t_wait = 0.0  # (its own spacing is over)
     demo.tick()
-    assert brain.say["text"] == "I'll put the mug beside the vase."    # the demo waited
+    assert brain.say["text"] == "I'll put the mug beside the vase."  # the demo waited
     assert demo.steps and demo.i == 1
-    brain.real_t -= 10.0                                                # the real line has been up long enough
+    brain.real_t -= 10.0  # the real line has been up long enough
     demo.tick()
     assert brain.say["text"] == "second caption"
 
@@ -45,7 +46,7 @@ def test_demo_turns_the_mock_brain_on_and_restores_it():
     assert demo.steps and brain.enabled is True
     demo.stop()
     assert not demo.steps and demo.state() is None and brain.enabled is False
-    brain.enabled = True                                                # on before the demo: stays on
+    brain.enabled = True  # on before the demo: stays on
     demo.start("loop")
     demo.stop()
     assert brain.enabled is True and demo.loop_name is None
@@ -54,7 +55,7 @@ def test_demo_turns_the_mock_brain_on_and_restores_it():
 def test_a_finished_demo_restores_the_mock_brain():
     demo, brain = _demo()
     demo.start("keyfeatures")
-    _run(demo, [demo.cap("last line")])                                 # the script's end
+    _run(demo, [demo.cap("last line")])  # the script's end
     demo.tick()
     demo.tick()
     assert not demo.steps and brain.enabled is False
@@ -85,12 +86,18 @@ class _FakeAgent:
 
 def _ctx(agent, demo, brain):
     shared = SimpleNamespace(state='{"say": null}', push_cmd=lambda c: None)
-    return SimpleNamespace(store={"agent": agent}, demo=demo, brain=brain, push=shared.push_cmd,
-                           tasks=SimpleNamespace(task=None, markers=[], objs={}))
+    return SimpleNamespace(
+        store={"agent": agent},
+        demo=demo,
+        brain=brain,
+        push=shared.push_cmd,
+        tasks=SimpleNamespace(task=None, markers=[], objs={}),
+    )
 
 
 def test_speaking_to_the_agent_stops_a_running_demo():
     from pps.features import agent as fa
+
     demo, brain = _demo()
     demo.start("keyfeatures")
     ag = _FakeAgent()
@@ -100,21 +107,27 @@ def test_speaking_to_the_agent_stops_a_running_demo():
 
 def test_the_agent_reply_is_said_and_stops_the_demo():
     from pps.features import agent as fa
+
     demo, brain = _demo()
     demo.start("keyfeatures")
-    demo.tick()                                                         # the demo said its first lines
+    demo.tick()  # the demo said its first lines
     ag = _FakeAgent(["The vase occupies the center, so I'll put the mug beside it."])
     fa.agent_tick(_ctx(ag, demo, brain))
-    assert brain.say == {"id": brain._sid, "text": "The vase occupies the center, so I'll put the mug beside it.", "kind": "robot"}
+    assert brain.say == {
+        "id": brain._sid,
+        "text": "The vase occupies the center, so I'll put the mug beside it.",
+        "kind": "robot",
+    }
     assert not demo.steps and brain.real_fresh()
-    demo.tick()                                                         # nothing of the demo comes back over it
+    demo.tick()  # nothing of the demo comes back over it
     assert brain.say["text"].startswith("The vase occupies")
 
 
 def test_the_agent_says_its_own_results_when_the_mock_brain_cant():
     from pps.features import agent as fa
+
     brain = MockBrain()
-    brain.enabled = True                                                # mock on, but an LLM brain is in charge: the
-    ag = _FakeAgent()                                                   # mock doesn't narrate (app.py), so the agent does
+    brain.enabled = True  # mock on, but an LLM brain is in charge: the
+    ag = _FakeAgent()  # mock doesn't narrate (app.py), so the agent does
     fa.agent_tick(_ctx(ag, None, brain))
     assert ag.speak is True

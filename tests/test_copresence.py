@@ -133,6 +133,7 @@ def test_taken_object_stays_put_until_the_fingers_are_off_then_moves_at_a_hands_
     """The person takes the object where the robot holds it out; it moves only once no finger has touched it for
     CLEAR_S of robot time, first out of the open jaws, then to their hand, at TAKE_SPEED (no teleport)."""
     from types import SimpleNamespace
+
     touching = [True]
     monkeypatch.setattr(c, "_fingers_touch", lambda pl, role, obj: touching[0])
     monkeypatch.setattr(c, "_exit", lambda tasks, pl, role, obj, toward: np.array([0.06, 0.0, 0.0]))
@@ -145,10 +146,10 @@ def test_taken_object_stays_put_until_the_fingers_are_off_then_moves_at_a_hands_
         pl.d.time += dt
         return c._taking(None, pl, g, want)
 
-    for _ in range(30):                                       # the jaws are still on it: it stays where it is
+    for _ in range(30):  # the jaws are still on it: it stays where it is
         assert np.allclose(tick(), start)
     touching[0] = False
-    assert np.allclose(tick(), start) and g["stage"] == "release"   # off it, but not for CLEAR_S yet
+    assert np.allclose(tick(), start) and g["stage"] == "release"  # off it, but not for CLEAR_S yet
     t_off = pl.d.time
     while g["stage"] == "release":
         assert np.allclose(tick(), start)
@@ -156,13 +157,13 @@ def test_taken_object_stays_put_until_the_fingers_are_off_then_moves_at_a_hands_
     prev, path = start.copy(), []
     for _ in range(200):
         p = tick()
-        assert float(np.linalg.norm(p - prev)) <= c.TAKE_SPEED / 30 + 1e-9    # a hand's pace, never a jump
+        assert float(np.linalg.norm(p - prev)) <= c.TAKE_SPEED / 30 + 1e-9  # a hand's pace, never a jump
         path.append(p.copy())
         prev = p.copy()
         if g["stage"] == "held":
             break
     assert g["stage"] == "held" and np.allclose(path[-1], want)
-    assert any(np.allclose(p, start + [0.06, 0.0, 0.0]) for p in path)        # out of the jaws first
-    touching[0] = True                                        # a finger on it again: it doesn't move while touched
+    assert any(np.allclose(p, start + [0.06, 0.0, 0.0]) for p in path)  # out of the jaws first
+    touching[0] = True  # a finger on it again: it doesn't move while touched
     g["stage"], g["pos"] = "hand", path[-1] - [0.05, 0.0, 0.0]
     assert np.allclose(tick(), path[-1] - [0.05, 0.0, 0.0])

@@ -14,8 +14,10 @@ pytestmark = pytest.mark.skipif(not XML.is_file(), reason="vendor/mink not fetch
 
 
 def _soles(m, d):
-    return {s: (d.site_xpos[m.site(s).id].copy(), d.site_xmat[m.site(s).id].reshape(3, 3)[:, 2].copy())
-            for s in ("left_forefoot", "left_heel", "right_forefoot", "right_heel")}
+    return {
+        s: (d.site_xpos[m.site(s).id].copy(), d.site_xmat[m.site(s).id].reshape(3, 3)[:, 2].copy())
+        for s in ("left_forefoot", "left_heel", "right_forefoot", "right_heel")
+    }
 
 
 def test_stand_keeps_the_feet_flat_where_they_were_and_bends_the_knees():
@@ -28,14 +30,14 @@ def test_stand_keeps_the_feet_flat_where_they_were_and_bends_the_knees():
     d.qpos[:] = q
     mujoco.mj_kinematics(m, d)
     for s, (p, z) in _soles(m, d).items():
-        assert np.linalg.norm(p - zero[s][0]) < 0.002, s          # the foot didn't move ...
-        assert z[2] > 0.999, s                                    # ... and stays flat
-    assert abs((q[2] - m.qpos0[2]) + H2.stand["drop"]) < 1e-9     # the base came down, level
+        assert np.linalg.norm(p - zero[s][0]) < 0.002, s  # the foot didn't move ...
+        assert z[2] > 0.999, s  # ... and stays flat
+    assert abs((q[2] - m.qpos0[2]) + H2.stand["drop"]) < 1e-9  # the base came down, level
     np.testing.assert_allclose(q[3:7], m.qpos0[3:7])
     for side in ("left", "right"):
         knee = q[m.jnt_qposadr[m.joint(f"{side}_knee_joint").id]]
-        assert 0.4 < knee < 1.0                                   # slightly bent, like the G1's stand
-    for j in range(m.njnt):                                       # within the joint ranges
+        assert 0.4 < knee < 1.0  # slightly bent, like the G1's stand
+    for j in range(m.njnt):  # within the joint ranges
         if m.jnt_limited[j]:
             v = q[m.jnt_qposadr[j]]
             assert m.jnt_range[j][0] - 1e-9 <= v <= m.jnt_range[j][1] + 1e-9
@@ -55,20 +57,24 @@ def test_h2_world_starts_standing_with_palm_grippers_and_link_hulls(h2_world):
     mujoco.mj_kinematics(mi, d)
     for side in ("left", "right"):
         assert q[mi.jnt_qposadr[mi.joint(f"{side}_knee_joint").id]] > 0.4
-        assert abs(d.site_xpos[mi.site(f"{side}_forefoot").id][2]) < 0.003     # feet on the floor
+        assert abs(d.site_xpos[mi.site(f"{side}_forefoot").id][2]) < 0.003  # feet on the floor
         for k in ("pad_a", "pad_b", "palm_col"):
             g = mujoco.mj_name2id(mi, mujoco.mjtObj.mjOBJ_GEOM, f"{side}_{k}")
             assert g >= 0
             front = d.geom_xpos[g][0] + (np.abs(d.geom_xmat[g].reshape(3, 3)) @ mi.geom_size[g])[0]
-            assert front < 0.20                                    # home: arms down, the grippers short of the work surface
+            assert front < 0.20  # home: arms down, the grippers short of the work surface
         assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, f"{side}_tcp") >= 0
-    hulls = [g for g in range(m.ngeom) if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("pc_hull_")]
+    hulls = [
+        g for g in range(m.ngeom) if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("pc_hull_")
+    ]
     assert len(hulls) >= 10
-    assert all(m.geom_contype[g] == 0 and m.geom_conaffinity[g] & 1 for g in hulls)     # touch the world, not the robot
+    assert all(m.geom_contype[g] == 0 and m.geom_conaffinity[g] & 1 for g in hulls)  # touch the world, not the robot
     names = {mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.geom_bodyid[g]) for g in hulls}
     assert {"torso_link", "pelvis", "right_elbow_link", "left_wrist_pitch_link"} <= names
-    hidden = [g for g in range(m.ngeom) if "index" in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.geom_bodyid[g]) or "")]
-    assert hidden and all(m.geom_group[g] > 2 for g in hidden)    # the undriven fingers aren't drawn
+    hidden = [
+        g for g in range(m.ngeom) if "index" in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.geom_bodyid[g]) or "")
+    ]
+    assert hidden and all(m.geom_group[g] > 2 for g in hidden)  # the undriven fingers aren't drawn
     assert all(not (m.geom_contype[g] or m.geom_conaffinity[g]) for g in hidden)
 
 
@@ -76,14 +82,14 @@ def test_h2_hulls_dont_touch_the_robot_or_table_at_home(h2_world):
     w = h2_world
     m = w.model
     d = mujoco.MjData(m)
-    d.qpos[:len(w.home_q)] = w.home_q
+    d.qpos[: len(w.home_q)] = w.home_q
     mujoco.mj_forward(m, d)
     robot = w.robot_bodies
     for i in range(d.ncon):
         c = d.contact[i]
         b1, b2 = m.geom_bodyid[c.geom1], m.geom_bodyid[c.geom2]
         assert not (b1 in robot and b2 in robot), "self contact at home"
-        if b1 in robot or b2 in robot:      # only the feet stand on something
+        if b1 in robot or b2 in robot:  # only the feet stand on something
             n = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, c.geom1 if b1 in robot else c.geom2) or ""
             assert "forefoot" in n or "heel" in n, n
 
@@ -94,15 +100,22 @@ def test_h2_stands_clear_of_a_bench_top_machine():
     w = scene.build("h2", {"template": "machine_tending", "seed": 1}, physics=True)
     m = w.model
     d = mujoco.MjData(m)
-    d.qpos[:len(w.home_q)] = w.home_q
+    d.qpos[: len(w.home_q)] = w.home_q
     mujoco.mj_forward(m, d)
     name = lambda g: mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or f"geom {g}"
-    clash = [f"{name(c.geom1)} / {name(c.geom2)}" for c in (d.contact[i] for i in range(d.ncon))
-             if (m.geom_bodyid[c.geom1] in w.robot_bodies) != (m.geom_bodyid[c.geom2] in w.robot_bodies) and c.dist < -0.003
-             and "floor" not in name(c.geom1) + name(c.geom2)]
+    clash = [
+        f"{name(c.geom1)} / {name(c.geom2)}"
+        for c in (d.contact[i] for i in range(d.ncon))
+        if (m.geom_bodyid[c.geom1] in w.robot_bodies) != (m.geom_bodyid[c.geom2] in w.robot_bodies)
+        and c.dist < -0.003
+        and "floor" not in name(c.geom1) + name(c.geom2)
+    ]
     assert not clash, clash
 
 
 def test_other_bodies_get_no_hulls():
     w = scene.build("g1", None, physics=True)
-    assert not any((mujoco.mj_id2name(w.model, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("pc_hull_") for g in range(w.model.ngeom))
+    assert not any(
+        (mujoco.mj_id2name(w.model, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("pc_hull_")
+        for g in range(w.model.ngeom)
+    )
