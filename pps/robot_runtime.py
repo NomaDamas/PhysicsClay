@@ -210,8 +210,9 @@ class Runtime:
 
     @property
     def q_des(self):
-        """The planner's joint positions: what the plant tracks (P1 records it as the action)."""
-        return self.configuration.q
+        """The planner's joint positions: what the plant tracks (P1 records it as the action). None in kinematic mode: the
+        IK pose *is* the robot there, and P1 records the next state as the action instead."""
+        return self.configuration.q if self.plant is not None else None
 
     def base_pose(self):
         """Planned pose of the floating base (the physics harness follows it), or None."""
@@ -367,7 +368,8 @@ class Runtime:
 
     def force_tick(self, dt):
         """Admittance on the followed path (see Tasks._press_tick): lower the hand target until the surface pushes back
-        with the wanted force, back off near 0.9 x the impedance limit; at most 3 cm below the path. Ends with the path."""
+        with the wanted force, back off near 0.9 x the impedance limit; within 3 cm of the path (a path drawn into the
+        surface lifts off it). Ends with the path."""
         if not self.force_req:
             return
         if self.plant is None or self.mode != "FOLLOW" or self.path is None:
@@ -380,7 +382,7 @@ class Runtime:
             fr["peak"] = max(fr["peak"], f)
             want = min(fr["want"], 0.8 * lim)
             v = -0.03 if f > 0.9 * lim else float(np.clip(0.002 * (want - f), -0.03, 0.01))
-            fr["dz"] = float(np.clip(fr["dz"] + v * dt, 0.0, 0.03))
+            fr["dz"] = float(np.clip(fr["dz"] + v * dt, -0.03, 0.03))
             self.data.mocap_pos[self.hands_mid[palm]] -= np.array([0.0, 0.0, fr["dz"]])
 
     # --------------------------------------------------------------- messages

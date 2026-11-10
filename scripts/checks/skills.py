@@ -131,7 +131,11 @@ async def load_pack(t, name):
 
 
 async def run(t):
-    unit(t.check)
+    # the unit part takes a while on a loaded machine: run it beside the socket so the server's heartbeat is answered
+    job = asyncio.get_event_loop().run_in_executor(None, unit, t.check)
+    while not job.done():
+        await t.pump(0.3)
+    job.result()
     await t.send(type="speed", scale=1.0)
     # ---------------------------------------------------------------- weld cell
     ok, w = await load_pack(t, "weld cell")

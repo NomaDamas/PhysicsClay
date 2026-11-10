@@ -447,11 +447,13 @@ def _bead(ctx, s):
 
 
 def _bar(ctx, s):
-    """Gym: the barbell follows the lifter's hands while they hold it (kinematic mode; with physics it is a free body)."""
+    """Gym: is the lifter holding the bar (hands apart at bar width, level)? Kinematic mode: the barbell follows their
+    hands while they do. With physics it is a 20 kg free body the (unsimulated) person can't lift, so it stays where it
+    is; the hold is still reported (skillbook.bar, with follows: false)."""
     tasks = ctx.tasks
-    if "barbell" not in getattr(tasks, "objs", {}) or _physics(ctx):
+    if "barbell" not in getattr(tasks, "objs", {}):
         return
-    o = tasks.objs["barbell"]
+    o, phys = tasks.objs["barbell"], _physics(ctx)
     J = ((ctx.store.get("watch") or {}).get("model") or None)
     J = getattr(J, "J", None)
     held = False
@@ -459,16 +461,17 @@ def _bar(ctx, s):
         a, b = np.asarray(J["l_wrist"], float), np.asarray(J["r_wrist"], float)
         gap = float(np.linalg.norm(a - b))
         held = 0.3 < gap < 0.95 and abs(a[2] - b[2]) < 0.15
-    d = ctx.rt.data
     floor = float(tasks_mod.TABLE_TOP) + float(o["half_h"])
     if held:
         mid = (a + b) / 2
         want = np.array([mid[0], mid[1], max(floor, mid[2])])
-        d.mocap_pos[o["mid"]] = want - o["off"]
-        s["bar"] = {"held": True, "pos": _r(want)}
+        if not phys:
+            tasks.set_obj_pose("barbell", want - o["off"])
+        s["bar"] = {"held": True, "pos": _r(want), "follows": not phys}
     elif s.get("bar") and s["bar"].get("held"):
-        d.mocap_pos[o["mid"]] = o["home"]
-        s["bar"] = {"held": False, "pos": _r(o["home"] + o["off"])}
+        if not phys:
+            tasks.set_obj_pose("barbell", o["home"])
+        s["bar"] = {"held": False, "pos": _r(tasks.mug_center("barbell")), "follows": not phys}
 
 
 @ext.tick

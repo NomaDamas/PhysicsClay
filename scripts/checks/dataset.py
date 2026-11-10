@@ -129,11 +129,12 @@ async def run(t):
         info = json.loads((g1 / "meta" / "info.json").read_text())
         f = info["features"]
         nst = f["observation.state"]["shape"][0]
+        dyn = (t.state().get("physics") or {}).get("mode") == "dynamic"       # P0: ee_force is recorded, action is q_des
         t.check("dataset: meta/info.json (LeRobot v2.1)",
                 info["codebase_version"] == "v2.1" and info["total_episodes"] == 2 and info["fps"] == 30 and info["robot_type"] == "g1"
                 and len(f["observation.state"]["names"]) == nst and f["action"]["shape"] == [nst]
                 and f["observation.images.front"]["dtype"] == "video" and f["observation.images.wrist"]["shape"] == [256, 256, 3]
-                and f["observation.human.pose"]["shape"] == [99] and "next.success" in f,
+                and f["observation.human.pose"]["shape"] == [99] and "next.success" in f and ("observation.ee_force" in f) == dyn,
                 f"state {nst} ({f['observation.state']['names'][0]} … {f['observation.state']['names'][-1]}), "
                 f"{info['total_frames']} frames, {info['total_tasks']} tasks")
         eps = L.read_jsonl(g1 / "meta" / "episodes.jsonl")
@@ -154,7 +155,11 @@ async def run(t):
             nj = sum(1 for x in f["observation.state"]["names"] if x.startswith("joint:"))
             # kinematic action = the next distinct state (a repeated frame shares its values with the one before)
             nxt = [next((stt[j] for j in range(i + 1, n) if not np.array_equal(stt[j], stt[i])), stt[i]) for i in range(n)]
-            look = np.allclose(act[:, :nj], np.array(nxt)[:, :nj], atol=1e-5)
+            if dyn:     # P0: the action is q_des, what the plant's servos track: close to the next state, not a copy of it
+                err = np.abs(act[:, :nj] - np.array(nxt)[:, :nj])
+                look = float(np.median(err)) < 0.05 and float(err.max()) < 0.6 and not np.allclose(act[:, :nj], stt[:, :nj], atol=1e-5)
+            else:
+                look = np.allclose(act[:, :nj], np.array(nxt)[:, :nj], atol=1e-5)
             moved = float(np.abs(stt[-1, :nj] - stt[0, :nj]).max()) > 0.05
             conds = {"rows": n == e["length"], "fps x duration": abs(n - expect) <= 0.1 * expect + 3,
                      "timestamps": np.allclose(ts, np.arange(n) / 30, atol=1e-4), "action": look, "moved": moved,
