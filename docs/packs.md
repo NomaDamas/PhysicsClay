@@ -60,3 +60,9 @@ Scene additions used by packs (`pps/world/scene.py`): kinds `steel_plate` (thin,
 `wrench`, `screwdriver`, `brush`; colour `steel`; template `gym`; per object `exact` (keep the position and size as
 given: workpieces and fixtures are not spread out or clamped) and `mass`; `pack`, `tool` and `seams` are kept in the
 spec and in `state.world.scene`. `state.world.packs` lists the packs and `state.world.pack` names the loaded one.
+
+## Generated worlds as packs (issue #48)
+
+`{"type": "world", "op": "pack", "name": "kitchen_full" | "warehouse" | ..., "seed": 7}` loads a generated home or
+industrial site the same way (the current robot when it fits there, else a Panda); the agent's `load_pack` takes the
+same names. Templates, fixtures and seeds: `docs/worlds.md`.

@@ -47,6 +47,10 @@ You: show (camera / video) · say (voice / text) · point & draw (robot view / 3
   -> physics: IK pre-check of every waypoint on a real Unitree G1 model, joint limits, collisions, balance
   -> refuse with a reason + a reachable alternative, or execute in MuJoCo; same spec compiles for a UR5e arm
 ```
+Worlds: a table, or a generated home or industrial site (a cluttered kitchen with drawers, doors, a sink and a fridge; a
+dining room, living room, laundry; an assembly line with a running conveyor, a warehouse with totes and racks, a CNC
+cell, an electronics bench, a lab, a packing station), every seed a different layout, drawers and doors on real joints
+the robot opens by their handles ([docs/worlds.md](docs/worlds.md)).
 Business: free browser playground (users) -> paid per robot for robot teams (humanoid makers, integrators, labs).
 Roadmap: VR/XR teaching at true scale -> real robots -> learning from corrections across robots.
 
