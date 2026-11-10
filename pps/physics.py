@@ -151,6 +151,8 @@ def add_grippers(spec, profile):
         if not g.get("build"):
             tcp = sp + Rs @ np.asarray(g.get("tcp", (0, 0, 0)), float)
             body.add_site(name=f"{role}_tcp", pos=tcp.tolist(), quat=sq.tolist(), size=[0.006], rgba=[1, 0.6, 0.1, 0.0], group=5)
+            if g.get("parallel"):
+                _parallel_pads(spec, role, g, body, tcp, Rs)
             _native_pads(spec, role, g)
             continue
         w, L, base = float(g["width"]), float(g.get("len", 0.07)), float(g.get("base", 0.0))
@@ -176,6 +178,48 @@ def add_grippers(spec, profile):
         for side in ("a", "b"):
             spec.add_exclude(bodyname1=f"pc_{role}_finger_{side}", bodyname2=body.name)
         spec.add_exclude(bodyname1=f"pc_{role}_finger_a", bodyname2=f"pc_{role}_finger_b")
+
+
+def _parallel_pads(spec, role, g, body, tcp, Rs):
+    """Spring-loaded parallel pads for a gripper whose rigid fingers close along an arc (Stretch's SG3, whose real fingers
+    flex and whose rubber tips swivel flat against the object). Per side: a carrier on a slide joint across the jaws,
+    coupled to the gripper's driven joint s by an equality (x(s): where the model's own fingertip face is), and the pad on
+    a second slide joint behind it with a spring and damper (the finger's flex). The grip force is the gripper servo's,
+    through the coupling; nothing is attached to the object. Bodies pc_<role>_pad_a / _b (side a at +axis)."""
+    P = g["parallel"]
+    ax, ap = np.asarray(g["axis"], float), np.asarray(g["approach"], float)
+    third = np.cross(ap, ax)
+    x = [float(c) for c in P["x"]]
+    t, (h3, ha) = float(P["t"]), P["half"]
+    Lq = _rot_to_quat(Rs @ np.column_stack([ax, third, ap]))
+    pads = []
+    for side, sgn in (("a", 1.0), ("b", -1.0)):
+        out = Rs @ (sgn * ax)                                       # outward, in the finger body's frame
+        cb = body.add_body(name=f"pc_{role}_carrier_{side}", pos=(tcp + Rs @ (sgn * x[0] * ax + float(P["z"]) * ap)).tolist())
+        cb.add_joint(name=f"pc_{role}_carrier_{side}", type=mujoco.mjtJoint.mjJNT_SLIDE, axis=out.tolist(), armature=0.005)
+        cb.add_geom(type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[0.004, 0, 0], contype=0, conaffinity=0, group=5, mass=0.005,
+                    rgba=[0, 0, 0, 0])
+        pb = cb.add_body(name=f"pc_{role}_pad_{side}", pos=[0, 0, 0])
+        pb.add_joint(name=f"pc_{role}_flex_{side}", type=mujoco.mjtJoint.mjJNT_SLIDE, axis=out.tolist(), stiffness=float(P["k"]),
+                     springref=0.0, damping=float(P["c"]), armature=0.002, range=[-0.001, float(P["flex"])],
+                     limited=mujoco.mjtLimited.mjLIMITED_TRUE)
+        pb.add_geom(name=f"{role}_pad_{side}", type=mujoco.mjtGeom.mjGEOM_BOX, size=[t / 2, h3, ha], pos=(out * t / 2).tolist(),
+                    quat=Lq.tolist(), rgba=[0, 0, 0, 0], group=3, mass=0.02, contype=1, conaffinity=1,
+                    friction=list(PAD_FRICTION), **PAD_CONTACT)
+        e = spec.add_equality(name=f"pc_{role}_carrier_{side}", type=mujoco.mjtEq.mjEQ_JOINT, name1=f"pc_{role}_carrier_{side}",
+                              name2=P["joint"], objtype=mujoco.mjtObj.mjOBJ_JOINT, solref=[0.005, 1.0])
+        data = np.zeros(len(e.data))
+        data[1:4] = x[1:4]                                          # carrier - carrier0 = x(s) - x(0)  (s0 = 0)
+        e.data = data
+        pads.append(pb)
+    up, b = [], body                                                # the pads touch objects, not their own gripper or wrist
+    while b is not None and b is not spec.worldbody and len(up) < 6:
+        up.append(b)
+        b = b.parent
+    for pb in pads:
+        for other in up + list(body.find_all(mujoco.mjtObj.mjOBJ_BODY)):
+            if other is not pb and other.name != pb.parent.name:
+                spec.add_exclude(bodyname1=pb.name, bodyname2=other.name)
 
 
 def _native_pads(spec, role, g):
@@ -372,7 +416,13 @@ class Plant:
                                # one fixed jaw (side b): where its face is along the closing axis from the TCP (m)
                                "jaw": None if g.get("jaw") is None else float(g["jaw"]),
                                # side grasps: the hand's top side (TCP frame) and how far it hangs below the TCP (m)
-                               "up": None if g.get("up") is None else np.array(g["up"], float), "pad_h": float(g.get("pad_h", 0.018))}
+                               "up": None if g.get("up") is None else np.array(g["up"], float), "pad_h": float(g.get("pad_h", 0.018)),
+                               # side jaws: how far past the object's side they reach when they let go (free spots)
+                               "room": float(g.get("room", 0.0)),
+                               # a claw whose finger arcs down (Spot): the opening for an object that nearly fills it, and
+                               # how far below its top to hold it
+                               "wide_open": None if g.get("wide_open") is None else float(g["wide_open"]),
+                               "deep": None if g.get("deep") is None else float(g["deep"]), "open_to": None}
             if g.get("build"):
                 self.grip[role]["close"] = float(g["width"]) / 2 + 0.03
         self.track, self.hold0, self.track_tendon = [], [], []
@@ -621,7 +671,12 @@ class Plant:
             lo, hi = m.actuator_ctrlrange[a] if m.actuator_ctrllimited[a] else (-1e9, 1e9)
             d.ctrl[a] = min(max(v, lo), hi)
         for g in self.grip.values():                      # fingers take ~0.8 s to travel: no slamming into things
-            v = g["open"] if g["cmd"] == "open" else g["close"]
+            if g["cmd"] == "hold" and g.get("ctrl") is not None:
+                v = g["ctrl"]                             # (stop where they are: opened as far as a release needs)
+            elif g["cmd"] == "open":
+                v = g["open"] if g.get("open_to") is None else g["open_to"]
+            else:
+                v = g["close"]
             rate = 0.0 if self.hold_fingers else abs(g["close"] - g["open"]) / 0.8 * DT   # P5 stop: fingers hold still
             g["ctrl"] = v if g.get("ctrl") is None else g["ctrl"] + float(np.clip(v - g["ctrl"], -rate, rate))
             for a in g["acts"]:
@@ -754,6 +809,23 @@ class Plant:
                 out.append(c.geom1)
         return out
 
+    def hand_bump(self, role, name=None):
+        """The hand touches something other than `name`, the robot and the world's fixed surfaces (a neighbour)."""
+        hand = self.ee_bodies.get(role)
+        if not hand:
+            return False
+        m, d = self.m, self.d
+        own = set(self.objects[name]["geoms"]) if name in self.objects else set()
+        for i in range(d.ncon):
+            c = d.contact[i]
+            b1, b2 = m.geom_bodyid[c.geom1], m.geom_bodyid[c.geom2]
+            if (b1 in hand) == (b2 in hand):
+                continue
+            g, b = (c.geom2, b2) if b1 in hand else (c.geom1, b1)
+            if g not in own and b != 0 and b not in self.robot_bodies:
+                return True
+        return False
+
     def grip_load(self, role, name):
         """Upward force (N) the hand exerts on the object: its weight once it hangs free in the gripper."""
         o = self.objects.get(name)
@@ -789,9 +861,13 @@ class Plant:
         o = self.objects.get(name)
         return 0.0 if o is None else float(self.m.body_mass[o["bid"]]) * abs(float(self.m.opt.gravity[2]))
 
-    def grip_cmd(self, role, cmd):
+    def grip_cmd(self, role, cmd, to=None):
+        """open | close | hold (stay where the jaws are). open: all the way, or to the command `to` (a grasp that needs
+        less room, e.g. straddling a mug's wall)."""
         if role in self.grip:
             self.grip[role]["cmd"] = cmd
+            if cmd == "open":
+                self.grip[role]["open_to"] = to
 
     def grasped(self):
         """role -> object held by contact on both sides (or None)."""

@@ -185,6 +185,7 @@ def main():
     ap.add_argument("-j", "--jobs", type=int, default=1)
     ap.add_argument("-t", "--task", action="append", choices=[k for k, _, _ in TASKS], help="only this task (repeatable)")
     ap.add_argument("-v", "--verbose", action="store_true")
+    ap.add_argument("--json", action="store_true", help="also print one line 'BENCH_JSON {...}' (scripts/checks/grasp_bench.py)")
     a = ap.parse_args()
     from pps.world import profiles
     ids = a.robots or [r for r in profiles.PROFILES if r != "h2"]
@@ -198,7 +199,7 @@ def main():
     print()
     print("| Robot | " + " | ".join(f"{k} → center (ok / err cm)" for k in keys) + " | Status | Failures | Loop RTF |")
     print("|---|" + "---|" * len(keys) + "---|---|---|")
-    bad = 0
+    bad, summary = 0, {}
     for r in res:
         p = profiles.PROFILES[r["robot"]]
         cells, fails, reliable = [], [], True
@@ -206,6 +207,7 @@ def main():
             ok, n, err, why = _summary(r["tasks"].get(k, []))
             reliable &= ok >= math.ceil(0.9 * n)
             cells.append(f"**{ok}/{n}**" + (f" ({err:.1f})" if err is not None else ""))
+            summary.setdefault(r["robot"], {})[k] = {"ok": ok, "n": n, "err": err, "why": why}
             if why:
                 fails.append(f"{k}: {why}")
         exp = bool((p.physics or {}).get("experimental"))
@@ -213,6 +215,9 @@ def main():
         bad += (not exp and not reliable)
         print(f"| {r['robot']} | " + " | ".join(cells) + f" | {status} | {'; '.join(fails)[:240]} | {r['rtf']:.1f} |")
     print(f"\n{len(ids)} robots, {a.trials} trials per task, seed {a.seed}, {time.time() - t0:.0f} s wall")
+    if a.json:
+        import json
+        print("BENCH_JSON " + json.dumps(summary), flush=True)
     sys.exit(1 if bad else 0)
 
 
