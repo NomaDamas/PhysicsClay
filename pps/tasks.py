@@ -1884,13 +1884,25 @@ class Tasks:
             out += list(d.geom_xpos[g] + (c + h * corners) @ d.geom_xmat[g].reshape(3, 3).T - tcp)
         return np.array(out)
 
-    def path_hits(self, pts, palm, skip=(), carrying=None):
+    def grip_reach(self, palm):
+        """The gripper as points relative to its TCP the way the pick planner sees it (its open fingertips or pads
+        reaching below the TCP over the jaws' footprint, hand_disc), whatever the hand's orientation now: for paths
+        whose orientation isn't the current one (P2 trajectories)."""
+        g = self.plant.grip.get(self.role(palm)) if self.plant is not None else None
+        if g is None:
+            return hand_disc(0.0, 0.0)
+        prof = getattr(self.rt, "profile", None)
+        side = prof is not None and (prof.physics or {}).get("grasp", prof.grasp) == "side"
+        return hand_disc(self._hang(palm, side), float(np.clip(max(g.get("span", 0.0), g.get("depth", 0.0)), 0.02, 0.06)))
+
+    def path_hits(self, pts, palm, skip=(), carrying=None, hand=None):
         """Per point: why the hand (or what it carries) would hit an object there, or None (path_object_hits with this
-        hand as it is held and the objects where they stand; `skip`: ones the path is meant to reach)."""
+        hand as it is held, or `hand` points, and the objects where they stand; `skip`: ones the path is meant to reach)."""
         held = carrying[0] if carrying else None
         bodies = [(c, r, h, self.pretty(n)) for c, r, h, n in self._bodies(skip=tuple(skip) + ((held,) if held else ()))]
         carry = (self.pretty(held), self._radius(held), self.objs[held]["half_h"], float(carrying[1])) if held else None
-        return path_object_hits(pts, bodies, self.hand_points(palm), f"my {self.limb(self.role(palm))}", carry)
+        hand = self.hand_points(palm) if hand is None else hand
+        return path_object_hits(pts, bodies, hand, f"my {self.limb(self.role(palm))}", carry)
 
     def lift_over(self, pts, palm, skip=(), carrying=None):
         """The path raised over the movable objects it would run into (lift_path); fixed obstacles (the vase) are not

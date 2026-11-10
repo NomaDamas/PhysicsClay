@@ -4,7 +4,8 @@ pps/features/traj.py checks every sample of a trajectory (reach, the surface, th
 hand as a point. With physics the hand is a real gripper that reaches below its TCP (open fingertips from above, the
 pads of a side gripper) over a footprint, so a path whose TCP clears the mug's top by 2 cm still drives the fingers
 through it and knocks it over. This adds a check through traj.register_checker: the samples where the gripper itself
-would hit an object (tasks.path_object_hits with tasks.hand_points), worded like traj.py's own reasons ('my gripper
+would hit an object (tasks.path_object_hits with tasks.grip_reach: the open fingertips or pads below the TCP over
+the jaws' footprint), worded like traj.py's own reasons ('my gripper
 would hit the mug'), so they turn red, the plan card is blocked and the issue says where. Objects the path is meant
 to reach are not obstacles: what a grip event closes on (traj.graspable), what the hand already holds, and what a key
 point sits on (a skill working on a plate, stirring in a bowl). Drawn strokes are checked in tasks.set_path_world.
@@ -44,7 +45,7 @@ def gripper_clearance(ctx, pts, qs, info):
             for n in tasks.objs:
                 if _traj.graspable(keys[pi], tasks.mug_center(n), tasks.objs[n]["r"], tasks.objs[n]["half_h"]):
                     meant.add(n)
-    return tasks.path_hits(pts, palm, skip=tuple(meant))
+    return tasks.path_hits(pts, palm, skip=tuple(meant), hand=tasks.grip_reach(palm))
 
 
 if _traj is not None:

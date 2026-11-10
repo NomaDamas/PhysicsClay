@@ -70,7 +70,7 @@ async def main():
         t0, sim, last = time.time(), 0.0, None
         while time.time() - t0 < 4 * limit:
             await pump(0.3)
-            if st.get("task", {}).get("status") not in ("running", "planning"):   # (planning: a pick search, one slice per frame)
+            if (st.get("task") or {}).get("status") not in ("running", "planning"):   # (planning: a pick search, one slice per frame)
                 break
             ph = st.get("physics") or {}
             if ph.get("mode") != "dynamic":

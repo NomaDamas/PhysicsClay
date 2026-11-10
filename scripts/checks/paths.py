@@ -40,13 +40,22 @@ async def run(t):
             f"{sum(ok)}/{len(ok)} ok: {msgs()[:110]}")
     m0 = _obj(t, "mug")
     r = await t.task("follow_path", 3)
-    fin = await t.until_done(30) if r.get("status") == "running" else r
+    touched = set()
+    for _ in range(240):                           # (sim time, up to ~60 s of wall on a loaded machine)
+        await t.pump(0.25)
+        for c in (st().get("physics") or {}).get("contacts") or []:
+            if "mug" in c["a"] + c["b"] and "table" not in c["a"] + c["b"]:
+                touched.add(c["b"] if "mug" in c["a"] else c["a"])
+        if (st().get("task") or {}).get("status") not in ("running", "planning"):
+            break
+    fin = st().get("task") or {}
     await t.pump(0.6)
     m1 = _obj(t, "mug")
     moved = math.hypot(m1["p"][0] - m0["p"][0], m1["p"][1] - m0["p"][1]) * 100 if m0 and m1 else 99
     t.check("paths: following the lifted path leaves the mug standing where it was",
             fin.get("status") == "done" and moved < 1.0 and _tilt(m1.get("q", [1, 0, 0, 0])) < 5,
-            f"{fin.get('status')}: {fin.get('message', '')[:50]} mug moved {moved:.1f} cm, tilt {_tilt(m1.get('q', [1, 0, 0, 0])):.0f}°")
+            f"{fin.get('status')}: {fin.get('message', '')[:50]} mug moved {moved:.1f} cm, tilt {_tilt(m1.get('q', [1, 0, 0, 0])):.0f}°"
+            + (f", touched by {sorted(touched)}" if touched else ""))
     await t.task("home", 1.5)
 
     await t.send(type="path3d", points=BY_VASE, hand="right"); await t.pump(1.5)
