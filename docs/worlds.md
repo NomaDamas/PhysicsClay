@@ -121,10 +121,12 @@ follows the hand and what is inside rides along.
 
 | Task | Panda | UR5e |
 |---|---|---|
-| kitchen: open the top drawer ≥ 60 %, take the spoon, put it in the sink, close it | seeds 1–3 | seeds 2–3 (seed 1: the spoon slips out on the way to the sink, reported) |
-| warehouse: pick the box out of the tote, put it in the empty tote | seeds 1–4 | seeds 2–3 |
-| assembly line: a part rides to the photo-eye, the arm picks it into the bin | seeds 1–3 | seeds 2–3 |
-| lab: a tube from the source rack into a free slot of the tube rack | seeds 1–3 | seeds 2–3 |
+| kitchen: open the top drawer ≥ 60 % (to 78 %), take the spoon, put it in the sink, close it | seeds 1–3 | seeds 2–3 (seed 1: the spoon slides out of the jaws as it is lowered into the sink; reported as a slip) |
+| warehouse: pick the box out of the tote, put it in the empty tote | seeds 1–4 | seeds 1–3 |
+| assembly line: a part rides to the photo-eye, the arm picks it into the bin | seeds 1–3 | seeds 1–3 |
+| lab: a tube from the source rack into a free slot of the tube rack | seeds 1–3 | seeds 1–3 |
+| machine tending: open the CNC door, the part from the vise into the finished tray, close the door | seeds 1–3 | seed 1 |
+| a jammed drawer / a knob under another one | "stuck at 5 % open" / refused with the reason | same code |
 
 Other bodies build in every world they fit (`tests/test_worlds.py` checks one of each kind: arm, humanoid, two-arm rig,
 mobile base, quadruped) and stand clear of the furniture; their grasps are as reliable as on the table
