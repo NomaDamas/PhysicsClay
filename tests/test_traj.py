@@ -219,6 +219,24 @@ def test_via_over_and_around_and_going_down_on_purpose():
     assert np.allclose(tr["points"][-1]["p"], [0.35, -0.2, 0.84]) and tr["points"][-1]["grip"] == 1.0   # not lifted away
 
 
+def test_keypoints_filled_in_by_a_model_use_their_form():
+    """What a real model sent (every field filled, an enum value for every enum): `where` decides what is read."""
+    filled = {"where": "", "from": "hand", "of": "", "rel": "above", "via": "over", "xyz": [0, 0, 0], "dxyz": [0, 0, 0],
+              "marker": "", "region": "left", "dz": 0.1, "dist": 0.06, "dx": 0, "dy": 0, "height": 0.1, "clearance": 0.05,
+              "speed": 0.05, "tol": 0.01, "yaw": 0, "tilt": 0, "hold": 0, "note": "", "pattern": False}
+    kps = [dict(filled, where="pass", of="vase"), dict(filled, where="object", of="bowl", rel="left_of", height=None)]
+    tr, notes = T.from_keypoints({"keypoints": kps}, WORLD)
+    P = [p["p"] for p in tr["points"]]
+    assert any(abs(p[0] - 0.42) < 1e-6 and abs(p[1]) < 1e-6 and p[2] > 0.98 + 0.04 for p in P)          # over the vase
+    assert len({tuple(p) for p in P}) == len(P) and all(p.get("speed") == 0.05 for p in tr["points"])
+    assert T.keypoint_form({"of": "vase", "via": "over", "rel": "above", "from": "hand"})[0] == "pass"      # no where: guessed
+    assert T.keypoint_form({"xyz": [0.3, 0, 0.9], "from": "hand"})[0] == "point"
+    assert T.keypoint_form({"from": "hand"}) == ("hand", {"from": "hand"})
+    from pps.agent import _clean_keypoint
+    c = _clean_keypoint(dict(filled, where="region"))
+    assert c == {"where": "region", "region": "left", "dz": 0.1, "height": 0.1, "speed": 0.05, "tol": 0.01}
+
+
 def test_keypoint_errors_name_what_is_there():
     with pytest.raises(T.TrajError) as e:
         T.from_keypoints({"keypoints": [{"rel": "above", "of": "banana"}]}, WORLD)
@@ -351,3 +369,20 @@ def test_follow_step_runs_the_samples_in_time():
         T.follow_step(rt, 0.01)
         steps += 1
     assert abs(steps * 0.01 - 2 * (ta + d["duration"])) < 0.06
+
+
+def test_follow_step_follows_points_nudged_while_running():
+    tr = T.normalize({"points": [[0.3, -0.1, 0.9], [0.3, 0.0, 0.9], [0.3, 0.1, 0.9]]})
+    d = T.densify(tr, q0=DOWN_Q)
+    idx = np.array(d["key"])
+    pts = d["p"][idx]
+    path = {"pts": pts.copy(), "pts0": pts.copy(), "palm": "right_palm", "i": 0,
+            "dense": dict(d, di=np.searchsorted(idx, np.arange(len(d["t"])), side="right") - 1, didx=idx)}
+    rt = FakeRT(path)
+    rt.data.mocap_pos[0] = [0.3, -0.1, 0.9]
+    for _ in range(20):
+        T.follow_step(rt, 0.01)
+    path["pts"] = path["pts"] + np.array([0.0, 0.0, 0.03])          # the nudge pad: 3 cm up for the rest of the path
+    while rt.mode == "FOLLOW":
+        T.follow_step(rt, 0.01)
+    assert np.allclose(rt.data.mocap_pos[0], [0.3, 0.1, 0.93], atol=1e-6)

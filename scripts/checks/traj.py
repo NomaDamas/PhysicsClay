@@ -192,9 +192,12 @@ async def run(t):
             await t.pump(0.15)
         return fut.result()
     await t.task("reset_scene", 1)
-    res = await call("make_trajectory", {"description": "go over the vase to the left, slowly", "speed": 0.1,
-                                         "keypoints": [{"rel": "above", "of": "mug", "dz": 0.08, "dx": 0, "xyz": [0, 0, 0]},
-                                                       {"via": "over", "of": "vase"}, {"region": "left", "dz": 0.08}]})
+    filled = {"from": "hand", "via": "over", "rel": "above", "region": "left", "xyz": [0, 0, 0], "dxyz": [0, 0, 0], "marker": "",
+              "dx": 0, "dy": 0, "grip": 0, "force": 0, "yaw": 0, "pattern": False}      # models fill in every field
+    res = await call("make_trajectory", {"description": "go over the vase to the left, slowly", "speed": 0.1, "role": "auto",
+                                         "keypoints": [dict(filled, where="object", of="mug", dz=0.08),
+                                                       dict(filled, where="pass", of="vase"),
+                                                       {"region": "left", "dz": 0.08}]})       # no `where`: guessed
     p = t.state().get("plan") or {}
     pts = ((res.get("trajectory") or {}).get("points")) or []
     t.check("traj: agent make_trajectory proposes it", res.get("ok") and p.get("phase") == "proposing" and agent._proposed

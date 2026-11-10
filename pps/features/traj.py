@@ -256,13 +256,15 @@ def _make_path(ctx, prep, path=None):
     di = np.clip(np.searchsorted(np.asarray(idx), np.arange(N), side="right") - 1, 0, len(idx) - 1)
     seg = np.linalg.norm(np.diff(pts, axis=0), axis=1) if len(pts) > 1 else np.zeros(0)
     side = "right" if palm.startswith("right") else "left"
-    timed = {"timed": True, "dense": {"t": dense["t"], "p": dense["p"], "q": dense["q"], "events": dense["events"], "di": di},
+    timed = {"timed": True, "dense": {"t": dense["t"], "p": dense["p"], "q": dense["q"], "events": dense["events"], "di": di,
+                               "didx": np.asarray(idx)},
              "traj_id": prep["traj"]["id"], "approach_speed": T.default_speed(prep["kind"]), "on_event": _on_event(ctx, palm),
              "why": None if prep["ok"] else _why(prep)}
     if path is not None:                                # adopted drawn path: keep its points and verdicts
-        path.update(timed)
+        path.update(timed, pts0=np.array(path["pts"], float).copy())
         return path
-    return {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side, **timed}
+    return {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side,
+            "pts0": pts.copy(), **timed}
 
 
 def _why(prep):
@@ -286,8 +288,8 @@ def _summary(prep):
 
 
 def _plan(ctx, prep, tid):
-    tasks, rt = ctx.tasks, ctx.rt
-    tr, res = prep["traj"], prep["res"]
+    tasks = ctx.tasks
+    tr = prep["traj"]
     side = "right" if prep["palm"].startswith("right") else "left"
     hand = tasks.limb(side)
     label = tr.get("label") or {"draw": "your path", "keyframes": "your keyframes", "demo": "what you showed me",
@@ -368,10 +370,15 @@ def _compile(ctx, s, msg):
     rt = ctx.rt
     if msg.get("spec") is not None:
         spec = dict(msg["spec"])
-        role = str(spec.get("role") or "right").lower()
+        role = str(spec.get("role") or "auto").lower()
         palm = _palm(rt, role if role in ("left", "right") else "right")
-        w = world_of(ctx, palm)
-        tr, _ = T.from_keypoints(dict(spec, role=palm.replace("_palm", "")), w)
+        tr, _ = T.from_keypoints(dict(spec, role=palm.replace("_palm", "")), world_of(ctx, palm))
+        if role not in ("left", "right") and len(rt.hands) > 1:      # auto: the hand on the path's side (like tasks.hand_for)
+            y = float(np.mean([p["p"][1] for p in T.to_world(tr, _poses(ctx))["points"]]))
+            other = "left_palm" if y > 0 else "right_palm"
+            if other != palm and other in rt.hands:
+                palm = other
+                tr, _ = T.from_keypoints(dict(spec, role=palm.replace("_palm", "")), world_of(ctx, palm))
     elif msg.get("demo") is not None:
         from ..human import demo as demo_mod
         d = demo_mod.load(str(msg["demo"]))

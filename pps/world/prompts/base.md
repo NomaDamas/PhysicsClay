@@ -113,10 +113,13 @@ the seam", "circle the bowl twice", "go around the cup, not over it"), call `mak
 relative to what you see, and the robot turns them into a smooth, checked path, lifts it over obstacles in the way and
 shows it as a ghost with handles. Then say in one sentence what it does and that they can say go, drag a point, or tell
 you what to change.
-- Keypoints are relative to objects: `{"rel": "above", "of": "red_cup", "dz": 0.1}`, `{"rel": "right_of", "of": "bowl"}`,
-  `{"via": "over", "of": "vase"}` (pass over it), `{"via": "around_left", "of": "vase"}`, `{"rel": "around", "of": "bowl",
-  "turns": 2}`, `{"marker": "P"}` (where they point), `{"dxyz": [0.1, 0, 0]}` (10 cm further forward). Two to six
-  keypoints are usually enough; don't add points just to avoid obstacles, the robot does that.
+- Keypoints are relative to objects, and `where` says which kind each one is (only that kind's fields count):
+  `{"where": "object", "rel": "above", "of": "red_cup", "dz": 0.1}`, `{"where": "object", "rel": "right_of", "of": "bowl"}`,
+  `{"where": "pass", "via": "over", "of": "vase"}` (pass over it without stopping), `{"where": "pass", "via":
+  "around_left", "of": "vase"}`, `{"where": "object", "rel": "around", "of": "bowl", "turns": 2}`, `{"where": "marker",
+  "marker": "P"}` (where they point), `{"where": "step", "dxyz": [0.1, 0, 0]}` (10 cm further forward). The path starts
+  from where the hand is. Two to six keypoints are usually enough; don't add points just to avoid obstacles, the robot
+  does that.
 - How the hand moves goes on the points: `speed` (m/s; 0.05 slow, 0.2 normal), `force` (N, pressing while wiping or
   sanding), `grip` (0 open, 1 closed: close next to an object to take it), `yaw` (wrist turn in degrees), `tilt` (tool
   lean toward the direction of travel), `hold` (seconds), `tol`. A weave, stir or scrub is a `pattern` (zigzag, circle,

@@ -286,10 +286,16 @@ TARGET = {"type": "string", "description": "Region (left, right, center, front, 
                                            "a marker letter (A-F, P) or 'along my path' to carry it along the user's drawn route."}
 _N = lambda d: {"type": "number", "description": d}
 # P2: one point of a trajectory, written by the model relative to what it sees (compiled by pps/traj.py from_keypoints)
-KEYPOINT = {"type": "object", "additionalProperties": False,
-            "description": "One point of the path. Say where with ONE of: of (+ rel, or via), xyz, dxyz, marker, region, from. "
-                           "Leave out every field you don't need.",
+KEYPOINT = {"type": "object", "additionalProperties": False, "required": ["where"],
+            "description": "One point of the path. `where` picks how it is placed; only that form's fields are read: "
+                           "object = `of` + `rel` (+ dz, dist, dx, dy, height); pass = go by `of` without stopping, `via` "
+                           "over / around_left / around_right (+ clearance); point = `xyz`; step = `dxyz` from the previous "
+                           "point; marker = `marker` (+ dz); region = `region` (+ dz); hand = start where the hand is now "
+                           "(first point only). speed, force, grip, tol, yaw, tilt, hold, note and pattern apply to every form. "
+                           "Leave out the fields you don't need.",
             "properties": {
+                "where": {"type": "string", "enum": ["object", "pass", "point", "step", "marker", "region", "hand"],
+                          "description": "Which kind of point this is (see above)."},
                 "of": {"type": "string", "description": "Object name as in the context (e.g. 'red_cup'), or a marker letter, or a region."},
                 "rel": {"type": "string", "enum": ["above", "at", "left_of", "right_of", "in_front_of", "behind", "beside", "around"],
                         "description": "Where relative to `of` (robot's view; in_front_of = toward the robot). above: dz over its "
@@ -361,7 +367,8 @@ def tool_specs(st, confirm=True):
                      {"description": {"type": "string", "description": "The person's request in a few words (shown on the plan card)."},
                       "keypoints": {"type": "array", "items": KEYPOINT, "minItems": 1, "maxItems": 30},
                       "object": {"type": "string", "description": "The object the path belongs to (it moves with it), e.g. the plate being wiped."},
-                      "role": {"type": "string", "enum": ["right", "left"], "description": "Which hand (two-armed robots)."},
+                      "role": {"type": "string", "enum": ["auto", "right", "left"],
+                               "description": "Which hand on two-armed robots; auto (default) = the hand on the path's side."},
                       "speed": _N("Default speed for every point, m/s."), "force": _N("Default pressing force, N."),
                       "clearance": _N("Gap over obstacles, m (default 0.05)."), "pattern": PATTERN},
                      ["description", "keypoints"]))
@@ -837,12 +844,18 @@ class Agent:
                                           "or change it with edit_trajectory after they answer."}
         kps = [_clean_keypoint(k) for k in a.get("keypoints") or [] if isinstance(k, dict)]
         kps = [k for k in kps if k]
+        for key in ("grip", "force"):     # 0 on every point is a filled-in default, not "open the gripper here" (it would drop what I hold)
+            vals = [k.get(key) for k in kps]
+            if vals and all(v is not None and float(v) == 0.0 for v in vals):
+                for k in kps:
+                    k.pop(key, None)
         if not kps:
             return {"ok": False, "error": "give at least one keypoint (where the hand should go)"}
         spec = {"label": str(a.get("description") or "")[:120], "keypoints": kps}
-        for k in ("object", "role"):
-            if str(a.get(k) or "").strip():
-                spec[k] = str(a[k]).strip()
+        if str(a.get("object") or "").strip():
+            spec["object"] = str(a["object"]).strip()
+        if str(a.get("role") or "").strip().lower() in ("left", "right"):
+            spec["role"] = str(a["role"]).strip().lower()
         for k in ("speed", "force", "clearance"):
             if isinstance(a.get(k), (int, float)) and a[k] > 0:
                 spec[k] = float(a[k])
@@ -875,7 +888,8 @@ class Agent:
             msg["index"] = int(pt) - 1 if pt > 0 else int(pt)
         elif str(a.get("near") or "").strip():
             msg["near"] = str(a["near"]).strip()
-        ch = {k: v for k, v in (a.get("changes") or {}).items() if v not in (None, "") and not (k != "remove" and v is False)}
+        ch = {k: v for k, v in (a.get("changes") or {}).items() if v not in (None, "") and not (k != "remove" and v is False)
+              and not (k in ("dx", "dy", "dz", "height", "speed", "speed_factor", "tol", "hold") and v == 0)}   # filled-in zeros
         if ch:
             msg["changes"] = ch
         if a.get("remove_pattern"):
@@ -1146,9 +1160,13 @@ class Agent:
 
 
 def _clean_keypoint(k):
-    """Models often fill every optional field ("", 0, [0, 0, 0]); an empty or zero field means 'not given' here (a
+    """Models often fill every optional field ("", 0, [0, 0, 0], and an enum value for every enum): keep only the fields
+    of the keypoint's form (`where`, pps/traj.py keypoint_form), and treat an empty or zero field as 'not given' (a
     speed or height of exactly 0 is never what they meant)."""
-    out = {}
+    from .traj import keypoint_form
+    k = {key: v for key, v in k.items() if not (isinstance(v, list) and v and all(isinstance(x, (int, float)) and x == 0 for x in v))}
+    form, k = keypoint_form(k)
+    out = {"where": form}
     for key, v in k.items():
         if v is None or v == "" or v is False:
             continue

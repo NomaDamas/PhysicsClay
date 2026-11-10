@@ -433,11 +433,12 @@ why?, plan?, task?, notes?}`):
 
 Language keypoints (`spec`, what the agent's `make_trajectory` sends; `pps/traj.py from_keypoints`):
 ```
-{label, object?: anchor (the path then moves with it), role?, speed?, force?, grip?, tol?, clearance? (0.05 m), pattern?,
- keypoints: [{of: "red_cup", rel: "above"|"at"|"left_of"|"right_of"|"in_front_of"|"behind"|"beside"|"around", dz?, dist?, turns?, dir?}
+{label, object?: anchor (the path then moves with it), role? (left|right; default: the hand on the path's side), speed?, force?, grip?, tol?, clearance? (0.05 m), pattern?,
+ keypoints: [{where?: "object"|"pass"|"point"|"step"|"marker"|"region"|"hand" (only that form's fields are read; guessed when absent)}
+           & ({of: "red_cup", rel: "above"|"at"|"left_of"|"right_of"|"in_front_of"|"behind"|"beside"|"around", dz?, dist?, turns?, dir?}
            | {of: "vase", via: "over"|"around_left"|"around_right", clearance?} | {xyz: [x,y,z]} | {dxyz: [dx,dy,dz]}
            | {marker: "A"|"P"} | {region: "left"} | {from: "hand"};  each + dx?, dy?, height? (above the surface),
-             speed?, force?, grip?, tol?, yaw?, tilt?, hold?, note?, pattern?: bool]}
+             speed?, force?, grip?, tol?, yaw?, tilt?, hold?, note?, pattern?: bool)]}
 ```
 `above` = dz (0.10) over the object's top, `at` = 0.02 over it, `left_of`… = `dist` (0.06) from its side at `dz` (0.10)
 over the table (robot's view: `in_front_of` = toward the robot), `around` = a loop of 12 points per turn. Every
@@ -466,7 +467,8 @@ from the hand to the first point is checked too ("on the way to the start").
 - An installed path *is* `rt.path` (`timed: true`, dense 30 Hz samples): the robot-view overlay, `follow_path`, F, "Run
   path", plan preview of `follow_path` and "carry it along my path" all keep working. The runtime follows it in time
   (`pps/traj.py follow_step`, called from `Runtime.update_targets`), starting with a min-jerk move from wherever the
-  hand target is; `speed_scale` still scales time.
+  hand target is; `speed_scale` still scales time, and moving the shown points of a running path (the nudge pad, the
+  come-here gesture) moves the rest of the trajectory with them.
 - Old messages: a stroke (`draw`) or 3D waypoints (`path3d`) go through `tasks.set_path_world` as before and are
   adopted as a trajectory with `source: "draw"` (their own reach / zone verdicts are kept, so behaviour is unchanged);
   editing one checks it fully. `clear`, `home` and other tasks that replace `rt.path` drop it (the last one is kept for

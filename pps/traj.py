@@ -64,10 +64,6 @@ def _num(v, lo=None, hi=None, what="value"):
     return x
 
 
-def _opt(v, lo=None, hi=None, what="value"):
-    return None if v is None else _num(v, lo, hi, what)
-
-
 def _vec(v, n, what):
     if not isinstance(v, (list, tuple, np.ndarray)) or len(v) != n:
         raise TrajError(f"{what} must be {n} numbers")
@@ -665,6 +661,22 @@ def approach_points(p_from, p_to, step=CHECK_STEP):
 
 
 # ---------------------------------------------------------------------------- runtime glue
+def _nudged(path, D, j, k, u):
+    """Others may move the displayed points of a running path (the nudge pad, the come-here gesture): follow them by
+    adding their offset from where they were installed, interpolated between the displayed points around sample k."""
+    P0, P = path.get("pts0"), path.get("pts")
+    didx = D.get("didx")
+    if P0 is None or P is None or didx is None or len(P0) != len(P) or len(P) == 0:
+        return 0.0
+    P, P0 = np.asarray(P, float), np.asarray(P0, float)
+    j = int(np.clip(j, 0, len(P) - 1))
+    if j + 1 >= len(P):
+        return P[j] - P0[j]
+    span = max(1e-9, float(didx[j + 1] - didx[j]))
+    f = float(np.clip((k + u - didx[j]) / span, 0.0, 1.0))
+    return (1 - f) * (P[j] - P0[j]) + f * (P[j + 1] - P0[j + 1])
+
+
 def follow_step(rt, dt):
     """One runtime step of a timed trajectory path (rt.path["dense"]). Duck-typed: rt.data.mocap_pos/quat,
     rt.hands_mid, rt.speed_scale, rt.follow_s (reset to 0 by follow_path = a fresh start), rt.mode.
@@ -713,6 +725,7 @@ def follow_step(rt, dt):
             elif kind == "force" and hasattr(rt, "set_force"):
                 rt.set_force(path["palm"], value)
         i = int(D["di"][k]) if "di" in D else k
+        p = p + _nudged(path, D, i, k, u if N > 1 else 0.0)
     d.mocap_pos[mid] = p
     d.mocap_quat[mid] = q
     path["i"] = i
@@ -727,6 +740,38 @@ REL = ("above", "over", "at", "on", "left_of", "right_of", "in_front_of", "behin
 VIA = ("over", "around_left", "around_right")
 SIDE = {"left_of": (0.0, 1.0), "right_of": (0.0, -1.0), "in_front_of": (-1.0, 0.0), "behind": (1.0, 0.0)}
 PASS_KEYS = ("speed", "force", "grip", "tol", "note", "yaw", "tilt", "hold")
+# keypoint forms: `where` says which one a keypoint is, and only that form's fields are read (language models tend to
+# fill in every field of a schema, e.g. from: "hand" on every point)
+FORMS = {"object": ("of", "rel", "dz", "dist", "dx", "dy", "height", "turns", "dir"),
+         "pass": ("of", "via", "clearance", "dx", "dy"),
+         "point": ("xyz",), "step": ("dxyz",),
+         "marker": ("marker", "dz", "dx", "dy", "height"), "region": ("region", "dz", "dx", "dy", "height"),
+         "hand": ("from",)}
+COMMON_KEYS = PASS_KEYS + ("pattern",)
+
+
+def _given(v):
+    if v is None or v == "" or v is False:
+        return False
+    if isinstance(v, (list, tuple)):
+        return any(isinstance(x, (int, float)) and x != 0 for x in v)
+    return True
+
+
+def keypoint_form(kp):
+    """-> (form, the keypoint with only that form's fields). Uses `where` when given, else guesses from what is filled
+    in: xyz, dxyz, via + of, of, marker, region, from: hand."""
+    where = str(kp.get("where") or "").strip().lower()
+    if where not in FORMS:
+        where = ("point" if _given(kp.get("xyz")) else "step" if _given(kp.get("dxyz")) else
+                 "pass" if _given(kp.get("via")) and _given(kp.get("of")) else "object" if _given(kp.get("of")) else
+                 "marker" if _given(kp.get("marker")) else "region" if _given(kp.get("region")) else
+                 "hand" if kp.get("from") in ("hand", "start", "here") or kp.get("at") in ("hand", "start") else "object")
+    keep = FORMS[where] + COMMON_KEYS
+    out = {k: v for k, v in kp.items() if k in keep}
+    if where == "hand":
+        out["from"] = "hand"
+    return where, out
 
 
 def _words(s):
@@ -968,7 +1013,8 @@ def from_keypoints(spec, world):
 
     spec:  {"description"|"label", "object"?: anchor, "role"?, "frame"?: "world"|"object", "keypoints": [...],
             "speed"?, "force"?, "grip"?, "tol"?, "clearance"?, "pattern"?}
-    keypoint: one of {"of": object, "rel": above|at|left_of|right_of|in_front_of|behind|beside|around, "dz"?, "dist"?},
+    keypoint: "where" (object|pass|point|step|marker|region|hand; guessed when absent) picks one of
+              {"of": object, "rel": above|at|left_of|right_of|in_front_of|behind|beside|around, "dz"?, "dist"?},
               {"via": over|around_left|around_right, "of": object, "clearance"?}, {"xyz": [x,y,z]}, {"dxyz": [..]},
               {"marker": "A"}, {"region": "left"}, {"from": "hand"}; plus "dx"/"dy" offsets, "height" (above the surface)
               and per point "speed", "force", "grip", "tol", "yaw", "tilt", "hold", "note", "pattern": true.
@@ -986,14 +1032,19 @@ def from_keypoints(spec, world):
         w["clearance"] = _num(spec["clearance"], 0.0, 0.3, "clearance")
     notes, pts, attrs = [], [], []
     prev = None
+    forms = []
     for i, kp in enumerate(kps):
         if not isinstance(kp, dict):
             raise TrajError(f"keypoint {i + 1} must be an object")
+        form, kp = keypoint_form(kp)
+        forms.append(form)
+        if form == "hand" and i > 0:
+            raise TrajError(f"keypoint {i + 1}: only the first point can be where the hand is now")
         for p, a in _resolve_kp(kp, i, w, prev, notes):
             pts.append(p)
             attrs.append(dict(a, _pat=bool(kp.get("pattern"))))
             prev = p
-    start = w.get("hand") if not (kps[0].get("from") in ("hand", "start", "here") or kps[0].get("at") in ("hand", "start")) else None
+    start = w.get("hand") if forms[0] != "hand" else None
     pts2, attrs2, lifted, n_prefix = lift_over_obstacles(pts, attrs, w, start=start)
     flags2 = [bool(a.get("_pat")) for a in attrs2]
     for name in lifted:
