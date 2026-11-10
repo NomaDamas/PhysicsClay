@@ -736,6 +736,28 @@ class Tasks(FixtureTasks):
             out.append((clear + (0.02 if yaw == 0.0 else 0.0), yaw))   # keep the grasp's own heading unless turning helps
         return [y for _, y in sorted(out, key=lambda s: -s[0])]
 
+    def _around_base(self, a, b, palm, r=0.32):
+        """A fixed arm carrying across its station (a drawer on one side, the sink on the other): a straight line from a to
+        b may pass right over the arm's own base, where it can't bring its hand (the Panda carrying a spoon from the top
+        drawer to the sink: 5 waypoints 7 cm short, 15 cm in front of its shoulder). -> a waypoint r out from the shoulder
+        (horizontally, on the side the line passes) at the carry height, or None when the line keeps clear."""
+        sh = np.asarray(self.rt.retargeter.robot_shoulders[palm], float)[:2]
+        a, b = np.asarray(a, float), np.asarray(b, float)
+        ab = b[:2] - a[:2]
+        L2 = float(np.dot(ab, ab))
+        if L2 < 0.04:                             # short moves don't pass the base
+            return None
+        t = float(np.clip(np.dot(sh - a[:2], ab) / L2, 0.0, 1.0))
+        q = a[:2] + t * ab
+        d = float(np.linalg.norm(q - sh))
+        if d >= r or not 0.1 < t < 0.9:
+            return None
+        u = (q - sh) / d if d > 1e-6 else np.array([1.0, 0.0])
+        if np.dot(u, [1.0, 0.0]) < 0:             # out over the station, never back over the robot
+            u = np.array([-u[1], u[0]]) if np.dot([-u[1], u[0]], [1.0, 0.0]) >= 0 else np.array([u[1], -u[0]])
+        m = sh + u * r
+        return np.array([m[0], m[1], max(a[2], b[2])])
+
     def _carry_z(self, name, a, b, off, margin=0.03):
         """Physics: the hand height (TCP z) at which `name`, held with TCP offset `off` from its centre, clears the top of
         the other movable objects it passes over on the straight way from hand point a to b (with `margin`); -inf when
@@ -1553,6 +1575,15 @@ class Tasks(FixtureTasks):
                     kps[-1] = np.array([a[0], a[1], zt])
                 elif zt > cur[2] + 0.01:
                     kps.append(np.array([cur[0], cur[1], zt]))
+                above = np.array([above[0], above[1], zt])
+        if n is not None and via is None and self.fx is not None and getattr(getattr(self.rt, "profile", None), "base", "") == "fixed":
+            a0 = kps[-1]                                    # generated worlds: a long carry across the station bows out
+            mid = self._around_base(a0, above, palm)        # around the arm's own base (it can't fold its hand onto it),
+            if mid is not None:                             # high enough for what it passes over on the new way
+                zt = max(self._carry_z(name, a0, mid, off), self._carry_z(name, mid, above, off), a0[2], above[2])
+                if zt > a0[2] + 0.005:
+                    kps.append(np.array([a0[0], a0[1], zt]))
+                kps.append(np.array([mid[0], mid[1], zt]))
                 above = np.array([above[0], above[1], zt])
         ia = len(kps)                             # from here on the hand has the place orientation
         kps += [above, place_hand]
