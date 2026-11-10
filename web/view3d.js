@@ -114,6 +114,7 @@ async function loadScene() {
       const alpha = Array.isArray(gm.rgba) && gm.rgba.length > 3 ? gm.rgba[3] : 1;
       const mat = new THREE.MeshStandardMaterial({ color: colorOf(gm.rgba), roughness: 0.62, metalness: 0.04, transparent: alpha < 1, opacity: alpha });
       const m = new THREE.Mesh(geo, mat); m.userData.sharedGeo = shared;
+      m.userData.gm = { name: gm.name || "", kind: gm.kind, dynamic: !!gm.dynamic };   // P2b: MR ghosts the static furniture
       m.castShadow = true; m.receiveShadow = true; m.matrixAutoUpdate = false;
       setPose(m, arr(gm.pos).length >= 3 ? gm.pos : [0, 0, 0], gm.mat);
       return [String(gm.id), m];
@@ -153,6 +154,7 @@ function reload() { // robot body switched: /scene.json changed
 }
 function floor(gm) {
   const g = new THREE.Group(), z = isXYZ(gm.pos) ? gm.pos[2] : 0;
+  g.userData.floor = true;            // P2b: hidden in passthrough (MR), where the real floor is
   const pl = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshStandardMaterial({ color: 0xeceef2, roughness: 0.95 }));
   pl.position.z = z; pl.receiveShadow = true; g.add(pl);
   const grid = new THREE.GridHelper(14, 56, 0xc4c7cf, 0xdcdfe5); grid.rotation.x = Math.PI / 2; grid.position.z = z + 0.001; g.add(grid);
@@ -443,7 +445,7 @@ function mount(container) {
   if (isActive) { loadScene(); startLoop(); }
 }
 function resize() {
-  if (!root || !renderer) return;
+  if (!root || !renderer || (renderer.xr && renderer.xr.isPresenting)) return;   // P2b: the headset owns the size while in VR
   const w = Math.max(1, root.clientWidth), h = Math.max(1, root.clientHeight);
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); needs = true;
 }
@@ -451,6 +453,7 @@ function startLoop() {
   if (loopOn) return; loopOn = true;
   const tick = () => {
     if (!isActive || !root) { loopOn = false; return; }
+    if (renderer.xr && renderer.xr.isPresenting) { needs = true; requestAnimationFrame(tick); return; }   // P2b: web/xr.js renders in VR
     if (orbit.update() || needs) { needs = false; renderer.render(scene, camera); } // render on demand (cheap when idle)
     requestAnimationFrame(tick);
   };
@@ -504,6 +507,7 @@ function focus(points, opts = {}) {
 window.PC3D = {
   mount, setState, active, reload, editPath, get editing() { return editing; }, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE, focus,
   get scene() { return scene; }, get camera() { return camera; }, get mounted() { return !!root; }, get isActive() { return isActive; },
+  get renderer() { return renderer; }, get geoms() { return scene ? scene.getObjectByName("geoms") : null; }, get sceneReady() { return sceneState === "ready"; },
   tableHit: (ev) => (renderer ? tableHit(ev) : null),
   get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); },
 };

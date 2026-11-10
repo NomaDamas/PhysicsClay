@@ -569,7 +569,8 @@ def worker(args, shared):
     t_phys = time.time()
     ip = lan_ip()
     print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}\n  phone : http://{ip}:{args.port}"
-          + (f"   (mic/camera on phone: https://{ip}:{args.https_port}, accept the certificate warning)" if args.https else ""),
+          + (f"   (mic/camera on phone: https://{ip}:{args.https_port}, accept the certificate warning)" if args.https else "")
+          + (f"\n  Quest : https://{ip}:{args.https_port} in the Meta Quest browser -> Enter VR / Enter MR (docs/vr.md)" if args.https else ""),
           flush=True)
 
     while shared.running:
