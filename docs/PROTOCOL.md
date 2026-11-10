@@ -1,6 +1,7 @@
 # PhysicsClay browser <-> server protocol (v2)
 
-One page (`web/index.html`) served by `pps/app.py` at `http(s)://<host>:8777/`. One WebSocket at `/ws`.
+One page (`web/index.html`) served by `pps/app.py` at `http://<host>:<port>/` (`make run`: http on 8780 and https on
+8781; `python -m pps.app` alone: 8777, and 8443 with `--https`). One WebSocket at `/ws`.
 Product framing: **"A new way to prompt Physical AI — turning human intent into spatial instructions robots can understand and execute."**
 Gemini (Live + Robotics-ER) understands intent; the server's physics (MuJoCo + IK) grounds and validates it; the robot says what it cannot do.
 
@@ -741,3 +742,33 @@ State: `recon = {jobs: [last 3 job summaries], providers: {id: usable}, depth: "
 
 Scene specs: an object may carry `mesh: <library id>` and `scale` (its kind stays a scene kind: cup, can, bottle, bowl,
 plate, fruit, vase, block, box). `/scene.json` mesh entries of imported objects add `colors: "/recon/colors/<lib>.bin"`.
+
+## v17 · Language of server messages
+
+Module: `pps/i18n.py`. PhysicsClay is a single-user app, so the server keeps **one** language for the messages it
+writes, not one per connection: the last browser that says which language it wants wins.
+
+* `{type: "hello", lang: "en" | "ko", client: "app"}`: the app sends it when its WebSocket opens. `lang` is
+  Settings → Language: *System* (the browser's `navigator.language`), *한국어* or *English*.
+* `{type: "settings", lang: "en" | "ko"}`: sent when that setting changes (`ko-KR`, `en-US` are accepted too; a
+  language the server doesn't have is ignored). The phone camera page (`/phone`) never sends either, so a phone
+  streaming its camera doesn't change the language. Handled by `pps/features/lang.py`.
+* `state.lang`: the language in effect (`"en"` until a client says otherwise).
+* What it covers: the sentences the server writes for people (task results and refusals, plan cards, safety, watch,
+  skills, worlds and fixtures, recon, calibration, gestures, zones, goal, the mock brain, and the summaries of agent
+  tool results shown in the conversation). Code writes them in English, and that English text is the message id.
+  `pps/i18n.py` renders them in the chosen language at one boundary, just before the state frame is sent:
+  `t(key, lang=None, **fmt)` renders a catalog key; `tr(text, lang=None)` translates an already-rendered English
+  message sentence by sentence by matching the catalog's English templates. A sentence that isn't in the catalog stays
+  English, so a new message is never lost, only untranslated. The localized copy is made copy-on-write in
+  `pps/app.py`; the LLM agent keeps reading the English frame (`Shared.state_en`).
+* Not covered: names in the scene (`red_block`, `kitchen_full`) and the agent's and Gemini's own replies (they
+  already answer in the language you use). The UI's own labels are translated in the browser, not here:
+  `web/ui/i18n-ko.js` swaps the fixed English chrome (buttons, headings, placeholders, tooltips) for Korean while
+  Settings → Language is 한국어 and puts the English back when it isn't; the help sheet has its own Korean.
+* The self test sends `{type: "hello", lang: "en"}`, so checks that match English sentences keep working.
+* The catalog: `pps/locale/ko_<area>.py`, `MESSAGES = {key: (English template, Korean template)}`. `{obj|을}` adds
+  the Korean particle that fits the value (을/를, 이/가, 은/는, 와/과, 으로/로); `{_s}`-style placeholders are
+  English-only. Text a placeholder captures is translated when it is a known phrase ("the red cup" → "빨간 컵").
+  `tests/test_i18n.py` checks that every key has both languages and the same format arguments, and that rendered
+  English sentences translate back to their own Korean. Adding a language means adding its column to these tuples.

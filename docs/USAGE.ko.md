@@ -19,21 +19,27 @@ macOS 또는 Linux, 그리고 [uv](https://docs.astral.sh/uv/), git, curl이 필
 ```bash
 git clone https://github.com/NomaDamas/PhysicsClay && cd PhysicsClay
 make setup                  # .venv, 파이썬 의존성, 로봇 모델, MediaPipe 모델
-make run ARGS="--https"     # 이 컴퓨터는 http://127.0.0.1:8777, 휴대폰·Quest는 https://<LAN IP>:8443
+make run                    # 이 컴퓨터는 http://127.0.0.1:8780, 휴대폰·Quest는 https://<LAN IP>:8781
 ```
 
-같은 컴퓨터의 Chrome, Edge, Safari에서 **http://127.0.0.1:8777** 을 엽니다. 휴대폰과 Quest용 주소는 터미널에
-출력됩니다.
+같은 컴퓨터의 Chrome, Edge, Safari에서 **http://127.0.0.1:8780** 을 엽니다. 터미널에 https 주소, 휴대폰 주소
+(`https://<LAN IP>:8781/phone`), Quest 주소가 출력되고, 앱의 **Use my phone** 을 누르면 휴대폰 주소가 QR 코드로
+나옵니다.
 
 | 하고 싶은 것 | 방법 |
 |---|---|
-| 노트북에서만 사용 | `make run` 만으로 충분합니다(8777 포트 http, 127.0.0.1에서는 브라우저가 카메라를 허용). |
-| 휴대폰 카메라 또는 Quest | `--https` 를 붙이세요. 기본 `make run` 에는 **HTTPS가 없습니다**. 8443 포트, 자체 서명 인증서라 경고를 한 번 수락해야 합니다. |
-| 포트 변경 | `make run PORT=9000 ARGS="--https --https-port 9443"` |
-| API 키 없음 | 그래도 동작합니다. 오프라인 규칙 파서와 브라우저 음성 인식을 씁니다. 키는 나중에 Settings에서 넣으면 됩니다. |
-| 오프라인 데모 두뇌 | `make run ARGS="--https --mock"` (각본 응답과 제스처, 키 불필요) |
-| 외부 공개 서버 | `make run ARGS="--https --byok"`: 방문자가 자기 키를 씁니다([SECURITY.md](../SECURITY.md)). |
+| 노트북에서만 사용 | `make run` 후 http://127.0.0.1:8780 (127.0.0.1에서는 브라우저가 카메라를 허용). |
+| 휴대폰 카메라 또는 Quest | 따로 할 일이 없습니다. `make run` 이 **8781 포트에서 https** 도 함께 엽니다. 자체 서명 인증서(처음 실행할 때 `certs/` 에 생성, 30일 유효)라 경고를 한 번 수락해야 합니다. |
+| http만 | `make run HTTPS=0` |
+| 포트 변경 | `make run PORT=9000 HTTPS_PORT=9001` |
+| API 키 없음 | 그래도 동작합니다. 오프라인 규칙 파서(영어·한국어)와 브라우저 음성 인식을 씁니다. 키는 나중에 Settings에서 넣으면 됩니다. |
+| 오프라인 데모 두뇌 | `make run ARGS="--mock"` (각본 응답과 제스처, 키 불필요) |
+| 물리 끄기 | `make run ARGS="--kinematic"` (예전 kinematic 모드, `PC_PHYSICS=0` 과 같음) |
+| 외부 공개 서버 | `make run ARGS="--byok"`: 방문자가 자기 키를 씁니다([SECURITY.md](../SECURITY.md)). |
+| 한국어 메시지 | Settings → **Language** → 한국어([음성과 언어](#음성과-언어)) |
 | 둘러보기 데모 | 상단 바의 **Demo** 를 누르세요. |
+
+`make` 없이 `python -m pps.app` 으로 실행하면 원래 기본값을 씁니다. http는 8777, https는 `--https` 를 줄 때만 8443.
 
 ## 1분 요약
 
@@ -163,8 +169,8 @@ LLM agent에게 요청합니다. 로봇이나 장면은 상단 바의 로봇 pil
 
 **휴대폰을 카메라로 쓰기**(노트북 카메라로 상체 전체가 안 잡힐 때 유용)
 
-1. 서버를 `--https` 로 실행합니다([빠른 시작](#빠른-시작)).
-2. **Use my phone** 을 누르면 QR 코드와 주소 `https://<노트북 LAN IP>:8443/phone` 이 나옵니다.
+1. 서버를 `make run` 으로 실행합니다(8781 포트에서 https를 엽니다. [빠른 시작](#빠른-시작)).
+2. **Use my phone** 을 누르면 QR 코드와 주소 `https://<노트북 LAN IP>:8781/phone` 이 나옵니다.
 3. **같은 Wi-Fi** 의 휴대폰으로 QR을 찍거나 주소를 입력합니다.
 4. 인증서 경고를 한 번 수락합니다. Safari: **Show Details → visit this website**. Chrome: **Advanced → Proceed**.
 5. **Start camera** 를 누르고 허용합니다. 노트북에 "Phone connected · streaming 15 fps"가 뜹니다.
@@ -172,8 +178,8 @@ LLM agent에게 요청합니다. 로봇이나 장면은 상단 바의 로봇 pil
 
 | 문제 | 해결 |
 |---|---|
-| 휴대폰에서 페이지가 안 열림 | 서버를 `--https` 로 켰는지, `https://`·8443 포트·터미널에 찍힌 LAN IP인지, 같은 Wi-Fi인지 확인(게스트 망은 기기끼리 막는 경우가 많음). |
-| "camera not available (needs https)" | `http://<IP>:8777` 로 연 경우입니다. https 주소를 쓰거나, 노트북 자체에서는 127.0.0.1로 여세요. |
+| 휴대폰에서 페이지가 안 열림 | `make run` 으로 켰는지(`HTTPS=0` 이 아닌지), `https://`·8781 포트·터미널에 찍힌 LAN IP인지, 같은 Wi-Fi인지 확인(게스트 망은 기기끼리 막는 경우가 많음). |
+| "camera not available (needs https)" | `http://<IP>:8780` 으로 연 경우입니다. https 주소를 쓰거나, 노트북 자체에서는 127.0.0.1로 여세요. |
 | 권한 거부 | 주소창 자물쇠 아이콘 → 사이트 설정에서 카메라 허용 후 새로고침. macOS는 시스템 설정 → 개인정보 보호 및 보안 → 카메라에서 브라우저도 허용. |
 | "No person detected", 제스처가 안 먹힘 | 머리, 어깨, 팔꿈치, 손이 다 보일 때까지 뒤로 물러나고, 카메라를 정면으로 보고, 조명을 밝게. |
 | 마네킹이나 가리키는 방향이 어긋남 | 카메라를 정면으로 보고, 화면에 한 사람만 나오게 하세요. |
@@ -222,7 +228,7 @@ LLM agent에게 요청합니다. 로봇이나 장면은 상단 바의 로봇 pil
 
 ## VR / MR (Quest)
 
-1. `make run ARGS="--https"`. 터미널에 `https://<LAN IP>:8443` 이 적힌 `Quest :` 줄이 나옵니다.
+1. `make run`. 터미널에 `https://<LAN IP>:8781` 이 적힌 `Quest :` 줄이 나옵니다.
 2. Quest를 같은 Wi-Fi에 연결 → Quest 브라우저 → 그 주소 → **Advanced → Proceed** 한 번.
 3. **3D / Robot eye** 옆의 **Enter VR** 또는 **Enter MR** 을 누릅니다. 손 추적(MR은 공간 데이터도)을 허용합니다.
 
@@ -237,7 +243,7 @@ LLM agent에게 요청합니다. 로봇이나 장면은 상단 바의 로봇 pil
 * **MR**: 실제 테이블의 앞쪽 왼쪽 모서리, 이어서 앞쪽 오른쪽 모서리를 집으면 로봇이 내 테이블 위에 섭니다.
   **Scan → Use my room** 은 테이블 위 물건을 장애물로 바꿉니다.
 * 메뉴의 **Go** 나 "go" 전에는 아무것도 실행되지 않습니다. VR에서도 안전 기능이 그대로 적용됩니다.
-* 인증서 없이 쓰려면: USB 연결 후 `adb reverse tcp:8777 tcp:8777`, 그리고 `http://localhost:8777`.
+* 인증서 없이 쓰려면: USB 연결 후 `adb reverse tcp:8780 tcp:8780`, 그리고 `http://localhost:8780`.
   전체 가이드: [docs/vr.md](vr.md)
 
 ## 안전
@@ -259,8 +265,12 @@ LLM agent에게 요청합니다. 로봇이나 장면은 상단 바의 로봇 pil
 * **Talk**: **Space** 또는 마이크. Gemini API 키(Settings → AI)가 있으면 Gemini Live와 실시간 음성 대화를 하고,
   "Send my camera to Gemini"가 켜져 있으면 카메라도 함께 봅니다. 키가 없으면 브라우저 음성 인식(Chrome, Edge, Safari)을
   쓰고, 언어는 Settings → AI → **Speech language** 를 따릅니다.
-* **언어**: 영어와 한국어 모두 됩니다. LLM agent와 Gemini Live는 사용자가 쓴 언어로 답하고, 오프라인 파서의 답은
-  영어입니다.
+* **언어**: 영어와 한국어 모두 됩니다(입력이든 음성이든). LLM agent와 Gemini Live는 사용자가 쓴 언어로 답하고,
+  오프라인 파서도 한국어를 알아듣습니다("빨간 컵을 그릇 옆으로 옮겨줘").
+* **로봇이 보내는 메시지**(작업 결과, 계획 카드, 안전, Watch, 스킬, 월드, 캘리브레이션 등)는 Settings → **Language**
+  를 따릅니다. *System*(브라우저 언어), *한국어*, *English* 중에서 고릅니다. 서버는 접속한 모두에게 언어 하나를
+  씁니다(마지막으로 고른 브라우저 기준). 아직 번역되지 않은 문장은 영어로 나옵니다. 동작 방식:
+  [PROTOCOL.md](PROTOCOL.md#v17--language-of-server-messages).
 * **로봇 목소리**: Settings → **Voice** 에서 영어와 한국어 목소리를 각각 고르고 **Test** 로 들어 봅니다. OpenAI 키
   (Settings → AI)가 있으면 자연스러운 OpenAI 음성을, 없으면 브라우저나 OS의 가장 좋은 음성을 씁니다.
 * **더 좋은 시스템 음성**: macOS는 시스템 설정 → 손쉬운 사용 → 읽기 및 말하기(Spoken Content) → 시스템 음성 →
@@ -274,6 +284,7 @@ LLM agent에게 요청합니다. 로봇이나 장면은 상단 바의 로봇 pil
 | 섹션 | 내용 |
 |---|---|
 | Appearance | System / Light / Dark |
+| Language | System / 한국어 / English: 로봇 메시지의 언어 |
 | Voice | 언어별 로봇 목소리, Test |
 | Robot | G1 humanoid 또는 UR5e arm(모든 로봇과 장면은 로봇 pill에서) |
 | Camera | 이 기기의 카메라 사용, 전면/후면 전환 |
@@ -349,7 +360,7 @@ LLM agent에게 요청합니다. 로봇이나 장면은 상단 바의 로봇 pil
 | 로봇 pill이 "connecting"에서 안 바뀜 | 서버가 꺼졌거나 재시작된 상태입니다. 터미널을 확인하고 페이지를 새로고침하세요. |
 | "I didn't catch an action" | 오프라인 파서가 못 알아들은 것입니다. [예시](#예시-명령)처럼 바꿔 말하거나, LLM 키를 넣으세요(Settings → Agent brain 또는 `.env`). |
 | Talk가 반응 없음 | 사이트의 마이크 권한을 허용하세요. Gemini 키가 없으면 Chrome, Edge, Safari를 쓰세요. 휴대폰은 https 주소로. |
-| 휴대폰이나 Quest가 접속 안 됨 | `--https` 로 실행, 같은 Wi-Fi에서 `https://<LAN IP>:8443`, 인증서 경고 한 번 수락. |
+| 휴대폰이나 Quest가 접속 안 됨 | `make run` 으로 실행(https가 기본으로 켜짐), 같은 Wi-Fi에서 `https://<LAN IP>:8781`, 인증서 경고 한 번 수락. |
 | 나를 못 보거나 제스처가 안 먹힘 | 상체와 손이 다 보이게 물러나고, 조명을 밝히고, 제스처를 가만히 유지. 데모, 가르치기, Mirror 중에는 제스처가 쉽니다. |
 | plan card에 "Can't do this" | 이유를 읽고, 제시된 대안을 고르거나 **Fix**, 장애물을 피하는 경로를 그리거나 장애물을 먼저 치우세요. |
 | 로봇이 멈춰서 기다림 | 안전 정지입니다. 물러나면 스스로 재개합니다. 힘 한계 정지 후에는 **I'm clear** 를 누르세요. |

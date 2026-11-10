@@ -37,7 +37,7 @@ jobs:
       - name: Install (core + dev)
         run: |
           uv venv .venv --python "$PYTHON_VERSION"
-          uv pip install --python .venv/bin/python -e ".[dev]"
+          uv pip install --python .venv/bin/python -e ".[dev,data]"
 
       - name: ruff check
         run: .venv/bin/python -m ruff check pps scripts tests
@@ -51,15 +51,29 @@ jobs:
   selftest:
     # The end-to-end self test (scripts/selftest.py + scripts/checks/*) against a real server, headless and offline:
     # synthetic person (--fake), the offline mock brain, no API keys (--byok), MuJoCo rendering through OSMesa.
-    name: self test (headless, offline)
+    # A hosted runner (2 cores, software rendering) can't run the whole suite with physics inside the time limit, so:
+    # every check in kinematic mode, and the physics-specific checks with physics on.
+    name: self test (headless, offline, ${{ matrix.mode }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: kinematic, all checks
+            physics: "0"
+            checks: ""
+          - mode: physics, physics checks
+            physics: "1"
+            checks: "physics,grasp_bench,paths,handover,worlds,safety"
     env:
       MUJOCO_GL: osmesa
       PYOPENGL_PLATFORM: osmesa
       PC_SELFTEST_OFFLINE: "1"
       PC_SELFTEST_PORT: "8935"
       PC_SELFTEST_LOG: selftest-server.log
+      PC_PHYSICS: ${{ matrix.physics }}
+      PC_SELFTEST_CHECKS: ${{ matrix.checks }}
     steps:
       - uses: actions/checkout@v7
 
@@ -82,8 +96,8 @@ jobs:
             models
           key: robot-assets-${{ hashFiles('scripts/setup.sh') }}
 
-      - name: Setup (scripts/setup.sh, extras vision)
-        run: PC_EXTRAS=vision PC_PYTHON="$PYTHON_VERSION" ./scripts/setup.sh
+      - name: Setup (scripts/setup.sh, extras vision + data)
+        run: PC_EXTRAS=vision,data PC_PYTHON="$PYTHON_VERSION" ./scripts/setup.sh
 
       - name: Offscreen rendering works
         timeout-minutes: 3
@@ -91,8 +105,8 @@ jobs:
           .venv/bin/python -c "import mujoco; m = mujoco.MjModel.from_xml_string('<mujoco><worldbody><geom size=\".1\"/></worldbody></mujoco>'); r = mujoco.Renderer(m, 64, 64); d = mujoco.MjData(m); mujoco.mj_forward(m, d); r.update_scene(d); print('render OK', r.render().shape)"
 
       - name: Self test
-        timeout-minutes: 25
-        run: timeout --signal=INT --kill-after=30 1440 .venv/bin/python scripts/selftest.py
+        timeout-minutes: 40
+        run: timeout --signal=INT --kill-after=30 2340 .venv/bin/python scripts/selftest.py
 
       - name: Server log
         if: failure()
@@ -102,7 +116,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v7
         with:
-          name: selftest-server-log
+          name: selftest-server-log-${{ matrix.physics }}
           path: selftest-server.log
           if-no-files-found: ignore
 

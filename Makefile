@@ -1,14 +1,19 @@
 # PhysicsClay developer commands. Everything runs from the repo's .venv (created by `make setup`).
-PY      ?= .venv/bin/python
-PORT    ?= 8777
-ARGS    ?=
-LINT    := pps scripts tests
+PY         ?= .venv/bin/python
+PORT       ?= 8780
+HTTPS_PORT ?= 8781
+HTTPS      ?= 1
+ARGS       ?=
+LINT       := pps scripts tests
+# https by default: phones only share their camera and mic over https (a self-signed certificate in certs/)
+HTTPS_ARGS := $(if $(filter 1 yes true on,$(HTTPS)),--https --https-port $(HTTPS_PORT),)
 
 .PHONY: help setup dev run test lint fmt selftest clean
 
 help:
 	@echo "make setup     .venv + deps + robot models (scripts/setup.sh; PC_EXTRAS=vision,data,dev,yolo to choose)"
-	@echo "make run       start the app on http://127.0.0.1:$(PORT)   (ARGS='--mock --https --webcam ...')"
+	@echo "make run       the app on http://127.0.0.1:$(PORT) and https://<lan-ip>:$(HTTPS_PORT) (phones)"
+	@echo "               HTTPS=0 for http only; ARGS='--mock --webcam --kinematic ...'"
 	@echo "make test      unit tests (pytest, no server)"
 	@echo "make selftest  end-to-end self test against an isolated server (PC_SELFTEST_OFFLINE=1 without keys)"
 	@echo "make lint      ruff check"
@@ -20,7 +25,7 @@ setup:
 dev: setup
 
 run:
-	$(PY) -m pps.app --port $(PORT) $(ARGS)
+	$(PY) -m pps.app --port $(PORT) $(HTTPS_ARGS) $(ARGS)
 
 test:
 	$(PY) -m pytest

@@ -35,6 +35,8 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
   };
   const G = () => window.PCGemini;
+  function langPref() { return LS.get("pc.uiLang", "system"); }   // "system" | "ko" | "en"
+  function uiLang() { const p = langPref(); return p === "ko" || p === "en" ? p : (/^ko/i.test(navigator.language || "") ? "ko" : "en"); }
   const settings = {
     get key() { return LS.get("pc.geminiKey", ""); },
     get openaiKey() { return LS.get("pc.openaiKey", ""); },
@@ -42,7 +44,7 @@
     get erModel() { return LS.get("pc.erModel", "") || (G() && G().DEFAULT_ER_MODEL) || ""; },
     get sendCam() { return LS.get("pc.sendCam", "1") === "1"; },
     get sendRobot() { return LS.get("pc.sendRobot", "0") === "1"; },
-    get lang() { return LS.get("pc.lang", "en-US"); },
+    get lang() { return LS.get("pc.lang", "") || (uiLang() === "ko" ? "ko-KR" : "en-US"); },   // talk (speech recognition)
     get mock() { return LS.get("pc.mock", "0") === "1"; },
   };
   const useProxy = () => !settings.key && !!(typeof state === "object" && state && state.server_gemini);
@@ -59,7 +61,10 @@
     const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
     try { ws = new WebSocket(url); } catch (e) { setTimeout(connect, 1500); return; }
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => { connected = true; if (LS.get("pc.mock", null) !== null) send({ type: "mock", enabled: settings.mock }); schedule(); maybeAutoDemo(); };
+    ws.onopen = () => {
+      connected = true; send({ type: "hello", lang: uiLang(), client: "app" });   // the server's messages in our language
+      if (LS.get("pc.mock", null) !== null) send({ type: "mock", enabled: settings.mock }); schedule(); maybeAutoDemo();
+    };
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") {
         let s; try { s = JSON.parse(ev.data); } catch (e) { return; }
@@ -180,7 +185,7 @@
       else if (!gotState) add("Waiting for the robot…", "info");
       else {
         if (t && t.message) add(t.message, t.status === "failed" ? "" : t.status === "done" ? "ok" : "warn");
-        for (const m of msgs) add(m, /too fast|slow/i.test(m) ? "warn" : "");
+        for (const m of msgs) add(m, /too fast|slow|너무 빨|느리게|감속/i.test(m) ? "warn" : "");
         if (!msgs.length && !(t && t.message)) add(mode === "FOLLOW" ? "Following you. Every pose is checked against my joints." : "Ready. Tap the table, draw a path, or just tell me what you want.", "ok");
       }
     }
@@ -749,10 +754,20 @@
     m = raw.match(/(?:^|[^A-Za-z])([A-F])(?:[^A-Za-z]|$)/); if (m && /[가-힣]/.test(raw)) return m[1];
     if (ALONG_RE.test(t)) return "along my path";
     if (DEICTIC_RE.test(t)) return "there";
+    m = raw.match(KO_NEAR); if (m) return `${m[1].trim()} 옆`;          // "그릇 옆으로" -> next to the bowl (pps/tasks.py resolve)
+    m = raw.match(KO_ONTO) || raw.match(KO_INTO);                       // "그릇 위에 / 안에", "그릇에 담아" -> the bowl
+    if (m && !KO_PLACE_WORD.test(m[1].trim())) return m[1].trim();
     for (const [k, v] of KO_REGION) if (t.includes(k)) return v;
     m = t.match(/\b(left|right|center|centre|middle|front|back)\b/); if (m) return normRegion(m[1]);
     return null;
   }
+  // Korean: "<color> <noun> 옆(에|으로)" next to it, "<noun> 위에 / 안에 / 속에" on or into it; the object is "<noun>을/를"
+  const KO_ADJ = "(?:(?:빨간|빨강|초록|녹색|파란|파랑|노란|노랑|하얀|흰|검은|검정|큰|작은)\\s*)?";
+  const KO_NEAR = new RegExp(`(${KO_ADJ}[가-힣A-Za-z0-9]+?)(?:의)?\\s*(?:옆|근처|곁)(?:에|으로|로|쪽)?(?:\\s|$)`);
+  const KO_ONTO = new RegExp(`(${KO_ADJ}[가-힣A-Za-z0-9]+?)(?:의)?\\s*(?:위|안|속)(?:에|으로|로|쪽)(?:\\s|$)`);
+  const KO_INTO = new RegExp(`(${KO_ADJ}[가-힣A-Za-z0-9]+?)에\\s*(?:담아|넣어|올려|놓아|놔|둬|옮겨)`);
+  const KO_PLACE_WORD = /^(테이블|탁자|책상|바닥|오른쪽|왼쪽|우측|좌측|가운데|중앙|앞|뒤|앞쪽|뒤쪽|여기|저기|거기)$/;   // regions, not objects
+  const KO_OBJ = new RegExp(`(${KO_ADJ}[가-힣A-Za-z0-9]+?)(?:을|를)(?:\\s|$)`);
   const ALONG_RE = /\b(along|follow(?:ing)?|via|using|by)\s+(?:my|the|this|that)\s+(path|route|line|trajectory)\b|경로대로|내 경로|경로로|경로 따라/;
   const DEICTIC_RE = /\b(over there|there|here|where i'?m pointing|where i point(?:ed)?|that spot|this spot)\b|저기|여기|거기|저쪽|이쪽/;
   function normRegion(x) { x = x.toLowerCase(); if (x === "centre" || x === "middle") return "center"; return x.length === 1 ? x.toUpperCase() : x; }
@@ -769,8 +784,9 @@
     m = raw.match(/["“']?(.+?)["”']?\s*(?:으로|로|라고)\s*(?:배워|기억해|저장해)/); if (m) return ["learn_skill", { name: m[1].trim() }];
     if (ALONG_RE.test(t) && (/\b(mug|cup|it|that|carry|move|bring|take|put)\b|\bmy\s+(path|route)\b|머그|컵|옮겨|내 경로|경로대로/.test(t))) return ["pick_place", { object: "mug", target: "along my path" }];
     if (/\b(follow|run|execute|go along|trace)\s+(the\s+)?(path|line|route)\b|경로/.test(t)) return ["follow_path", {}];
-    const objM = t.match(/\b(?:(?:red|green|blue)\s+)?(?:mug|cup|block|cube)\b/) || t.match(/(?:(?:빨간|초록|파란)\s*)?(?:머그|컵|블록|큐브)/), hasObj = !!objM;
-    const place = /\b(pick|put|move|place|bring|carry|set|drop|take)\b|옮겨|놓아|놔|올려|가져/.test(t);
+    const koObj = /[가-힣]/.test(raw) ? raw.match(KO_OBJ) : null;   // "빨간 컵을 …" -> "빨간 컵" (any noun the scene knows)
+    const objM = (koObj && [koObj[1].trim()]) || t.match(/\b(?:(?:red|green|blue)\s+)?(?:mug|cup|block|cube)\b/) || t.match(/(?:(?:빨간|초록|파란)\s*)?(?:머그|컵|블록|큐브)/), hasObj = !!objM;
+    const place = /\b(pick|put|move|place|bring|carry|set|drop|take)\b|옮겨|놓아|놔|올려|가져|넣어|담아|치워/.test(t);
     if (place && (hasObj || /\b(it|that)\b/.test(t) || /[가-힣]/.test(t))) {
       const target = findTarget(t, raw); const a = { object: objM ? objM[0] : "mug" }; if (target) a.target = target; return ["pick_place", a];
     }
@@ -1376,6 +1392,20 @@
     if (live.state === "off" || live.state === "error") setTalk("off");
     toast("Settings saved.");
   });
+  // Settings → Language: System / 한국어 / English. The server keeps one language for its messages (pps/i18n.py):
+  // we say it on connect ("hello") and when it changes ("settings"); the help sheet follows ("pc-lang" event).
+  function applyLang(announce) {
+    const L = uiLang(), pref = langPref();
+    document.documentElement.lang = L;
+    document.querySelectorAll("[data-lang-pick]").forEach((b) => { const on = b.dataset.langPick === pref; b.setAttribute("aria-checked", String(on)); b.setAttribute("aria-pressed", String(on)); });
+    if (!announce) return;
+    send({ type: "settings", lang: L });
+    if (rec.r && !LS.get("pc.lang", "")) rec.r.lang = settings.lang;
+    window.dispatchEvent(new CustomEvent("pc-lang", { detail: L }));
+    toast(L === "ko" ? "로봇의 메시지를 한국어로 보여줄게요." : "Robot messages in English.");
+  }
+  document.querySelectorAll("[data-lang-pick]").forEach((b) => b.addEventListener("click", () => { LS.set("pc.uiLang", b.dataset.langPick); applyLang(true); }));
+  applyLang(false);
   $("setMock").addEventListener("change", () => {
     const on = $("setMock").checked; LS.set("pc.mock", on ? "1" : "0"); send({ type: "mock", enabled: on }); schedule();
     addLine("sys", on ? "Mock AI on: offline gestures + scripted replies." : "Mock AI off.");
@@ -1590,7 +1620,7 @@
     // camera controls for feature modules (gestures guide, help): start/stop this device's camera, open the phone QR
     camera: { start: () => camEnable(true), stop: () => camEnable(false), phone: () => openPhone(), get on() { return !!phoneCam.stream; },
       get status() { return phoneCam.status; }, get error() { return phoneCam.error; } },
-    speak: (text, lang) => speak(text, lang) };
+    speak: (text, lang) => speak(text, lang), get lang() { return uiLang(); } };
   if (P3()) mount3d();
 
   setTalk("off");

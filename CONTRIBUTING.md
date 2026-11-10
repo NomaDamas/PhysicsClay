@@ -34,18 +34,23 @@ app falls back to browser speech recognition, a rule parser and the offline mock
 ## Run
 
 ```bash
-make run                                  # http://127.0.0.1:8777, synthetic person unless you add --webcam
+make run                                  # http://127.0.0.1:8780 + https://<lan-ip>:8781 (phones, Quest); synthetic person
 make run ARGS="--mock"                    # start with the offline mock brain (gestures + narration)
-make run ARGS="--https --webcam"          # also https://<lan-ip>:8443 so a phone can use its mic and camera
+make run ARGS="--webcam"                  # this computer's webcam on the server
+make run ARGS="--kinematic"               # no physics (same as PC_PHYSICS=0)
 make run ARGS="--byok"                    # public deployment: never use the server's keys; visitors bring their own
-make run PORT=8935                        # another port
+make run PORT=8935 HTTPS_PORT=8936        # other ports; HTTPS=0 serves http only
 ```
+
+`make run` creates a self-signed certificate in `certs/` on first start (never committed). `python -m pps.app` on its
+own keeps the older defaults: http on 8777, and https on 8443 only with `--https`.
 
 ## Test
 
 ```bash
 make lint                 # ruff check (pps, scripts, tests)
-make test                 # pytest unit suite: pure functions, no server, under a few seconds
+make test                 # pytest unit suite: pure functions, no server, a few seconds (includes the docs link check)
+node --test tests/*.mjs   # browser-side pure modules (XR alignment, QR)
 make selftest             # end-to-end: starts an isolated server and drives every feature over the WebSocket
 PC_SELFTEST_OFFLINE=1 PC_SELFTEST_PORT=8935 .venv/bin/python scripts/selftest.py   # as CI runs it: no keys
 ```
@@ -137,7 +142,8 @@ that need an API key must skip cleanly when no key is configured, because CI has
   UI changes.
 * Never commit `.env`, keys, `certs/`, recordings, datasets or large binaries (anything over about 1 MB needs a
   reason). Models and robot assets are fetched by setup.
-* Use ports other than the defaults (8777 and 8443) when you run a second server for tests.
+* Use ports other than the defaults (8780/8781 for `make run`, 8777/8443 for `python -m pps.app`) when you run a
+  second server for tests.
 
 ## Code of conduct and security
 

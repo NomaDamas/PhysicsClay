@@ -133,7 +133,7 @@
         paintTool(n, e);
         if (!have || !have.node) append(n);
         nodes.set(e.id, { node: n, sig });
-      } else if (!have && (e.kind === "error" || (e.kind === "thinking" && !/^thinking · /.test(e.text)))) {
+      } else if (!have && (e.kind === "error" || (e.kind === "thinking" && !/^(thinking|생각 중) · /.test(e.text)))) {
         const n = document.createElement("div"); n.className = "pca-note" + (e.kind === "error" ? " err" : ""); n.textContent = e.text;
         append(n); nodes.set(e.id, { node: n, sig });
       } else {

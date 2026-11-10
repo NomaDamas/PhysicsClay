@@ -15,8 +15,13 @@
     en: { camera: [["cam", "Turn on camera"], ["phone", "Use my phone"]], gestures: [["gestures", "Open the gestures guide"]], view: [["reset", "Reset the 3D view"]] },
     ko: { camera: [["cam", "카메라 켜기"], ["phone", "휴대폰을 카메라로"]], gestures: [["gestures", "제스처 안내 열기"]], view: [["reset", "3D 시점 초기화"]] },
   };
-  let lang = LS.get("pc.helpLang", "") || (/^ko/i.test(navigator.language || "") ? "ko" : "en");
+  let lang = LS.get("pc.helpLang", "") || (window.PC && window.PC.lang) || (/^ko/i.test(navigator.language || "") ? "ko" : "en");
   if (!C[lang]) lang = "en";
+  window.addEventListener("pc-lang", (ev) => {   // Settings → Language changed: the guide follows it
+    if (!C[ev.detail]) return;
+    lang = ev.detail; LS.set("pc.helpLang", "");
+    if (dlg.open) render();
+  });
 
   const css = document.createElement("style");
   css.id = "pc-help-css";

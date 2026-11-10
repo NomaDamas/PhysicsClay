@@ -68,7 +68,7 @@ def agent_tick(ctx):
     # a real LLM brain is in charge: the scripted mock must not narrate over it (app.py reads this flag)
     ctx.store["llm_brain"] = bool(a.available()) or bool(getattr(a, "busy", False))
     shared = getattr(ctx.push, "__self__", None)            # ctx.push is shared.push_cmd: read what browsers get
-    raw = getattr(shared, "state", None)
+    raw = getattr(shared, "state_en", None) or getattr(shared, "state", None)   # English: pps/i18n.py localizes
     if isinstance(raw, str) and raw not in ("", "{}"):
         a.snap.raw = raw
     else:                                                   # no published frame yet: a minimal snapshot from ctx

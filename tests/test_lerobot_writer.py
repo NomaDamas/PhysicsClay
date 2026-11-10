@@ -3,6 +3,7 @@ pyarrow + ffmpeg only (no lerobot import, no server, no MuJoCo).
 
     .venv/bin/python -m pytest tests/test_lerobot_writer.py -q
 """
+
 import json
 import subprocess
 import sys
@@ -33,14 +34,17 @@ def frames(ep, n, k):
     for i in range(n):
         q = np.array([i, -i, k], np.float32) + 0.5
         img = np.zeros((SIZE, SIZE, 3), np.uint8)
-        img[..., 0] = 40 * k + i % 7        # per-episode colour, so image stats differ
+        img[..., 0] = 40 * k + i % 7  # per-episode colour, so image stats differ
         img[: SIZE // 2, :, 1] = 200
         ep.add({"observation.state": q, "action": q + 1}, {"observation.images.front": img})
 
 
 def decode_frames(path):
-    out = subprocess.run([L.ffmpeg_exe(), "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
-                         capture_output=True, check=True).stdout
+    out = subprocess.run(
+        [L.ffmpeg_exe(), "-v", "error", "-i", str(path), "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True,
+        check=True,
+    ).stdout
     return len(out) // (SIZE * SIZE * 3)
 
 
@@ -73,7 +77,9 @@ def test_info_json(ds):
     assert f["observation.state"] == {"dtype": "float32", "shape": [N_J], "names": NAMES}
     v = f["observation.images.front"]
     assert v["dtype"] == "video" and v["shape"] == [SIZE, SIZE, 3] and v["names"] == ["height", "width", "channels"]
-    assert v["info"]["video.codec"] == "h264" and v["info"]["video.pix_fmt"] == "yuv420p" and v["info"]["video.fps"] == FPS
+    assert (
+        v["info"]["video.codec"] == "h264" and v["info"]["video.pix_fmt"] == "yuv420p" and v["info"]["video.fps"] == FPS
+    )
     for k in ("timestamp", "frame_index", "episode_index", "index", "task_index"):
         assert k in f and f[k]["shape"] == [1]
 
@@ -87,7 +93,7 @@ def test_parquet_rows(ds):
         t = pq.read_table(p)
         assert t.num_rows == n == rec["length"]
         cols = t.column_names
-        assert "observation.images.front" not in cols                 # videos live in mp4 files
+        assert "observation.images.front" not in cols  # videos live in mp4 files
         st = np.array(t.column("observation.state").to_pylist(), np.float32)
         assert st.shape == (n, N_J)
         np.testing.assert_allclose(np.array(t.column("action").to_pylist()), st + 1)
@@ -116,9 +122,14 @@ def test_jsonl_and_videos(ds):
     assert [e["success"] for e in eps] == [True, False, True]
     assert eps[0]["tasks"] == ["put the red cup next to the bowl"] and eps[0]["scene"] == "table"
     tasks = L.read_jsonl(w.root / "meta" / "tasks.jsonl")
-    assert tasks == [{"task_index": 0, "task": "put the red cup next to the bowl"}, {"task_index": 1, "task": "reach to the left"}]
+    assert tasks == [
+        {"task_index": 0, "task": "put the red cup next to the bowl"},
+        {"task_index": 1, "task": "reach to the left"},
+    ]
     for e in eps:
-        vp = w.root / L.VIDEO_PATH.format(episode_chunk=0, video_key="observation.images.front", episode_index=e["episode_index"])
+        vp = w.root / L.VIDEO_PATH.format(
+            episode_chunk=0, video_key="observation.images.front", episode_index=e["episode_index"]
+        )
         assert vp.exists() and decode_frames(vp) == e["length"]
     assert not any((w.root / ".tmp").glob("*.mp4"))
 
@@ -132,7 +143,7 @@ def test_stats(ds):
     assert s0["observation.state"]["count"] == [12]
     img = s0["observation.images.front"]
     assert np.array(img["mean"]).shape == (3, 1, 1) and 0.0 <= img["min"][1][0][0] <= img["max"][1][0][0] <= 1.0
-    assert abs(img["mean"][1][0][0] - 100 / 255) < 0.05             # half the green channel at 200
+    assert abs(img["mean"][1][0][0] - 100 / 255) < 0.05  # half the green channel at 200
     agg = json.loads((w.root / "meta" / "stats.json").read_text())
     allq = np.concatenate([np.array([[i, -i, k] for i in range(n)], float) + 0.5 for n, k in ((12, 0), (7, 1), (5, 2))])
     np.testing.assert_allclose(agg["observation.state"]["mean"], allq.mean(0), atol=1e-5)
@@ -148,7 +159,7 @@ def test_discard_last_and_resume(ds):
     assert info["total_episodes"] == 2 and info["total_frames"] == 19 and info["total_tasks"] == 1
     assert not (w.root / L.DATA_PATH.format(episode_chunk=0, episode_index=2)).exists()
     assert len(L.read_jsonl(w.root / "meta" / "episodes_stats.jsonl")) == 2
-    w2 = L.LeRobotWriter(w.root, FPS, FEATURES, robot_type="panda")        # reopen: appends after the last episode
+    w2 = L.LeRobotWriter(w.root, FPS, FEATURES, robot_type="panda")  # reopen: appends after the last episode
     e = w2.episode("reach to the right")
     frames(e, 4, 3)
     r = w2.finalize(e, success=True)

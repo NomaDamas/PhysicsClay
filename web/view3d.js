@@ -139,7 +139,7 @@ async function loadScene() {
     scene.add(g);
     sceneState = "ready"; say(""); needs = true; console.info("[3d] scene ready:", geomObjs.size, "geoms", Math.round(performance.now()) + " ms");
     applyPoses();
-    if (loadGen > 0) frameScene(g);   // another robot / scene: frame it instead of the default table preset
+    frameScene(g, loadGen > 0 ? 380 : 0);   // every world (the first one too): robot, work surface and the person in view
   } catch (e) {
     if (gen !== loadGen) return;
     console.warn("[3d] scene load failed:", e && e.message || e);
@@ -148,18 +148,82 @@ async function loadScene() {
   }
 }
 let loadGen = 0;
-// Fit the camera to the robot + work surface after a world change (ignore huge things like the floor plane).
-function frameScene(g) {
+// Where the co-presence person stands (pps/features/copresence.py: across the work surface, facing the robot), or null
+// when co-presence is off. Before the first state frame it is the server's own rule for the current surface.
+function personSpot() {
+  const c = state && state.copresence;
+  if (c && c.on === false) return null;
+  if (c && Array.isArray(c.anchor) && c.anchor.length >= 2 && isFinite(c.anchor[0]) && isFinite(c.anchor[1])) return [c.anchor[0], c.anchor[1]];
+  return [Math.min(1.6, TABLE.x1 + 0.33), (TABLE.y0 + TABLE.y1) / 2];
+}
+// Fit the camera to the robot + work surface + the person after a world change (ignore huge things like the floor plane).
+// Seen from the side (the robot at one end, the person at the other, the work surface between them), so the person
+// never stands between the camera and the work area; of the two sides the one with fewer things in the way wins (a
+// fume hood, racks or a wall beside the bench). The fit keeps the top corners (view tabs, robot-eye inset) and the
+// preset bar clear, at any aspect (phones too). If you orbit round behind the person, web/ui/copresence.js fades it.
+// view directions to try (the first that sees most wins; the steep ones look over racks and shelves in the way), and
+// the NDC window the scene is fitted into
+const FRAME = { dirs: [[0.1, -1.0, 0.62], [0.1, 1.0, 0.62], [0.1, -1.0, 1.4], [0.1, 1.0, 1.4]], x: 0.92, top: 0.58, bottom: -0.86 };
+function frameScene(g, ms = 380) {
   if (!camera || !g) return;
-  const box = new THREE.Box3(), b = new THREE.Box3(), size = new THREE.Vector3(), mid = new THREE.Vector3();
+  const boxes = [], box = new THREE.Box3(), size = new THREE.Vector3(), mid = new THREE.Vector3();
   // big rooms (issue #48): frame the station around the robot, not the far racks and walls
-  g.traverse((o) => { if (!o.isMesh) return; b.setFromObject(o); b.getSize(size); b.getCenter(mid); if (size.x < 4 && size.y < 4 && size.z < 4 && Math.hypot(mid.x - 0.3, mid.y) < 1.3) box.union(b); });
+  g.traverse((o) => {
+    if (!o.isMesh) return;
+    const b = new THREE.Box3().setFromObject(o); b.getSize(size); b.getCenter(mid);
+    if (size.x < 4 && size.y < 4 && size.z < 4 && Math.hypot(mid.x - 0.3, mid.y) < 1.3) { boxes.push(b); box.union(b); }
+  });
   if (box.isEmpty()) return;
-  const c = box.getCenter(new THREE.Vector3()), r = Math.max(0.6, box.getSize(size).length() * 0.5);
-  const dir = new THREE.Vector3(0.25, -1.0, 0.8).normalize();   // from the side and above: back walls (kitchen backsplash, shelf) never block the view
-  CAMS.reset = [[c.x + dir.x * r * 2.2, c.y + dir.y * r * 2.2, c.z + dir.z * r * 2.2], [c.x, c.y, c.z]];
+  const ps = personSpot();
+  if (ps) { const b = new THREE.Box3(new THREE.Vector3(ps[0] - 0.15, ps[1] - 0.3, 0), new THREE.Vector3(ps[0] + 0.15, ps[1] + 0.3, 1.72)); boxes.push(b); box.union(b); }
+  // the band around the work surface: from a little under it (legs and feet below may leave the frame) to the heads
+  const zc = Math.max(0, TABLE.z - 0.45);
+  for (const b of boxes) if (b.max.z > zc) b.min.z = Math.max(b.min.z, zc);
+  const c = box.getCenter(new THREE.Vector3());
+  const tv = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), th = tv * Math.max(0.3, camera.aspect || 1);
+  function fit(dir) {
+    const back = new THREE.Vector3(...dir).normalize();          // from the target toward the camera
+    const f = back.clone().negate(), right = new THREE.Vector3().crossVectors(f, new THREE.Vector3(0, 0, 1)).normalize();
+    const up = new THREE.Vector3().crossVectors(right, f), pts = [], v = new THREE.Vector3();
+    for (const b of boxes) if (b.max.z > zc) for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+      v.set(x, y, z).sub(c); pts.push([v.dot(right), v.dot(up), v.dot(f)]);
+    }
+    // the nearest distance at which every corner fits: some shift (sx, sy) of the camera across the view puts every x
+    // inside the side margins and every y between FRAME.bottom and FRAME.top
+    const fits = (d) => {
+      let xl = -Infinity, xh = Infinity, yl = -Infinity, yh = Infinity;
+      for (const [x, y, z] of pts) {
+        const depth = d + z; if (depth < 0.1) return null;
+        xl = Math.max(xl, x - FRAME.x * depth * th); xh = Math.min(xh, x + FRAME.x * depth * th);
+        yl = Math.max(yl, y - FRAME.top * depth * tv); yh = Math.min(yh, y - FRAME.bottom * depth * tv);
+      }
+      return xl <= xh && yl <= yh ? [(xl + xh) / 2, (yl + yh) / 2] : null;
+    };
+    let d0 = ZOOM.min, d1 = Math.min(ZOOM.max, 6);
+    if (fits(d1) === null) d0 = d1;
+    for (let i = 0; i < 40 && d1 - d0 > 1e-3; i++) { const dm = (d0 + d1) / 2; if (fits(dm) === null) d0 = dm; else d1 = dm; }
+    const [sx, sy] = fits(d1) || [0, 0], t = c.clone().addScaledVector(right, sx).addScaledVector(up, sy);
+    return { p: t.clone().addScaledVector(back, d1), t };
+  }
+  // what the camera must see: the work surface, the robot (near the origin) and the person's upper body
+  const look = [];
+  for (const fx of [0.15, 0.5, 0.85]) for (const fy of [0.15, 0.5, 0.85]) look.push([TABLE.x0 + (TABLE.x1 - TABLE.x0) * fx, TABLE.y0 + (TABLE.y1 - TABLE.y0) * fy, TABLE.z + 0.03, 0.05, 1]);
+  look.push([0, 0, TABLE.z + 0.25, 0.3, 2]);
+  if (ps) look.push([ps[0], ps[1], 1.3, 0.05, 2]);
+  const ray = new THREE.Raycaster(), to = new THREE.Vector3();
+  g.updateMatrixWorld(true);
+  const blocked = (p) => look.reduce((n, [x, y, z, tol, w]) => {
+    to.set(x, y, z).sub(p); const dist = to.length(); ray.set(p, to.normalize()); ray.far = Math.max(0, dist - tol);
+    return n + (ray.intersectObject(g, true).some((h) => h.object.isMesh && !(h.object.parent && h.object.parent.userData.floor)) ? w : 0);
+  }, 0);
+  let best = null;
+  FRAME.dirs.forEach((dir, i) => {
+    const v = fit(dir); v.score = blocked(v.p) + (i >= 2 ? 1.5 : 0);   // the side views read better: steep only when it sees more
+    if (!best || v.score < best.score) best = v;
+  });
+  CAMS.reset = [[best.p.x, best.p.y, best.p.z], [best.t.x, best.t.y, best.t.z]];
   CAMS.stage = CAMS.reset;
-  camPreset("reset");
+  camPreset("reset", ms);
 }
 function reload() { // robot body switched: /scene.json changed
   loadGen++; clearTimeout(retryTimer);

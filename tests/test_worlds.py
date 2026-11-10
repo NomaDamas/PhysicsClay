@@ -11,7 +11,13 @@ from pps.world import objects as OBJ
 from pps.world import rooms, scene
 
 SEEDS = (0, 1, 2)
-KIND_BODIES = {"arm": "ur5e", "humanoid": "g1", "bimanual": "aloha", "mobile_manipulator": "tidybot", "quadruped_arm": "spot"}
+KIND_BODIES = {
+    "arm": "ur5e",
+    "humanoid": "g1",
+    "bimanual": "aloha",
+    "mobile_manipulator": "tidybot",
+    "quadruped_arm": "spot",
+}
 _BUILT = {}
 
 
@@ -27,7 +33,7 @@ def settled(w, sec=0.4):
     m = w.model
     d = mujoco.MjData(m)
     if w.home_q is not None:
-        d.qpos[:len(w.home_q)] = w.home_q
+        d.qpos[: len(w.home_q)] = w.home_q
     mujoco.mj_forward(m, d)
     for _ in range(int(sec / m.opt.timestep)):
         mujoco.mj_step(m, d)
@@ -38,9 +44,13 @@ def settled(w, sec=0.4):
 @pytest.mark.parametrize("tpl", list(rooms.ROOMS))
 def test_same_seed_same_layout_and_seeds_differ(tpl):
     a, b = rooms.generate(tpl, 3), rooms.generate(tpl, 3)
-    assert a == b                                           # deterministic, physics settling included
+    assert a == b  # deterministic, physics settling included
     c = rooms.generate(tpl, 4)
-    sig = lambda s: (s["surface"], [(f["name"], f["pos"], f["size"]) for f in s["fixtures"]], [(o["name"], o["pos"]) for o in s["objects"]])
+    sig = lambda s: (
+        s["surface"],
+        [(f["name"], f["pos"], f["size"]) for f in s["fixtures"]],
+        [(o["name"], o["pos"]) for o in s["objects"]],
+    )
     assert sig(a) != sig(c)
 
 
@@ -48,7 +58,9 @@ def test_same_seed_same_layout_and_seeds_differ(tpl):
 def test_generated_spec_is_sane(tpl):
     s = rooms.generate(tpl, 1)
     sf = s["surface"]
-    assert sf["x"][0] == pytest.approx(0.22) and sf["x"][1] > 0.4 and sf["y"][0] < 0 < sf["y"][1]   # the station: near edge at 0.22
+    assert (
+        sf["x"][0] == pytest.approx(0.22) and sf["x"][1] > 0.4 and sf["y"][0] < 0 < sf["y"][1]
+    )  # the station: near edge at 0.22
     assert s["fixtures"] and s["objects"]
     assert {f["kind"] for f in s["fixtures"]} <= set(FX.KINDS)
     names = [o["name"] for o in s["objects"]]
@@ -61,8 +73,18 @@ def test_generated_spec_is_sane(tpl):
 
 def test_listing_and_templates():
     ids = [t["id"] for t in rooms.listing()]
-    assert set(ids) == {"kitchen_full", "dining", "living_room", "laundry", "assembly_line", "warehouse", "machine_tending",
-                        "electronics_bench", "lab", "packing"}
+    assert set(ids) == {
+        "kitchen_full",
+        "dining",
+        "living_room",
+        "laundry",
+        "assembly_line",
+        "warehouse",
+        "machine_tending",
+        "electronics_bench",
+        "lab",
+        "packing",
+    }
     assert {t["id"] for t in scene.templates()} >= set(ids)
 
 
@@ -88,8 +110,8 @@ def test_normalize_keeps_a_generated_world_and_adds_objects_on_the_surface():
     spec, _ = scene.normalize({"template": "warehouse", "seed": 2, "objects": [{"name": "red cup", "kind": "cup"}]})
     assert spec["fixtures"] and spec["surface"]["top"] > 0.5
     cup = next(o for o in spec["objects"] if o["name"] == "red_cup")
-    assert len(cup["pos"]) == 2                              # placed on the pick table like any added object
-    again, _ = scene.normalize(spec)                         # round trip (state.world.scene -> world set)
+    assert len(cup["pos"]) == 2  # placed on the pick table like any added object
+    again, _ = scene.normalize(spec)  # round trip (state.world.scene -> world set)
     assert [o["name"] for o in again["objects"]] == [o["name"] for o in spec["objects"]]
     assert again["fixtures"] == spec["fixtures"]
 
@@ -100,11 +122,18 @@ def test_normalize_keeps_a_generated_world_and_adds_objects_on_the_surface():
 def test_builds_with_physics_and_settles(tpl, seed):
     w = built(tpl, seed)
     m = w.model
-    assert w.fixtures is not None and m.geom("table") is not None    # the main work surface is the geom called table
-    assert w.ik_model.nq < m.nq                              # planner: robot only; plant: + objects and fixture joints
+    assert w.fixtures is not None and m.geom("table") is not None  # the main work surface is the geom called table
+    assert w.ik_model.nq < m.nq  # planner: robot only; plant: + objects and fixture joints
     m, d = settled(w, 0.3)
-    obj_geoms = {g for g in range(m.ngeom) if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.geom_bodyid[g]) or "").startswith("obj_")}
-    worst = min([d.contact[i].dist for i in range(d.ncon) if d.contact[i].geom1 in obj_geoms or d.contact[i].geom2 in obj_geoms] or [0.0])
+    obj_geoms = {
+        g
+        for g in range(m.ngeom)
+        if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.geom_bodyid[g]) or "").startswith("obj_")
+    }
+    worst = min(
+        [d.contact[i].dist for i in range(d.ncon) if d.contact[i].geom1 in obj_geoms or d.contact[i].geom2 in obj_geoms]
+        or [0.0]
+    )
     assert worst > -0.006, f"{tpl}/{seed}: objects interpenetrate by {-worst * 1000:.1f} mm"
     assert np.all(np.isfinite(d.qpos))
 
@@ -113,6 +142,7 @@ def test_builds_with_physics_and_settles(tpl, seed):
 def test_every_robot_kind_that_fits_builds_clear_of_the_furniture(tpl):
     """One body of every kind that fits: it builds (planner + plant) and stands / is bolted clear of the fixtures."""
     from pps.world.runtime import make_runtime
+
     fits = set(rooms.ROOMS[tpl]["robots"])
     for kind, rid in KIND_BODIES.items():
         if rid not in fits:
@@ -123,9 +153,14 @@ def test_every_robot_kind_that_fits_builds_clear_of_the_furniture(tpl):
         pl, m, d = rt.plant, rt.model, rt.data
         for _ in range(10):
             pl.step(1 / 30, rt.configuration.q, rt.base_pose())
-        clash = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, c.geom2 if m.geom_bodyid[c.geom1] in pl.robot_bodies else c.geom1)
-                 for c in (d.contact[i] for i in range(d.ncon))
-                 if (m.geom_bodyid[c.geom1] in pl.robot_bodies) != (m.geom_bodyid[c.geom2] in pl.robot_bodies) and c.dist < -0.003]
+        clash = [
+            mujoco.mj_id2name(
+                m, mujoco.mjtObj.mjOBJ_GEOM, c.geom2 if m.geom_bodyid[c.geom1] in pl.robot_bodies else c.geom1
+            )
+            for c in (d.contact[i] for i in range(d.ncon))
+            if (m.geom_bodyid[c.geom1] in pl.robot_bodies) != (m.geom_bodyid[c.geom2] in pl.robot_bodies)
+            and c.dist < -0.003
+        ]
         assert not [n for n in clash if n != "floor"], f"{tpl}: the {rid} starts inside {clash}"
 
 
@@ -135,9 +170,9 @@ def test_fixture_joints_stay_within_limits(tpl):
     m = w.model
     d = mujoco.MjData(m)
     if w.home_q is not None:
-        d.qpos[:len(w.home_q)] = w.home_q
+        d.qpos[: len(w.home_q)] = w.home_q
     parts = [p for p in w.fixtures.parts if p["kind"] not in ("slat", "roller")]
-    for p in parts:                                          # push every part hard toward open
+    for p in parts:  # push every part hard toward open
         j = m.joint(p["joint"]).id
         d.qfrc_applied[m.jnt_dofadr[j]] = 60.0 if p["type"] == "slide" else 12.0
     for _ in range(int(0.6 / m.opt.timestep)):
@@ -154,6 +189,7 @@ def test_fixture_joints_stay_within_limits(tpl):
 
 def test_conveyor_carries_parts_and_stops_at_the_eye():
     from pps.world.runtime import make_runtime
+
     w = built("assembly_line", 1)
     rt = make_runtime(w)
     pl = rt.plant
@@ -165,13 +201,14 @@ def test_conveyor_carries_parts_and_stops_at_the_eye():
             break
     ax = np.asarray(belt["axis"]) * np.sign(belt["speed"])
     travelled = max(float(np.dot(pl.d.xpos[o["bid"]] - start[n], ax)) for n, o in pl.objects.items())
-    assert travelled > 0.1                                   # parts ride the moving slats
-    assert belt["held"] in pl.objects                        # and the belt stops for the one at the photo-eye
+    assert travelled > 0.1  # parts ride the moving slats
+    assert belt["held"] in pl.objects  # and the belt stops for the one at the photo-eye
 
 
 def test_kinematic_world_has_fixtures_as_mocap():
     w = built("kitchen_full", 0, "panda", physics=False)
     from pps.world.runtime import make_runtime
+
     rt = make_runtime(w)
     fx = rt.fixtures
     p = fx.by_name["drawer_1"]
@@ -186,6 +223,7 @@ def test_kinematic_world_has_fixtures_as_mocap():
 def test_find_parts_and_containers_by_what_people_say():
     from pps import tasks as T
     from pps.world.runtime import make_runtime
+
     w = built("kitchen_full", 0, "panda", physics=False)
     T.apply_surface(w.surface, w.regions)
     tk = T.Tasks(make_runtime(w), w.kinds)
@@ -194,7 +232,7 @@ def test_find_parts_and_containers_by_what_people_say():
     assert tk.find_part("drawer_3")[0]["name"] == "drawer_3"
     assert tk.find_part("the fridge door")[0]["name"] == "fridge_door"
     p, why = tk.find_part("the drawer")
-    assert p is None and why.startswith("Which")             # several: ask
+    assert p is None and why.startswith("Which")  # several: ask
     assert tk.find_container("the sink")[0]["name"] == "sink"
     assert "spoon" in tk.contents(tk.find_container("drawer_1")[0])
     w2 = built("lab", 1, "panda", physics=False)
