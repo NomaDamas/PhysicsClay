@@ -512,6 +512,7 @@
     ws.onopen = () => {
       if (S.ws !== ws) return;
       S.wsOpen = true; S.everOpen = true; S.retry = 0; S.lastMsgAt = performance.now();
+      try { ws.send(JSON.stringify({ type: "streams", streams: [] })); } catch (e) { /* closing */ }   // no pictures: state only
       if (S.stream) { S.measureFrom = S.lastMsgAt; S.sendTimes = []; S.fpsShown = null; }   // fps counts from the reconnect
       render();
     };
@@ -519,7 +520,7 @@
       if (S.ws !== ws) return;
       S.lastMsgAt = performance.now();
       if (typeof ev.data === "string") S.pendingText = ev.data;   // parsed at most 4x a second in uiTick
-      // binary frames (0x01 camera echo, 0x02 robot view, 0x03 pip) are not used here
+      // no binary frames: the page asked for no pictures (the server neither renders nor sends them for it)
     };
     ws.onclose = () => { if (S.ws === ws) dropSocket(); };
     ws.onerror = () => { /* onclose follows */ };
