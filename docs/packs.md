@@ -64,5 +64,5 @@ spec and in `state.world.scene`. `state.world.packs` lists the packs and `state.
 ## Generated worlds as packs (issue #48)
 
 `{"type": "world", "op": "pack", "name": "kitchen_full" | "warehouse" | ..., "seed": 7}` loads a generated home or
-industrial site the same way (the current robot when it fits there, else a Panda); the agent's `load_pack` takes the
+industrial site the same way (the current robot when it fits there, else a Panda); the agent's `load_world` takes the
 same names. Templates, fixtures and seeds: `docs/worlds.md`.

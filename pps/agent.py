@@ -18,6 +18,7 @@ State:    agent = {available, busy, model, confirm, byok, events: [{id, kind, te
 import ipaddress
 import json
 import os
+import random
 import socket
 import ssl
 import threading
@@ -541,11 +542,15 @@ def tool_specs(st, confirm=True):
     if has_world:
         T.append(_fn("load_pack", "Set up a demo pack scene: weld_cell (steel plates with a straight and an L seam, a welding torch on "
                                   "the arm), gym (bench, 20 kg barbell; coach squats, spot lifts), workshop (wrench, screwdriver, brush; "
-                                  "'when I put my hand out, give me the wrench' is on), or a generated world: " + ", ".join(WORLDS) +
-                                  " ('a messy kitchen' -> kitchen_full, 'a warehouse' -> warehouse). 'Set up a weld cell' -> weld_cell.",
-                     {"name": {"type": "string", "enum": ["weld_cell", "gym", "workshop"] + list(WORLDS)},
-                      "seed": {"type": "integer", "description": "Generated worlds: which variation (another number = a different layout)."}},
-                     ["name"]))
+                                  "'when I put my hand out, give me the wrench' is on). 'Set up a weld cell' -> weld_cell.",
+                     {"name": {"type": "string", "enum": ["weld_cell", "gym", "workshop"]}}, ["name"]))
+        T.append(_fn("load_world", "Build a generated home or industrial site: kitchen_full (counter with drawers, sink, fridge, "
+                                   "microwave, clutter), dining, living_room, laundry, assembly_line (running conveyor), warehouse (totes, "
+                                   "racks, pallet), machine_tending (CNC with a sliding door), electronics_bench, lab (tube racks, "
+                                   "centrifuge), packing. 'A messy kitchen' -> kitchen_full. The current robot stays when it fits there. "
+                                   "Another seed is another layout of the same room ('shuffle it').",
+                     {"name": {"type": "string", "enum": list(WORLDS)},
+                      "seed": {"type": "integer", "description": "Which layout (omit for a random one)."}}, ["name"]))
     fx_world = bool(world_summary(st))
     if "pick_place" in caps and fx_world:          # issue #48: drawers, doors, containers, conveyors, multi-step plans
         FX = {"type": "string", "description": "A drawer / door / lid by name or label from the context's world.fixtures "
@@ -1340,10 +1345,14 @@ class Agent:
         return self._skill(msg, 10)[2]
 
     def t_load_pack(self, a, confirm):
-        msg = {"op": "pack", "name": str(a.get("name") or "")}
-        if a.get("seed") not in (None, ""):
-            msg["seed"] = a.get("seed")
-        return self._world(msg)
+        return self._world({"op": "pack", "name": str(a.get("name") or "")})
+
+    def t_load_world(self, a, confirm):
+        try:
+            seed = int(a.get("seed")) if a.get("seed") not in (None, "") else random.randint(0, 99999)
+        except (TypeError, ValueError):
+            seed = random.randint(0, 99999)
+        return self._world({"op": "pack", "name": str(a.get("name") or ""), "seed": seed}, 60)
 
     # ---- issue #48: fixtures, containers, multi-step plans (pps/manip.py, pps/features/fixtures.py)
     def t_open_fixture(self, a, confirm):
@@ -1483,7 +1492,7 @@ def _summary(name, res):
         return res.get("message") or (f"{len(zs)} zone{'s' if len(zs) != 1 else ''}: " + ", ".join(z.get("label") or z.get("id") for z in zs) if zs else "no zones")
     if name == "list_skills" and res.get("ok"):
         return f"{len(res.get('skills') or [])} skills: " + ", ".join(k.get("name") for k in (res.get("skills") or [])[:6])
-    if name in ("set_robot", "build_scene", "add_object", "remove_object", "load_pack") and res.get("ok"):
+    if name in ("set_robot", "build_scene", "add_object", "remove_object", "load_pack", "load_world") and res.get("ok"):
         r = res.get("robot") or {}
         return f"{r.get('label') or r.get('id') or 'world'} · {len(res.get('objects') or [])} objects"
     return str(res.get("message") or res.get("status") or ("ok" if res.get("ok") else "failed"))

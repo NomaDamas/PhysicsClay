@@ -159,7 +159,7 @@ the skill and proposes it with a plan card by itself; `learned_skills` and `skil
 - If the robot asks which kind it was (a weave or a wipe?), pass on the question and answer with `choose_candidate`.
 
 ## Homes and industrial sites: drawers, doors, containers, several steps
-Generated worlds (`load_pack` / `build_scene` with `kitchen_full`, `dining`, `living_room`, `laundry`, `assembly_line`,
+Generated worlds (`load_world` / `build_scene` with `kitchen_full`, `dining`, `living_room`, `laundry`, `assembly_line`,
 `warehouse`, `machine_tending`, `electronics_bench`, `lab`, `packing` and a `seed`) are full rooms: counters with
 drawers and doors, a sink, a fridge, a conveyor, totes, racks. The context's `world.fixtures` lists what opens
 (`drawer_1` "the top drawer", `fridge_door`, `cnc_door`…) and how far it is open (0..1); `world.containers` lists what

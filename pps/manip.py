@@ -218,13 +218,13 @@ class FixtureTasks:
                     continue
                 R, s = d.geom_xmat[g].reshape(3, 3), m.geom_size[g]
                 ext = np.abs(R) @ s
-                tops.append((d.geom_xpos[g][:2].copy(), ext[:2].copy(), float(d.geom_xpos[g][2] + ext[2])))
+                tops.append((d.geom_xpos[g][:2].copy(), ext[:2].copy(), float(d.geom_xpos[g][2] + ext[2]), float(d.geom_xpos[g][2] - ext[2])))
             self._tops = tops
         best = -1.0
         ab = b2 - a2
         L2 = float(np.dot(ab, ab)) or 1e-9
-        for c, h, top in self._tops:
-            if not (T.TABLE_TOP + 0.02 < top < T.TABLE_TOP + 0.75):
+        for c, h, top, bottom in self._tops:
+            if not (T.TABLE_TOP + 0.02 < top < T.TABLE_TOP + 0.75) or bottom > T.TABLE_TOP + 0.10:   # hanging cabinets: pass under
                 continue
             t = float(np.clip(np.dot(c - a2, ab) / L2, 0.0, 1.0))
             q = a2 + t * ab                                     # the line's closest point to the box centre, then to the box

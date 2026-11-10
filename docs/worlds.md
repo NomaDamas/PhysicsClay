@@ -10,7 +10,7 @@ in, and every step is physically simulated (and can be recorded as a LeRobot dat
 
 * **UI**: Robot & scene → Scene → *Homes* / *Industrial sites*. Each pick builds a fresh layout (a random seed);
   **Shuffle layout** builds another one of the same room. The objects list says which container each object is in.
-* **Say it**: "a messy kitchen", "set up a warehouse", "a lab bench" (agent tools `load_pack` / `build_scene` with a
+* **Say it**: "a messy kitchen", "set up a warehouse", "a lab bench" (agent tools `load_world` / `build_scene` with a
   `seed`).
 * **Message**: `{type: "world", op: "set", robot?, template: "kitchen_full", seed: 7}` (a fresh world),
   `{type: "world", op: "set", seed: 8}` (same room, new layout), `{type: "world", op: "pack", name: "warehouse",

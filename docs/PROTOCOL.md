@@ -666,6 +666,6 @@ Guide, templates, fixtures, per-robot results and how to add your own: `docs/wor
   its photo-eye and starts again when the part is taken); `op:"lock"|"unlock", name` jams / frees a drawer or door (a
   test probe); `op:"set", name, open: 0..1` puts a part at an opening (a setup probe: what is inside doesn't move with
   it). Answers in `state.task` (action `fixture`) when the message has an `id`.
-- Agent tools: `open_fixture`, `close_fixture`, `pick_from`, `place_in`, `plan_steps`, `conveyor`; `load_pack` and
+- Agent tools: `open_fixture`, `close_fixture`, `pick_from`, `place_in`, `plan_steps`, `conveyor`; `load_world {name, seed?}` and
   `build_scene` take the world templates and a `seed`; the context has `world.fixtures`, `world.containers` and each
   object's `in`.
