@@ -940,6 +940,9 @@ class Tasks(FixtureTasks):
                 pre = g + (np.array([0, 0, 0.09]) if np.array_equal(off[:2], [0, 0]) else np.array([-0.08, 0, 0.07]))
             else:                                 # physics: come in along the approach axis with the jaws open
                 pre = g - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else g + np.array([0, 0, 0.09])
+            az = getattr(self, "approach_z", None)  # generated worlds: over a machine's walls to get above it first
+            if az is not None and az > pre[2] + 0.01:
+                kps.append(np.array([pre[0], pre[1], az]))
             kps += [pre, g]
             ev[len(kps) - 1] = "grasp"
             kps += [up(g, 0.12)]

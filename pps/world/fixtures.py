@@ -657,12 +657,12 @@ def cnc(b, fx):
     w, d, h = fx["size"]
     c = fx.get("color", "0.30 0.34 0.38 1")
     t = 0.012
+    rx = 0.10                                             # the static roof covers the back (over the spindle) only
     b.box("base", (0, 0, 0.04), (d / 2, w / 2, 0.04), c)
-    b.box("top", (0, 0, h - t / 2), (d / 2, w / 2, t / 2), c)
+    b.box("top", ((rx + d / 2) / 2, 0, h - t / 2), ((d / 2 - rx) / 2, w / 2, t / 2), c)
     b.box("back", (d / 2 - t / 2, 0, h / 2), (t / 2, w / 2, h / 2), c)
     b.box("side", (0, w / 2 - t / 2, h / 2), (d / 2, t / 2, h / 2), c)
     b.box("side", (0, -w / 2 + t / 2, h / 2), (d / 2, t / 2, h / 2), c)
-    b.box("lintel", (-d / 2 + t / 2, 0, h - 0.06), (t / 2, w / 2, 0.06), c)
     b.box("window", (0, w / 2 - t - 0.001, h * 0.6), (d / 2 - 0.05, 0.001, h * 0.25), "glass", collide=False)
     b.box("spindle", (0.06, 0, h - 0.12), (0.05, 0.05, 0.06), "dark", collide=False)
     b.cyl("tool", (0.06, 0, h - 0.21), 0.006, 0.03, "steel", collide=False)
@@ -672,13 +672,16 @@ def cnc(b, fx):
     b.box("jaw", (vx + 0.045, 0, vz + 0.055), (0.012, 0.07, 0.025), "steel")
     b.box("jaw", (vx - 0.045, 0, vz + 0.055), (0.012, 0.07, 0.025), "steel")
     b.container(f"{b.name}_vise", (vx, 0, vz + 0.03 + 0.03), (0.032, 0.065, 0.03), label="the vise", kind="vise")
-    # the door: slides toward +y (behind the right... left wall), panel with a window and a knob near its free edge
+    # the door is L-shaped (the front and the front of the roof) and slides sideways (`slide`: +1 toward +y, -1 toward
+    # -y), so an open door leaves the vise open from the front and from above; the knob is on its trailing edge
+    sd = 1.0 if float(fx.get("slide", 1)) >= 0 else -1.0
     dw = w - 0.04
     fx_x = -d / 2 - 0.01
-    geoms = [g_box((fx_x - 0.006, 0, h / 2 + 0.02), (0.006, dw / 2, h / 2 - 0.08), "safety"),
-             g_box((fx_x - 0.013, 0, h / 2 + 0.04), (0.001, dw / 2 - 0.05, h / 2 - 0.14), "glass", False)]
-    kg, handle = knob(fx_x - 0.012, -dw / 2 + 0.05, h * 0.5, "dark")
-    b.part("door", "slide", (fx_x, 0, 0.0), (0, 1, 0), (0.0, round(dw * 0.85, 3)), geoms + kg, handle, label="the CNC door",
+    geoms = [g_box((fx_x - 0.006, 0, (h + 0.10) / 2), (0.006, dw / 2, (h - 0.10) / 2), "safety"),
+             g_box((fx_x - 0.013, 0, (h + 0.10) / 2), (0.001, dw / 2 - 0.05, (h - 0.10) / 2 - 0.06), "glass", False),
+             g_box(((fx_x + rx) / 2, 0, h + t / 2), ((rx - fx_x) / 2, dw / 2, t / 2), "safety")]
+    kg, handle = knob(fx_x - 0.012, -sd * (dw / 2 - 0.05), h * 0.5, "dark")
+    b.part("door", "slide", (fx_x, 0, 0.0), (0, sd, 0), (0.0, round(dw * 0.85, 3)), geoms + kg, handle, label="the CNC door",
            damping=8.0, friction=1.5, armature=0.3, kind="door")
 
 

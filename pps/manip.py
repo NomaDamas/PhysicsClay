@@ -37,7 +37,7 @@ class FixtureTasks:
 
     def fixture_init(self):
         self.fx = getattr(self.rt, "fixtures", None)
-        self.place_z = self.transit_z = self.place_check = None
+        self.place_z = self.transit_z = self.place_check = self.approach_z = None
         self.place_drop = 0.0
         self.fxop = None
         self.fx_speed = 0.30                      # x the follow speed (0.3 m/s): a drawer / door moves at ~9 cm/s
@@ -168,7 +168,7 @@ class FixtureTasks:
                 for p, r in others:
                     if abs(p[2] - c[2]) < 0.12:
                         worst = min(worst, float(np.hypot(*(f[:2] - p[:2]))) - r)
-                if cont is not None and cont.get("kind") in ("drawer", "sink", "bin", "tote", "basket", "carton", "cabinet", "fridge", "rack", "drum"):
+                if cont is not None and cont.get("kind") in ("drawer", "sink", "bin", "tote", "basket", "carton", "cabinet", "fridge", "rack", "drum", "vise", "tray"):
                     cc, h, R = self.fx.box(cont)
                     loc = R.T @ (f - cc)
                     worst = min(worst, float(min(h[0] - abs(loc[0]), h[1] - abs(loc[1]))) + 0.01)
@@ -199,9 +199,38 @@ class FixtureTasks:
             t = float(np.clip(np.dot(p[:2] - a2, ab) / L2, 0.0, 1.0))
             if np.linalg.norm(p[:2] - (a2 + t * ab)) < self.objs[n]["r"] + 0.10:
                 z = max(z, float(p[2] + self.vertical_half(n)) + 0.05)
+        z = max(z, self._fixture_tops(a2, b2) + 0.05)
         for e in extra:
             z = max(z, float(e))
         return z + hang
+
+    def _fixture_tops(self, a2, b2, margin=0.10):
+        """The highest static furniture top near the line a -> b that a hand can pass over (a machine's enclosure, a
+        microwave, a tote's rim): not the counter itself (the surface) and not walls / fridges / racks (too tall)."""
+        from . import tasks as T
+        m, d = self.rt.model, self.rt.data
+        if getattr(self, "_tops", None) is None:              # static: (centre xy, half xy, top z) of each fx_ box, once
+            tops = []
+            for g in range(m.ngeom):
+                if m.geom_bodyid[g] != 0 or m.geom_type[g] != mujoco.mjtGeom.mjGEOM_BOX or not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                    continue
+                if not (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("fx_"):
+                    continue
+                R, s = d.geom_xmat[g].reshape(3, 3), m.geom_size[g]
+                ext = np.abs(R) @ s
+                tops.append((d.geom_xpos[g][:2].copy(), ext[:2].copy(), float(d.geom_xpos[g][2] + ext[2])))
+            self._tops = tops
+        best = -1.0
+        ab = b2 - a2
+        L2 = float(np.dot(ab, ab)) or 1e-9
+        for c, h, top in self._tops:
+            if not (T.TABLE_TOP + 0.02 < top < T.TABLE_TOP + 0.75):
+                continue
+            t = float(np.clip(np.dot(c - a2, ab) / L2, 0.0, 1.0))
+            q = a2 + t * ab                                     # the line's closest point to the box centre, then to the box
+            if np.all(np.abs(q - c) <= h + margin):
+                best = max(best, top)
+        return best
 
     # ------------------------------------------------------------------ actions
     def operate(self, tid, action, what, amount=None):
@@ -278,6 +307,12 @@ class FixtureTasks:
         if home[2] < T.TABLE_TOP + 0.06 and home[0] < T.TABLE_X[0] + 0.05 and cur[2] < T.TABLE_TOP + 0.06 and g0[2] > T.TABLE_TOP:
             kps.append(np.array([cur[0], cur[1], T.TABLE_TOP + 0.10]))
             quats.append(q_now)
+        o0 = np.array([out0[0], out0[1], 0.0]) / (np.hypot(out0[0], out0[1]) or 1.0)
+        tall = g0[2] > T.TABLE_TOP + 0.05            # a machine / appliance on the surface: come from the side it faces
+        far0 = g0 + o0 * 0.18 + np.array([0, 0, 0.10])
+        if tall:
+            kps.append(far0)
+            quats.append(qg)
         kps += [g0 + np.array([0, 0, 0.10]), g0]
         quats += [qg, qg]
         ev = {len(kps) - 1: "grasp_fx"}
@@ -286,8 +321,13 @@ class FixtureTasks:
             quats.append(qq)
         ev[len(kps) - 1] = "release_fx"
         ge, qe = samples[-1]
-        kps += [ge + np.array([0, 0, 0.10]), home]
-        quats += [qe, self.home_quat[palm]]
+        kps.append(ge + np.array([0, 0, 0.10]))
+        quats.append(qe)
+        if tall:                                    # back out the way it came, not across the machine
+            kps += [ge + o0 * 0.18 + np.array([0, 0, 0.10]), far0]
+            quats += [qe, qe]
+        kps.append(home)
+        quats.append(self.home_quat[palm])
         if self.plant is not None:
             rt.set_obstacles((p["name"],), near=[h0, samples[-1][0]], radius=0.25, fixtures=True)
             self.plant.grip_cmd(role, "open")
@@ -364,12 +404,21 @@ class FixtureTasks:
         from . import tasks as T
         top = self.fx.box(c)[0][2] + self.fx.box(c)[1][2] if c is not None else T.TABLE_TOP
         hang = 2 * self.vertical_half(name) + 0.02
-        self.transit_z = max(T.TABLE_TOP + 0.10, top + 0.04) + hang
+        o2 = self.mug_center(name)[:2]
+        self.transit_z = max(T.TABLE_TOP + 0.10, top + 0.04, self._fixture_tops(o2, o2) + 0.05) + hang
         self.place_z, self.place_check, self.place_drop = None, None, 0.0
+        self.approach_z = self._approach(name)
         try:
             self.pick_place(tid, name, None, None, None, None, dest=(None, c["label"] if c else ""), hold=True, action="pick_from")
         finally:
-            self.transit_z = None
+            self.transit_z = self.approach_z = None
+
+    def _approach(self, name):
+        """How high the hand has to come in to get over a machine's walls on the way to `name` (None: nothing in the way)."""
+        rt = self.rt
+        hand = rt.data.site_xpos[rt.palm_sid[self.hand_for(self.mug_center(name))]][:2]
+        tops = self._fixture_tops(np.asarray(hand, float), self.mug_center(name)[:2], margin=0.08)
+        return None if tops < 0 else tops + 0.09
 
     def place_in(self, tid, obj, container):
         """Put an object (held, or picked first) into a container."""
@@ -387,6 +436,9 @@ class FixtureTasks:
             c = c2 or c
         if not self._reachable_guard(tid, "place_in", c):
             return
+        src = None if name == held else self.container_of(name)
+        if src is not None and not self._reachable_guard(tid, "place_in", src):   # it has to come out of something closed
+            return
         cc, h, R = self.fx.box(c)
         spot, sup = self._spot_in(c, name)
         if spot is None:
@@ -398,11 +450,15 @@ class FixtureTasks:
         rim = cc[2] + h[2]
         self.transit_z = self._transit(start, spot, carried=name, hang=hang, extra=(rim + 0.05, T.TABLE_TOP + 0.06))
         self.place_z, self.place_check = sup, c
-        self.place_drop = 0.012 if c.get("kind") != "slot" else 0.004
+        from .world import objects as wobj
+        self.place_drop = 0.004 if c.get("kind") == "slot" else 0.02 if wobj.grasp_class(self.kinds.get(name, "")) in ("long", "flat") else 0.012
+        if name != held:                          # picked on the way: over a machine's walls into it, and lifted out of it
+            self.approach_z = self._approach(name)
+            self.transit_z = max(self.transit_z, self._fixture_tops(start[:2], start[:2]) + 0.05 + hang)
         try:
             self.pick_place(tid, name, None, None, None, None, dest=(np.array([spot[0], spot[1], sup]), c["label"]), action="place_in")
         finally:
-            self.transit_z, self.place_drop = None, 0.0
+            self.transit_z, self.place_drop, self.approach_z = None, 0.0, None
             if not self.task or self.task.get("status") not in ("running", "planning"):
                 self.place_check = None
             self.place_z = None
@@ -450,8 +506,13 @@ class FixtureTasks:
         _, p, clear = best
         floor = float(cc[2] - h[2])
         sup = floor
-        if clear < 0.0 and self.plant is not None:  # on top of what is there (a full sink): the height under the spot
-            sup = self._ray_down(p, floor, skip=name)
+        if self.plant is not None and name in self.objs and (clear < 0.0 or self.objs[name]["r"] > min(h[0], h[1])):
+            # on top of what is there (a full sink), under its whole footprint (a long spoon reaches past the spot)
+            Ro, m = self.obj_mat(name), self.rt.model
+            hs = m.geom_size[self.objs[name]["geom"]]
+            hx, hy = (hs[0], hs[0]) if m.geom_type[self.objs[name]["geom"]] == mujoco.mjtGeom.mjGEOM_CYLINDER else (hs[0], hs[1])
+            pts = [p] + [p + Ro @ np.array([sx * hx * 0.9, sy * hy * 0.9, 0.0]) for sx in (-1, 1) for sy in (-1, 1)]
+            sup = max(self._ray_down(q, floor, skip=name) for q in pts)
         return p, sup
 
     def _ray_down(self, p, floor, skip=None):

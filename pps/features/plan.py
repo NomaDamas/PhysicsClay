@@ -50,7 +50,7 @@ def _dry_run(ctx, msg):
     tasks, rt = ctx.tasks, ctx.rt
     rt_keys = ("path", "path_msg", "mode", "engaged", "follow_s")
     t_keys = ("task", "kind", "events", "fired", "done_msg", "cur", "cur_off", "fail_reason", "hit_obstacle", "stopped_task",
-              "place_at", "fxop", "place_z", "transit_z", "place_check", "place_drop", "cur_action", "release_z")
+              "place_at", "fxop", "place_z", "transit_z", "place_check", "place_drop", "cur_action", "release_z", "approach_z")
     snap_rt = {k: getattr(rt, k) for k in rt_keys}
     snap_t = {k: getattr(tasks, k) for k in t_keys if hasattr(tasks, k)}
     snap_q = rt.data.mocap_quat.copy()            # physics plans turn the hand target to the grasp orientation

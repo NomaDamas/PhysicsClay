@@ -320,16 +320,16 @@ def dining(g):
     x0 = 0.22
     wood = r.pick(("oak", "walnut", "0.85 0.80 0.72 1", "white"))
     g.fixture("table", "dining_table", (x0 + d / 2, 0.0, 0.0), (w, d, top), top=top, color=wood, main="table")
-    for k, (cx, cy, yaw) in enumerate([(x0 + d + 0.30, -0.35, 0), (x0 + d + 0.30, 0.35, 0), (x0 + d / 2, w / 2 + 0.32, -90),
-                                       (x0 + d / 2, -w / 2 - 0.32, 90)]):
+    for k, (cx, cy, yaw) in enumerate([(x0 + d + 0.30, -0.35, 0), (x0 + d + 0.30, 0.35, 0), (x0 + d / 2, w / 2 + 0.32, 90),
+                                       (x0 + d / 2, -w / 2 - 0.32, -90)]):
         g.fixture("chair", f"chair_{k + 1}", (cx, cy, 0.0), (0.44, 0.44, 0.9), yaw=yaw, color=r.pick(("oak", "walnut", "charcoal")))
     sb_w = round(r.u(1.2, 1.6), 3)
     side = r.pick((-1, 1))
-    g.fixture("base_cabinet", "sideboard", (x0 + 0.20, side * (w / 2 + 0.85), 0.0), (sb_w, 0.45, 0.82), yaw=-90 * side,
+    g.fixture("base_cabinet", "sideboard", (x0 + 0.20, side * (w / 2 + 0.85), 0.0), (sb_w, 0.45, 0.82), yaw=90 * side,
               color=wood, front=wood, drawers=[0.16, 0.16], doors=2, drawer_names=["sideboard_drawer_1", "sideboard_drawer_2"],
               drawer_labels=["the top drawer of the sideboard", "the second drawer of the sideboard"],
               door_names=["sideboard_door_a", "sideboard_door_b"], knob="steel")
-    g.fixture("box", "sideboard_top", (x0 + 0.20, side * (w / 2 + 0.85), 0.82), (sb_w + 0.02, 0.47, 0.03), yaw=-90 * side, color=wood, part="top")
+    g.fixture("box", "sideboard_top", (x0 + 0.20, side * (w / 2 + 0.85), 0.82), (sb_w + 0.02, 0.47, 0.03), yaw=90 * side, color=wood, part="top")
     g.fixture("floor", "rug", (x0 + d / 2, 0.0, 0.0), (w + 1.0, d + 1.2, 0), color=r.pick(("0.70 0.30 0.28 1", "0.35 0.45 0.60 1", "0.78 0.72 0.60 1")))
     g.fixture("box", "back_wall", (x0 + d + 1.2, 0.0, 0.0), (4.0, 0.06, 2.4), color="0.92 0.90 0.86 1", part="wall")
     g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-round(w / 2, 3), round(w / 2, 3)], "label": "Dining table"}
@@ -361,8 +361,8 @@ def living_room(g):
     g.fixture("table", "coffee_table", (x0 + d / 2, 0.0, 0.0), (w, d, top), top=top, color=wood, main="table", shelf=True, thick=0.04)
     g.fixture("sofa", "sofa", (x0 + d + 0.75, 0.0, 0.0), (round(r.u(1.9, 2.3), 3), 0.90, 0.80), color=r.pick(("navy", "sage", "0.55 0.45 0.40 1", "grey")))
     side = r.pick((-1, 1))
-    g.fixture("tv_unit", "tv_unit", (x0 + 0.35, side * 1.55, 0.0), (1.4, 0.42, 0.50), yaw=-90 * side, color=wood, front=wood)
-    g.fixture("shelving", "bookcase", (x0 + 1.0, -side * 1.6, 0.0), (0.80, 0.30, 1.6), yaw=90 * side, levels=5, color=wood)
+    g.fixture("tv_unit", "tv_unit", (x0 + 0.35, side * 1.55, 0.0), (1.4, 0.42, 0.50), yaw=90 * side, color=wood, front=wood)
+    g.fixture("shelving", "bookcase", (x0 + 1.0, -side * 1.6, 0.0), (0.80, 0.30, 1.6), yaw=-90 * side, levels=5, color=wood)
     g.fixture("floor", "rug", (x0 + 0.5, 0.0, 0.0), (2.4, 1.8, 0), color=r.pick(("0.62 0.36 0.30 1", "0.40 0.48 0.58 1", "0.82 0.78 0.68 1")))
     g.fixture("floor", "wood_floor", (0.4, 0.0, 0.0), (4.4, 4.0, 0), color="0.66 0.50 0.36 1")
     g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-round(w / 2, 3), round(w / 2, 3)], "label": "Coffee table"}
@@ -454,7 +454,7 @@ def warehouse(g):
     tc = r.pick(("blue", "orange", "grey", "green"))
     g.fixture("bin", "tote", (x0 + 0.27, s * 0.27, top), (0.46, 0.36, 0.15), color=tc, label="the tote", ckind="tote")
     g.fixture("bin", "tote_out", (x0 + 0.27, -s * 0.27, top), (0.46, 0.36, 0.15), color=r.pick(("blue", "orange", "grey")), label="the empty tote", ckind="tote")
-    for k, (cx, cy, yaw) in enumerate(((x0 + d + 0.75, 0.0, 0), (0.6, 1.55, -90), (0.6, -1.55, 90))):
+    for k, (cx, cy, yaw) in enumerate(((x0 + d + 0.75, 0.0, 0), (0.6, 1.55, 90), (0.6, -1.55, -90))):
         g.fixture("rack", f"rack_{k + 1}", (cx, cy, 0.0), (2.2, 0.80, 2.0), yaw=yaw, levels=[0.12, 0.75, 1.40], bays=2)
     g.fixture("pallet", "pallet", (0.35, s * 0.95, 0.0), (1.0, 0.8, 0))
     g.fixture("floor", "aisle_lines", (0.4, 0.0, 0.0), (2.6, 1.6, 0), color="0.98 0.82 0.12 1", lines=True)
@@ -483,7 +483,7 @@ def machine_tending(g):
     d = 0.66
     s = r.pick((-1, 1))
     g.fixture("table", "station", (x0 + d / 2, 0.0, 0.0), (1.4, d, top), top=top, color="0.62 0.64 0.68 1", legs="grey", main="table")
-    g.fixture("cnc", "cnc", (x0 + 0.36, s * 0.45, top), (0.46, 0.40, 0.58), color=r.pick(("0.30 0.34 0.38 1", "0.85 0.86 0.88 1")),
+    g.fixture("cnc", "cnc", (x0 + 0.30, s * 0.44, top), (0.46, 0.40, 0.44), color=r.pick(("0.30 0.34 0.38 1", "0.85 0.86 0.88 1")),
               slide=s)
     g.fixture("bin", "raw_tray", (x0 + 0.20, -s * 0.18, top), (0.26, 0.20, 0.05), color="steel", label="the raw blanks tray", ckind="tray")
     g.fixture("bin", "done_tray", (x0 + 0.20, -s * 0.44, top), (0.26, 0.20, 0.05), color="green", label="the finished parts tray", ckind="tray")
@@ -492,7 +492,7 @@ def machine_tending(g):
     g.fixture("floor", "floor_lines", (0.4, 0.0, 0.0), (2.4, 1.6, 0), color="0.98 0.82 0.12 1", lines=True)
     g.fixture("floor", "concrete", (0.5, 0.0, 0.0), (4.4, 4.0, 0), color="0.58 0.60 0.60 1")
     g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-0.6, 0.6], "label": "Machine-tending station"}
-    vise_c = np.array([x0 + 0.36 + 0.04, s * 0.45, top + 0.10 + 0.03 + 0.02])
+    vise_c = np.array([x0 + 0.30 + 0.04, s * 0.44, top + 0.10 + 0.03 + 0.02])
     g.obj("blank", tuple(vise_c), yaw=math.pi / 2, name="part_in_vise", color="steel", size=[0.07, 0.05, 0.04])
     g.drop("raw_tray", [("blank", None, None), ("blank", "blank_2", None)], slots=[(0.0, -0.05), (0.0, 0.05)], yaw=[0.0, 0.0])
 
