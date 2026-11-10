@@ -24,6 +24,9 @@ from .activity import ActivityTracker
 ANKLE_Z = 0.07
 HOLD_R = 0.10
 HANDS_FRESH = 0.6          # s: browser hand landmarks older than this are ignored
+HANDS_HOLD = 0.5           # s a side keeps its last browser hand when one browser frame misses it (real camera, #37:
+                           # Hands drops a hand for a frame now and then; falling back to the pose's knuckle points
+                           # for that frame made `open` flicker)
 # MediaPipe Hands keypoints the browser sends (subset of 21): wrist, thumb tip, index mcp, index tip, middle mcp,
 # middle tip, ring tip, pinky mcp, pinky tip
 HAND_KEYS = (0, 4, 5, 8, 9, 12, 16, 17, 20)
@@ -146,6 +149,7 @@ class HumanModel:
         self.summary_vlm = None         # (t, text, src) from the VLM summarizer
         self.state, self.events = {"visible": False}, []
         self.J = None
+        self._bh_last = {}              # side -> (t, browser hand) last matched
 
     def set_browser_hands(self, hands, now=None):
         out = []
@@ -202,6 +206,11 @@ class HumanModel:
             self.speed += 0.35 * (min(sp, 5.0) - self.speed)
         self.prev, self.prev_t = J, now
         bh = self._match_browser(pts, now, frame_size)
+        for s, hb in list(bh.items()):
+            self._bh_last[s] = (now, hb)
+        for s, (t, hb) in list(self._bh_last.items()):
+            if s not in bh and now - t < HANDS_HOLD and self.hands_in and now - self.hands_in[0] <= HANDS_FRESH:
+                bh[s] = hb
         hands = {}
         for s in ("l", "r"):
             if f"{s}_wrist" not in J:
