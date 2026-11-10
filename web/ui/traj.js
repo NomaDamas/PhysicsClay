@@ -732,6 +732,14 @@
     ghostKey = ""; buildStatic(); paintDyn(); kick();
   });
   window.addEventListener("pc3d-ready", () => { ghostKey = ""; });
+  // P2b VR (web/xr.js): a hand grabbing a handle uses the same local preview as a mouse drag; the edit it sends settles it
+  window.PCTraj = {
+    preview(i, k) { if (!g || !pts()[i] || !Array.isArray(k)) return; preview(i, k.slice(0, 3).map(r3)); hover = i; paintDyn(); },
+    track(id) { if (id) sentAt.set(id, modSeq); },
+    cancel(i) { pending.delete(i); pendingAt.delete(i); if (hover === i) hover = -1; paintDyn(); },
+    end(i) { if (hover === i) hover = -1; paintDyn(); },
+    get keys() { return pts(); },
+  };
   window.addEventListener("resize", () => renderPop());
   render();
 })();

@@ -541,3 +541,31 @@ from the hand to the first point is checked too ("on the way to the start").
   `propose` with `source: "keyframes"`); confirm with `{op:"run"}`. Draw from `state.traj.ghost` (`keys`, `kq`, `pts`,
   `ok`, `axis`). Live teleoperation (`{type:"teleop", role, p, q, grip}`) is not registered by P2; P3's mirror mode
   already uses it when a handler exists.
+
+## v8 · VR / MR and live teleop (v1 P2b, `web/xr.js`, `web/xr-core.js`, `pps/features/teleop.py`; guide: `docs/vr.md`)
+The headset is the same page (Quest browser, https on the LAN). It sends only the messages above: a pinch stroke is a
+v7 `traj` `propose` with `source: "vr"`, `frame: "world"` (≤ 60 points, every 1.5 cm, `speed` per point when "Speed: as
+drawn / pinch" is on); a grabbed handle is `{op:"edit", index, world:true, point:{p, q?}}` (`q` = the wrist turn applied
+to the point's orientation, sent when it is over 10°); a keyframe is `{op:"edit", insert:{after, p}}` (or a 2-point
+`propose` with `source:"keyframes"`); Undo re-proposes the previous trajectory; Go is `{op:"run"}`; "Use my room" is
+`{type:"world", op:"set", scene}` (the table → `template`, things on it → fixed `box` objects, current movable objects
+kept). Message ids from the headset start with `vr-`.
+
+**Teleop** `{type: "teleop", …}` (answers in `state.teleop.reply = {id, op, ok, message, t}`):
+| message | |
+|---|---|
+| `{op:"start", role?, src?}` | take over that hand: stops a running path / task / drive, camera follow-me and P3 mirroring; the hand holds where it is |
+| `{role, p:[x,y,z], q?:[w,x,y,z], grip?:0..1, t?, src?}` | end-effector target (world, metres) at up to ~30 Hz; `t` (the client's clock) is echoed back |
+| `{op:"stop"}` | let go: the hand stays where it is |
+
+Every target is clamped to the arm's reach (a sphere around the shoulder; mobile bases 1.6 m) and above the work surface
+(plus what the hand carries), rate limited (1 m/s, 3 rad/s, × P5 `rt.safety_scale`), ignored during a protective stop
+(`rt.safety_scale <= 0` or `tasks.safety.stopped`) or when `tasks.safety.check_point` says it is inside the person, and
+ignored while a task / path runs (`held: "busy …"`). It goes into the hand's mocap target (the path P3 mirroring uses;
+P3's mirror mode now sends bare commands through this handler). `grip` → `rt.set_gripper(palm, g)` when the runtime has
+it, else closing next to an object grasps it (kinematic), opening releases. A bare command (no `start`) is an implicit
+start; 3 s without a command ends teleop.
+
+`state.teleop = {active, role, src, rate (commands in the last second), lag_ms (age of the newest), stale, echo (its t),
+held (why the last command was not applied | null), clamped, scale (safety speed scale), hands: {right|left: {p, q, ee,
+grip, holding}}, reply, events}`.
