@@ -96,9 +96,26 @@ class Recorder:
         cols = list(zip(*self.rows))
         nv = max(len(c) for c in cols[4])
         dq = np.array([c if len(c) == nv else np.full(nv, np.nan) for c in cols[4]], float)
-        return Log(t=np.array(cols[0]), q_des=np.array(cols[1]), grip=np.array(cols[2]), q=np.array(cols[3]), dq=dq,
-                   ee_force=np.array(cols[5]), obj_p=np.array(cols[6]), obj_q=np.array(cols[7]), base=np.array(cols[8]),
-                   seg=np.array(cols[9], int), meta=dict(self.meta))
+        lg = Log(t=np.array(cols[0]), q_des=np.array(cols[1]), grip=np.array(cols[2]), q=np.array(cols[3]), dq=dq,
+                 ee_force=np.array(cols[5]), obj_p=np.array(cols[6]), obj_q=np.array(cols[7]), base=np.array(cols[8]),
+                 seg=np.array(cols[9], int), meta=dict(self.meta))
+        return clean(lg)
+
+
+def clean(lg):
+    """Cut a log where the robot's clock stops moving forward. On a simulated robot that is MuJoCo resetting an
+    unstable simulation (the "robot" crashed); nothing after it is a trajectory to fit or to compare with."""
+    back = np.where(np.diff(lg.t) <= 0)[0]
+    # just before a reset the state is already absurd (objects flung metres away)
+    wild = np.where((np.abs(np.nan_to_num(lg.obj_p, nan=0.0)) > 5.0).any(axis=(1, 2))
+                    | (np.abs(np.nan_to_num(lg.q, nan=0.0)) > 100.0).any(axis=1))[0]
+    cuts = ([int(back[0]) + 1] if len(back) else []) + ([int(wild[0])] if len(wild) else [])
+    if not cuts:
+        return lg
+    k = max(2, min(cuts))
+    out = lg.slice(0, k)
+    out.meta["truncated"] = f"the simulated robot blew up at {lg.t[k - 1] - lg.t[0]:.2f} s (MuJoCo instability, then a reset); cut there"
+    return out
 
 
 def _names(path, key):

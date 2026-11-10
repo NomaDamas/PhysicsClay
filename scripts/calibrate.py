@@ -59,7 +59,7 @@ def heldout_task(rt, tasks, drv, meta, dt=1 / 120, limit=40.0):
 
 
 def run_seed(seed, robot, budget, workers, log=print, save_dir=None):
-    from pps.calib import params as P, probes as PR, sysid
+    from pps.calib import probes as PR, sysid
     from pps.calib.randomize import Randomizer
     t0 = time.time()
     secret = Randomizer(list(DEMO_RANGES), robot=robot, seed=seed, ranges=DEMO_RANGES).sample()
@@ -79,9 +79,9 @@ def run_seed(seed, robot, budget, workers, log=print, save_dir=None):
     fit = sysid.fit(logs, robot, w.spec, budget=budget, workers=workers, seed=seed)
     t_fit = time.time() - t1
     sim = sysid.PlantSim(robot, w.spec)
-    nominal = {n: P.PARAMS[n].default for n in fit["params"]}
-    track = {"nominal": sysid.tracking(sim, hold, nominal), "calibrated": sysid.tracking(sim, hold, fit["params"]),
-             "true": sysid.tracking(sim, hold, {k: secret[k] for k in fit["params"]})}
+    track = heldout_tracking(sim, hold, fit["params"], secret)
+    if hold.meta.get("truncated"):
+        log(f"    note: the hidden robot's held-out run: {hold.meta['truncated']}")
     for k, v in track.items():
         if v.get("diverged_s") is not None:
             log(f"    note: the {k} replay of the held-out task diverged at {v['diverged_s']} s (MuJoCo instability); "
@@ -93,6 +93,7 @@ def run_seed(seed, robot, budget, workers, log=print, save_dir=None):
         rows.append({"name": n, "true": round(tv, 4), "fit": round(v, 4), "err": round(err, 4),
                      "ok": bool(err <= TOL.get(n, 0.15))})
     return {"seed": seed, "secret": secret, "fit": fit, "params": rows, "heldout": track, "heldout_task": task.get("status"),
+            "heldout_note": hold.meta.get("truncated"),
             "seconds": {"probe": round(t_probe, 1), "fit": round(t_fit, 1), "total": round(time.time() - t0, 1)},
             "probe_sim_s": round(sum(lg.duration for lg in logs), 1)}
 
@@ -112,6 +113,8 @@ def report(results, robot, budget):
         h = r["heldout"]
         div = [k for k in ("nominal", "calibrated") if h[k].get("diverged_s") is not None]
         cells[-1] += "".join(f" ({k} replay diverged at {h[k]['diverged_s']} s)" for k in div)
+        if r.get("heldout_note"):
+            cells[-1] += " (the hidden robot's own simulation reset during the held-out task: log cut there)"
         out.append(f"| {r['seed']} | " + " | ".join(cells) +
                    f" | {h['nominal']['q_deg']:.2f} → {h['calibrated']['q_deg']:.2f} | {h['nominal']['tcp_mm']:.1f} → {h['calibrated']['tcp_mm']:.1f} "
                    f"| {h['nominal'].get('p_mm') or 0:.1f} → {h['calibrated'].get('p_mm') or 0:.1f} |")
@@ -166,6 +169,33 @@ def rereport(a):
     return 0
 
 
+def heldout_tracking(sim, hold, fitted, secret):
+    from pps.calib import params as P, sysid
+    nominal = {n: P.PARAMS[n].default for n in fitted}
+    return {"nominal": sysid.tracking(sim, hold, nominal), "calibrated": sysid.tracking(sim, hold, fitted),
+            "true": sysid.tracking(sim, hold, {k: secret[k] for k in fitted})}
+
+
+def retrack(a):
+    """Recompute the held-out tracking of a saved --demo run from its saved logs (--save-logs), e.g. after a fix in the
+    replay or the log cleaning; the fits are not redone."""
+    from pps.calib import sysid
+    from pps.calib.log import Log, clean
+    data = json.load(open(a.retrack))
+    sim = None
+    for r in data["results"]:
+        hold = clean(Log.load(os.path.join(a.save, f"seed{r['seed']}_heldout.npz")))
+        sim = sim or sysid.PlantSim(data["robot"], hold.meta["scene"])
+        r["heldout"] = heldout_tracking(sim, hold, r["fit"]["params"], r["secret"])
+        r["heldout_note"] = hold.meta.get("truncated")
+    text = report(data["results"], data["robot"], data["budget"])
+    data["report"] = text
+    with open(a.retrack, "w") as f:
+        json.dump(data, f, indent=1, default=float)
+    print(text)
+    return 0
+
+
 def probe(a):
     from pps.calib import probes as PR
     params = json.loads(a.params) if a.params else None
@@ -217,10 +247,13 @@ def main():
     ap.add_argument("--save", default="recordings/calib/logs", help="where --probe (and --demo --save-logs) write logs")
     ap.add_argument("--save-logs", action="store_true", help="--demo: also save every seed's probe and held-out logs")
     ap.add_argument("--report", default=None, help="re-render the tables of a saved --demo JSON")
+    ap.add_argument("--retrack", default=None, help="recompute the held-out tracking of a saved --demo JSON from its --save logs")
     ap.add_argument("--out", default="recordings/calib/demo.json")
     a = ap.parse_args()
     if a.report:
         return rereport(a)
+    if a.retrack:
+        return retrack(a)
     if a.demo:
         return demo(a)
     if a.probe:

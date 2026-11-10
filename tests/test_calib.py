@@ -220,6 +220,10 @@ def test_log_round_trip(tmp_path, panda):
     p = rec_log.save(tmp_path / "a.npz")
     back = Log.load(p)
     assert back.probe == "swing" and np.array_equal(back.q, rec_log.q) and np.isnan(back.ee_force).all() and (back.seg == -1).all()
+    from pps.calib.log import clean                               # a simulated robot that crashed (MuJoCo reset): cut there
+    rec_log.t = np.array([3.0, 3.01, 3.02, 0.0, 0.01])
+    cut = clean(rec_log)
+    assert len(cut) == 3 and "truncated" in cut.meta
 
 
 def test_lerobot_episode_reader(tmp_path, panda):
