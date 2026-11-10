@@ -1002,7 +1002,10 @@ def main():
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--https-port", type=int, default=8443)
     ap.add_argument("--frames", type=int, default=0, help="exit after N frames (testing)")
+    ap.add_argument("--safety-config", help="JSON overrides of the safety distances (pps/safety.py Config; clamped, never off)")
     args = ap.parse_args()
+    if args.safety_config:
+        os.environ["PC_SAFETY_CONFIG"] = args.safety_config
     if args.byok:
         os.environ["PC_BYOK"] = "1"
     shared = Shared()

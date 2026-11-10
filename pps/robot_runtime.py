@@ -44,6 +44,7 @@ class Runtime:
     model/home_q: a world built by pps.world.scene (None = the UX 2.0 scene_pc.xml with its 'stand' keyframe)."""
     profile_id = "g1"
     capabilities = ("pick_place", "reach", "follow_path", "imitate_video", "follow_me", "teach_by_showing", "balance")
+    safety_scale = 1.0   # P5 (pps/features/safety.py) sets it every frame: 1 free, <1 slowing near a person, 0 stop
 
     def __init__(self, mirror=True, model=None, home_q=None):
         self.model = model if model is not None else mujoco.MjModel.from_xml_path(XML.as_posix())
@@ -326,14 +327,17 @@ class Runtime:
 
     def step(self, dt):
         d = self.data
-        self.update_targets(dt)
+        s = float(self.safety_scale)
+        if s <= 0.0:                      # protective stop: targets, IK and every motion source hold still
+            return self.last_result
+        self.update_targets(dt * s)       # paths, skills, previews advance at the safe speed
         self.com_task.set_target(d.mocap_pos[self.com_mid])
         for task, mid in zip(self.feet_tasks, self.feet_mid):
             task.set_target(mink.SE3.from_mocap_id(d, mid))
         for task, h in zip(self.hand_tasks, self.hands):
             task.set_target(mink.SE3.from_mocap_id(d, self.hands_mid[h]))
-        vel = mink.solve_ik(self.configuration, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
-        self.configuration.integrate_inplace(vel, dt)
+        vel = mink.solve_ik(self.configuration, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits) * s
+        self.configuration.integrate_inplace(vel, dt)   # s < 1: joints (and live mirroring) move slower too
         mujoco.mj_camlight(self.model, d)
         targets = {h: d.mocap_pos[self.hands_mid[h]].copy() for h in self.hands}
         res = self.validator.evaluate(targets, vel)

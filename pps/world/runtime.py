@@ -325,19 +325,22 @@ class BodyRuntime(Runtime):
     # ------------------------------------------------------------------- step
     def step(self, dt):
         d = self.data
-        self.update_targets(dt)
+        s = float(self.safety_scale)                     # P5 safety: 0 = protective stop (see Runtime.step)
+        if s <= 0.0:
+            return self.last_result
+        self.update_targets(dt * s)
         ride = None
         if self.drive_goal is not None:                  # the hand targets ride along with the base
             bb = self.model.jnt_bodyid[self.base_joints[0]]
             ride = (bb, d.xpos[bb].copy(), d.xmat[bb].reshape(3, 3).copy())
-            self._drive_tick(dt)
+            self._drive_tick(dt * s)
         if self.com_task is not None:
             self.com_task.set_target(d.mocap_pos[self.com_mid])
         for task, mid in zip(self.feet_tasks, self.feet_mid):
             task.set_target(mink.SE3.from_mocap_id(d, mid))
         for task, h in zip(self.hand_tasks, self.hands):
             task.set_target(mink.SE3.from_mocap_id(d, self.hands_mid[h]))
-        vel = mink.solve_ik(self.configuration, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
+        vel = mink.solve_ik(self.configuration, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits) * s
         self.configuration.integrate_inplace(vel, dt)
         if ride is not None:
             bb, p0, R0 = ride

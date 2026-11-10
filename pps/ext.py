@@ -10,6 +10,9 @@ A feature module registers itself at import time:
     @ext.pre_task                        # sees every {"type": "task"} first; return True to consume it
     def preview_first(ctx, msg): ...
 
+    @ext.guard                           # a pre_task that runs before all the others (safety: nobody consumes a
+    def people_first(ctx, msg): ...      # task before it is checked)
+
     @ext.state                           # merged into every state frame the browser receives
     def zones_state(ctx): return {"zones": [...]}
 
@@ -39,6 +42,11 @@ def handler(kind):
 
 def pre_task(fn):
     PRE_TASK.append(fn)
+    return fn
+
+
+def guard(fn):
+    PRE_TASK.insert(0, fn)
     return fn
 
 
