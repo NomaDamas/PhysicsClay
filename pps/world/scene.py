@@ -185,6 +185,13 @@ def normalize(spec, profile=None):
     for raw in list(spec.get("objects") or [])[:16]:
         if not isinstance(raw, dict):
             continue
+        if raw.get("mesh"):                             # imported from a photo (pps/recon): library mesh + bounding primitive
+            from ..recon import sim as recon_sim
+            prepped = recon_sim.prepare(raw)
+            if prepped is None:
+                notes.append(f"{raw.get('name') or 'an imported object'} is missing from the object library")
+                continue
+            raw = prepped
         kind = _kind(raw)
         color = _color(raw, kind)
         size = raw.get("size")
@@ -240,6 +247,8 @@ def normalize(spec, profile=None):
             o["exact"] = True
         if isinstance(raw.get("mass"), (int, float)) and raw["mass"] > 0:
             o["mass"] = round(float(raw["mass"]), 3)
+        if raw.get("mesh"):
+            o.update(recon_sim.keep(raw))
         out.append(o)
     spec_out = {"template": tpl, "objects": out}
     if spec.get("pack"):
@@ -298,6 +307,9 @@ def _f(*v):
 
 
 def _object_xml(o, top):
+    if o.get("mesh"):                                 # imported from a photo: pps/recon/sim.py
+        from ..recon import sim as recon_sim
+        return recon_sim.object_xml(o, top)
     kind, (sx, sy, sz) = o["kind"], o["size"]
     x, y = o["pos"]
     movable = o["movable"]
@@ -437,6 +449,10 @@ def _arena_xml(profile, spec, s):
         targets.append(_target_xml(f"{foot}_target", 0.03, ".6 .3 .3 .15"))
     mug = (G1_DIR / "objects" / "mug").as_posix()
     wood = (G1_DIR / "assets" / "wood.png").as_posix()
+    recon_assets = ""
+    if any(o.get("mesh") for o in spec["objects"]):   # meshes of objects imported from photos (pps/recon/sim.py)
+        from ..recon import sim as recon_sim
+        recon_assets = recon_sim.assets_xml(spec["objects"])
     arena = f"""<mujoco model="PhysicsClay {profile.id} at the {s['template']}">
   <statistic center="0.3 0 .8" extent="1" meansize="0.08"/>
   <visual>
@@ -462,7 +478,7 @@ def _arena_xml(profile, spec, s):
   <asset>
     <texture type="2d" name="pc_mug" file="{mug}/texture.png"/>
     <material name="pc_mug" texture="pc_mug" specular="0.5" shininess="0.5"/>
-    <mesh name="pc_mug" file="{mug}/model.obj"/>
+    <mesh name="pc_mug" file="{mug}/model.obj"/>{recon_assets}
   </asset>
   <worldbody>
     {''.join(_object_xml(o, top) for o in spec["objects"])}
@@ -588,6 +604,9 @@ def build(robot_id=None, spec=None, physics=None):
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
             m, ik = _compile(arena, profile, kinds, physics, masses)
+        if physics and any(o.get("mesh") for o in spec_n["objects"]):   # imported meshes collide by their convex pieces
+            from ..recon import sim as recon_sim
+            recon_sim.fix_plant(m, spec_n)
     except Exception as e:
         raise ValueError(f"could not build the scene: {e}") from e
     finally:

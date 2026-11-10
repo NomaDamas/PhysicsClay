@@ -20,6 +20,7 @@ certs/
 recordings/
 datasets/
 /skills/
+/library/
 selftest-server.log
 
 .DS_Store
