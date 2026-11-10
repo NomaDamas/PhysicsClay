@@ -387,9 +387,9 @@ class Tasks:
         return cands[0][2], who
 
     def _reach_err(self, p, palm, iters=50):
-        """Physics: how close (m) the planner gets the hand to p from where it is, holding its current target orientation
-        firmly (for hands that work from above: that, or turned 90° about the vertical, whichever fits)."""
-        import mink
+        """Physics: how close (m) the planner gets the hand to p from where it is, the way a place goes (over the spot, then
+        down), holding the place orientation (side grasps: in from the shoulder; from above: as now, or turned 90° about
+        the vertical, whichever fits)."""
         rt = self.rt
         task = rt.hand_tasks[rt.hands.index(palm)]
         saved = task.transform_target_to_world
@@ -1078,17 +1078,19 @@ class Tasks:
         d = self.rt.data
         mid = self.rt.hands_mid[palm]
         q_grip = d.mocap_quat[mid].copy()          # grasp_plan sets the orientation the grasp needs
-        if yaw is None and plan is not None and plan[1][2] <= -0.7 and via is None and np.hypot(*plan[0][:2]) < 0.02:
-            # (only for grasps near its middle: turning the hand swings anything held off-centre, e.g. by the rim or an end)
+        if yaw is None and plan is not None and plan[1][2] <= -0.7 and via is None:
             place_c = np.array([dest[0], dest[1], TABLE_TOP + self.mug_half_h])
             first = None
-            for k, y in enumerate(self._place_yaw(name, place_c, plan[0], q_grip, palm)):
+            yaws = self._place_yaw(name, place_c, plan[0], q_grip, palm)
+            if np.hypot(*plan[0][:2]) >= 0.02:    # held off-centre (rim, an end): turning swings it, so only if it must
+                yaws = [0.0] + [y for y in yaws if y]
+            for k, y in enumerate(yaws):
                 d.mocap_quat[mid] = q_grip
                 if self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last and k == 0, yaw=y):
                     return True
                 first = first or (dict(self.task), self.rt.path)
-                if getattr(self, "fail_reason", "reach") != "reach" or "exactly to the spot" not in self.task.get("message", ""):
-                    break                         # only a hand that doesn't fit at the spot is helped by turning it
+                if getattr(self, "fail_reason", "reach") != "reach":
+                    break                         # (a turned hand may fit or reach where this one didn't)
             self.task, self.rt.path = first
             return False
         cur = d.site_xpos[self.rt.palm_sid[palm]].copy()
