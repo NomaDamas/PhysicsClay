@@ -319,3 +319,75 @@ robot-eye render (through `@ext.overlay`) and into the 3D stage (`PC3D.layer("co
 - Browser: typed or spoken text with deixis is claimed from `pc-hear` (preventDefault) only when there is a recent armed
   pointing (or it is a handover request); otherwise the normal parser gets it.
 - `ext.overlay(fn)`: `fn(ctx, mjvScene)` adds geoms to each robot-eye render after the runtime's own overlays.
+
+## v6 · Watching the person (v1 P3, `pps/human/`, `pps/features/watch.py`, `web/ui/watch.js`)
+The robot understands what the person is doing (not only where they point) and acts on it while it watches them.
+
+**The person** (`state.human`, every frame, robot world frame; built from co-presence's joints):
+```
+{visible, src: "phone"|"webcam"|"video"|"feed"|"synthetic", t,
+ pose: [[x,y,z] * 33] (MediaPipe order), pose_filled: [indices estimated from the head / ankles],
+ hands: {right|left: {p, q: [w,x,y,z] (x along the hand, y toward the index), pinch (m), open, near_robot, src: "hands"|"pose"}},
+ holding: "torch"|"mug"|null, holding_hand, offer: "right"|"left"|null,
+ activity: "squat"|"press"|"curl"|"wave"|"weave"|"reach"|"point"|"still"|"moving"|"none", phase: "top"|"down"|"bottom"|"up"|null,
+ reps, stalled, speed (m/s), fatigue (0..1), weave: {amp, freq, travel, axis, dir, side}|null, summary, summary_src: "rules"|"gemini"|"openai"}
+```
+- Activity is rule-based (`pps/human/activity.py`): squat (knee angle + hip drop with a real down-and-up), press,
+  curl, wave (hand above the shoulder swinging), weave (a hand below the shoulder oscillating across its own travel:
+  detrended path, principal axis, zero crossings), reach, point (armed co-presence pointing), still, moving. Reps:
+  hysteresis on the activity's normalised signal (top → down → bottom → up → top = one rep); the reps already done
+  when the activity is recognised are counted too. `stalled`: mid-rep on the way up, the signal stops for 0.7 s.
+- Held tool: `{type:"watch", op:"tool", name}` (what the person says) > the camera's object detector > the closest
+  movable sim object within 10 cm of a hand.
+- Hands from the browser: with this device's camera on and a watch mode on, `web/ui/watch.js` runs MediaPipe Hands
+  (tasks-vision from jsDelivr, model from Google's model storage) and sends `{type:"hands", hands:[{uv:[u,v] (wrist,
+  image 0..1), lm:[[x,y,z] * 9] (world metres, keypoints 0,4,5,8,9,12,16,17,20), score}]}` at ~8 Hz. The server
+  matches them to the pose's wrists by image distance (handedness labels of an unmirrored camera are unreliable).
+- Optional VLM summary (`pps/human/vlm.py`): `{type:"watch", op:"summary", on}`; Gemini, then OpenAI vision, with the
+  server's key (none with `--byok`), at most every 8 s, only with a real camera, never with `--mock`, the synthetic
+  person or `PC_OFFLINE=1`.
+
+**Modes**: `{type:"watch", op:"mode", mode: "off"|"mirror"|"learn"|"respond"|"assist"|"coach", hand?: "auto"|"left"|"right",
+target?: "hands"|<object>, max_force?, name?}`.
+- `mirror`: the G1 runs whole-body follow-me; other bodies move each end effector by the person's wrist offset from
+  their shoulder, mirrored face to face (toward the robot → away from the robot's base; their right hand → the robot's
+  left hand on two-arm bodies; one-arm bodies follow the hand held up/out more), anchored where the hand was when
+  mirroring started, clamped to reach and above the table, ≤ 4 cm per frame; the hand's yaw turns the gripper (±70°);
+  a pinch (< 3.5 cm, browser hands) or a fist closes the gripper (`rt.set_gripper` when the runtime has one, else a
+  kinematic grasp of an object within 7 cm; opening releases it). Uses the P2 `teleop` message when that handler is
+  registered. Pauses while a task runs; "stop" ends it.
+  `watch.mirror = {kind: "hands"|"whole_body", paused, pairs: [{person, robot, target, ee, grip, yaw_deg}]}`.
+- `learn`: records the working hand (p, q, pinch, open), held tool, activity/phase/reps, the objects; `op:"learn_stop",
+  name?` (or any mode change) saves `recordings/demos/<name>.json` (format in `pps/human/demo.py`: frames, tool,
+  activity, reps, `pattern` (weave amp/freq/travel), `anchor` object (when the hand worked within 25 cm of one),
+  `rep_stats`, and `trajectory`: a P2 trajectory object, `source: "demo"`, `frame: "object:<anchor>"|"world"`).
+  `op:"replay", name?, preview? (default true)` places that trajectory on its anchor object (or at the end effector)
+  as the drawn path and sends `follow_path` (a plan card when preview). `watch.learn = {recording, seconds, frames, last}`.
+- `respond`: `{type:"watch", op:"rule", when, do, expr?, task?, cooldown? (8 s), hold? (0.4 s), preview?}` or
+  `{op:"rule", text:"when I put my hand out, give me the wrench"}`. `when`: built-in terms joined by and/or/not —
+  `hand_open_near_robot, hand_out, hand_open, holding, holding:<tool>, not_holding, activity:<name>, phase:<name>,
+  reps>=N, stalled, still, pointing, visible, fast` — or everyday words compiled offline (`pps/human/rules.py`), or
+  `expr`: a restricted expression over `state.human` (comparisons, and/or/not, dotted fields; no calls) that the agent
+  compiles from free text. `do`: a task (`give me the X` → `handover`, `stop`), `say …`, `help me`/`spot` (→ assist),
+  or anything else as an instruction for the LLM agent. A rule fires on the rising edge after `hold` s, then needs
+  `cooldown` s and the condition to clear, and never while its own task (id `watch-R<n>-<k>`) is still running.
+  Rules also run in assist and coach; never for the synthetic no-camera dancer. `op:"rule_remove", rule`, `op:"rules_clear"`.
+  `watch.rules = [{id, when, expr, when_text, do, kind, task, cooldown, hold, enabled, fired, last_age}]`.
+- `assist`: the hands follow a point 10 cm below the person's hands (or a named object), clamped to reach, ≤ 2 cm per
+  frame; when the person stalls mid-rep the target rises up to 6 cm and `watch.assist.request = {force_n: max_force
+  (40), dir: [0,0,1]}` asks P0 impedance control for capped help. `watch.assist = {phase: "following"|"helping"|"paused"|"idle",
+  target, focus, lift, ee, max_force, request}`.
+- `coach`: per rep, cues against a reference (`pps/human/coach.py`): squat depth (knee angle at the bottom), knee
+  valgus (knee width / ankle width at the bottom), back angle, tempo; curl range and elbow drift; press lockout; weave
+  width / frequency / travel speed. `op:"coach_ref", demo` uses a recorded demo as the reference. It counts every rep
+  aloud and says a cue the first time and every third repeat (`state.say`). `watch.coach = {activity, reps, last: {rep,
+  cues, text}, cues: {key: count}, history, ref}`.
+- `op:"reset_reps"`, `op:"tool", name`. Every op answers in `watch.reply = {id, op, ok, message, rule?, demo?, mode?}`.
+- Brain: `observe` returns `human` (minus the pose) and `watch`; the context has `person` and `watch` lines; tools
+  `set_watch_mode`, `add_watch_rule`, `remove_watch_rule`, `learn_from_demo`, `mirror_person`.
+- Browser: the "Watch" card (side slot): mode chips, live activity / phase / reps / held tool, the mode's line
+  (recording + Done, last demo + Repeat, coach cue, assist state), rules with delete, a "when …, …" box. With the agent
+  off, typed/spoken "copy me", "watch and learn", "done", "your turn", "coach me", "spot me", "stop watching" and
+  "when I …, …" are handled there (`pc-hear`).
+- Test only: `pps/human/synth.py` builds synthetic people (squats with valgus / stall, curls, presses, waves, a weave,
+  an offered hand, a hand at a point) as landmark frames for `{type:"copresence_feed"}`.

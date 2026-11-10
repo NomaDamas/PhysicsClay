@@ -1327,7 +1327,8 @@
     ev.stopPropagation(); setStageView(view3d ? "robot" : "3d");
   });
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => document.getElementById("pip").addEventListener(t, (ev) => ev.stopPropagation()));
-  window.PC = { toast: (m) => toast(m), ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, setStageView, get view3d() { return view3d; }, get state() { return state; } };
+  window.PC = { toast: (m) => toast(m), ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, setStageView, get view3d() { return view3d; }, get state() { return state; },
+    get camVideo() { return phoneCam.stream && phoneCam.video && phoneCam.video.readyState >= 2 ? phoneCam.video : null; } };   // this device's camera (web/ui/watch.js runs hand tracking on it)
   if (P3()) mount3d();
 
   setTalk("off");

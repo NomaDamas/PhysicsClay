@@ -29,7 +29,7 @@ from .protocol import LANDMARKS
 from .robot_runtime import HANDS, Runtime
 from .compile_other import compile_ur5e
 from .mock import MockBrain
-from .spatial import ER_MODEL, Spatial, byok, gemini_key
+from .spatial import ER_MODEL, Spatial, byok, gemini_key, openai_key
 from .teach import Teacher
 from .demo import Demo
 from .tasks import REGIONS, Tasks, apply_surface, edit_skill, skills_meta
@@ -318,17 +318,6 @@ async def gemini_rest_proxy(request):
 
 
 TTS_DIR = ROOT / "recordings" / "tts"
-
-
-def openai_key():
-    if byok():
-        return None
-    env = ROOT / ".env"
-    if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith("OPENAI_API_KEY="):
-                return line.split("=", 1)[1].strip()
-    return None
 
 
 async def tts_handler(request):
