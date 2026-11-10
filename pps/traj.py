@@ -11,7 +11,9 @@ Pure (numpy only, no server, no MuJoCo), so it is unit tested in tests/test_traj
 * `check(dense, checkers)`: per point verdicts from callbacks (reach / joint limits via IK, zones, collisions, P5 safety)
   -> `{ok[], why, duration}`.
 * `from_keypoints(spec, world)`: what the language model writes ({"rel": "above", "of": "red_cup", "dz": 0.1},
-  {"via": "over", "of": "vase"}, ...) -> a concrete trajectory, lifted automatically over obstacles along each segment.
+  {"via": "over", "of": "vase"}, ...) -> a concrete trajectory, lifted automatically over obstacles along each segment
+  (with world["hand_shape"], the server's real gripper, so that every part of the hand over an object clears it).
+* `lead_in(start, goal, world)`: the move from the hand to a trajectory's start, lifted the same way.
 * `select` / `edit`: "higher there", "slower near the vase" -> point indices -> changes.
 * `follow_step(rt, dt)`: runtime glue (duck-typed): the robot's hand target follows the dense samples in time.
 
