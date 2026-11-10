@@ -24,6 +24,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 os.environ.setdefault("PC_PHYSICS", "1")
+for _v in ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS"):   # small matrices (the IK's QP): threads only thrash, ~10x slower
+    os.environ.setdefault(_v, "1")                       # on a loaded machine (results are in sim time either way)
 
 TASKS = (("mug", "mug", "center"), ("block", "red block", "center"))
 DT = 1 / 120                    # one IK step of the server loop (4 per 30 fps frame)
@@ -179,7 +181,7 @@ def _summary(rs):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("robots", nargs="*", help="robot ids (default: every robot but h2)")
+    ap.add_argument("robots", nargs="*", help="robot ids (default: every robot)")
     ap.add_argument("-n", "--trials", type=int, default=10)
     ap.add_argument("-s", "--seed", type=int, default=0)
     ap.add_argument("-j", "--jobs", type=int, default=1)
@@ -188,7 +190,7 @@ def main():
     ap.add_argument("--json", action="store_true", help="also print one line 'BENCH_JSON {...}' (scripts/checks/grasp_bench.py)")
     a = ap.parse_args()
     from pps.world import profiles
-    ids = a.robots or [r for r in profiles.PROFILES if r != "h2"]
+    ids = a.robots or list(profiles.PROFILES)
     t0 = time.time()
     if a.jobs > 1 and len(ids) > 1:
         with ProcessPoolExecutor(max_workers=a.jobs) as ex:

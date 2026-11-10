@@ -816,6 +816,9 @@ def _home_key(profile, child):
         for k in src.keys:
             if k.name == profile.home_key:
                 return np.array(k.qpos, float)
+        if profile.stand and profile.base == "legged":    # no such keyframe in the model: computed from it (the H2)
+            from .stand import stand_qpos
+            return stand_qpos(ROOT / profile.model_xml, profile.feet, profile.root, **profile.stand)
     return None
 
 
