@@ -56,7 +56,7 @@ class DemoRecorder:
         return (self.rows[-1][0] - self.rows[0][0]) if len(self.rows) > 1 else 0.0
 
     def add(self, now, h, rep_events=()):
-        if not h.get("visible"):
+        if not h.get("visible") or h.get("src") == "synthetic":     # the no-camera dancer isn't demonstrating anything
             return
         self.src = h.get("src")
         hands = h.get("hands") or {}

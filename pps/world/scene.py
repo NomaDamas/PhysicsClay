@@ -1,8 +1,13 @@
 """Scenes built on the fly: scene spec + robot profile -> compiled MuJoCo model (docs/WORLD.md §1).
 
-    {"template": "table" | "kitchen" | "shelf" | "floor",
-     "objects": [{"name": "mug", "kind": "mug|block|bowl|cup|bottle|can|box|plate|fruit|vase", "color": "red",
-                  "size": [sx, sy, sz] | null, "pos": [x, y] | "left" | "center" | ..., "movable": true}]}
+    {"template": "table" | "kitchen" | "shelf" | "floor" | "gym",
+     "objects": [{"name": "mug", "kind": "mug|block|bowl|cup|bottle|can|box|plate|fruit|vase|steel_plate|bench|barbell|
+                                          wrench|screwdriver|brush", "color": "red",
+                  "size": [sx, sy, sz] | null, "pos": [x, y] | "left" | "center" | ..., "movable": true,
+                  "exact": true (keep pos and size as given: workpieces and fixtures), "mass": kg (for P0 physics)}],
+     # optional (demo packs, pps/world/packs/): kept in the spec and in state.world.scene
+     "pack": "weld_cell", "tool": {"kind": "torch", "tcp": 0.16}, "seams": {name: {"points": [[x, y, z], ...],
+             "label": "the L seam", "between": [object, object]}}}
 
 The arena (lights, floor, the template's furniture, objects, IK target ghosts, the robot_view camera) is written as
 MJCF, the robot model is attached at its mount with mujoco.MjSpec, and the result is compiled in one go.
@@ -30,6 +35,7 @@ TEMPLATES = {
     "kitchen": {"label": "Kitchen counter", "top": 0.90, "x": (0.22, 0.84), "y": (-0.80, 0.80)},
     "shelf": {"label": "Shelf unit (work on the lower board)", "top": 0.80, "x": (0.22, 0.62), "y": (-0.45, 0.45)},
     "floor": {"label": "Floor mat", "top": 0.01, "x": (0.22, 0.92), "y": (-0.50, 0.50)},
+    "gym": {"label": "Gym floor", "top": 0.01, "x": (0.22, 0.47), "y": (-0.60, 0.60)},    # the lifter stands close (spotting)
 }
 
 # kind -> (full size [sx, sy, sz] metres, default colour, collision shape)
@@ -44,15 +50,26 @@ KINDS = {
     "plate": ((0.20, 0.20, 0.02), "white", "cyl"),
     "fruit": ((0.08, 0.08, 0.08), "orange", "cyl"),
     "vase": ((0.09, 0.09, 0.24), "blue", "cyl"),
+    # demo packs (P4): workpieces, gym gear and tools in stands
+    "steel_plate": ((0.10, 0.30, 0.008), "steel", "box"),
+    "bench": ((0.30, 1.10, 0.43), "black", "bench"),
+    "barbell": ((0.45, 1.30, 0.45), "black", "bar"),
+    "wrench": ((0.06, 0.06, 0.20), "steel", "tool"),
+    "screwdriver": ((0.06, 0.06, 0.20), "yellow", "tool"),
+    "brush": ((0.06, 0.06, 0.20), "brown", "tool"),
 }
-KIND_ALIASES = {"cube": "block", "brick": "block", "glass": "cup", "tumbler": "cup", "dish": "plate", "apple": "fruit",
+SIZE_LIMITS = {"steel_plate": (0.004, 0.60), "bench": (0.02, 1.50), "barbell": (0.02, 1.60)}   # default (0.02, 0.40)
+ROUND = ("cyl", "tool")          # footprint is a circle (sx = sy)
+TOOLS = {"torch": {"label": "welding torch", "tcp": 0.16}}
+KIND_ALIASES = {"cube": "block", "brick": "block", "glass": "cup", "tumbler": "cup", "dish": "plate", "apple": "fruit", "plate_steel": "steel_plate", "steel": "steel_plate", "workpiece": "steel_plate",
+                "spanner": "wrench", "bar": "barbell", "weight_bench": "bench",
                 "orange": "fruit", "banana": "fruit", "lemon": "fruit", "ball": "fruit", "carton": "box", "crate": "box",
                 "jar": "can", "tin": "can", "soda": "can", "coffee mug": "mug", "flask": "bottle"}
 COLORS = {
     "red": (0.92, 0.36, 0.33), "green": (0.30, 0.72, 0.45), "blue": (0.24, 0.55, 0.93), "yellow": (0.98, 0.82, 0.25),
     "orange": (0.98, 0.58, 0.20), "purple": (0.58, 0.40, 0.85), "pink": (0.96, 0.55, 0.72), "white": (0.94, 0.94, 0.92),
     "black": (0.15, 0.15, 0.17), "gray": (0.55, 0.56, 0.60), "grey": (0.55, 0.56, 0.60), "silver": (0.75, 0.77, 0.80),
-    "brown": (0.55, 0.38, 0.24), "cardboard": (0.74, 0.58, 0.40),
+    "brown": (0.55, 0.38, 0.24), "cardboard": (0.74, 0.58, 0.40), "steel": (0.60, 0.62, 0.66),
 }
 
 # the UX 2.0 world, as a spec (G1 + this spec loads scene_pc.xml unchanged)
@@ -79,6 +96,49 @@ def regions(s):
 
 def templates():
     return [{"id": k, "label": v["label"], "top": v["top"]} for k, v in TEMPLATES.items()]
+
+
+def _num(v, lo, hi):
+    x = float(v)
+    if not np.isfinite(x):
+        raise ValueError("not finite")
+    return float(np.clip(x, lo, hi))
+
+
+def _norm_tool(t):
+    """{"kind": "torch", "tcp": m} (or just "torch") -> canonical tool, or None."""
+    if isinstance(t, str):
+        t = {"kind": t}
+    if not isinstance(t, dict) or str(t.get("kind") or "").lower() not in TOOLS:
+        return None
+    k = str(t["kind"]).lower()
+    try:
+        tcp = _num(t.get("tcp", TOOLS[k]["tcp"]), 0.05, 0.30)
+    except (TypeError, ValueError):
+        tcp = TOOLS[k]["tcp"]
+    return {"kind": k, "tcp": round(tcp, 4)}
+
+
+def _norm_seams(seams):
+    """{name: {points: [[x, y, z], ...], label?, between?}} (or a list with names) -> canonical dict."""
+    if isinstance(seams, list):
+        seams = {str(x.get("name") or f"seam_{i + 1}"): x for i, x in enumerate(seams) if isinstance(x, dict)}
+    if not isinstance(seams, dict):
+        return {}
+    out = {}
+    for name, sm in list(seams.items())[:8]:
+        if not isinstance(sm, dict):
+            continue
+        try:
+            pts = [[round(_num(c, -5.0, 5.0), 4) for c in p_[:3]] for p_ in (sm.get("points") or [])[:40] if len(p_) >= 3]
+        except (TypeError, ValueError):
+            continue
+        if len(pts) < 2:
+            continue
+        key = _slug(name) or f"seam_{len(out) + 1}"
+        out[key] = {"points": pts, "label": str(sm.get("label") or key.replace("_", " "))[:40],
+                    "between": [_slug(b) for b in (sm.get("between") or [])][:4]}
+    return out
 
 
 # ------------------------------------------------------------------ spec normalisation
@@ -125,12 +185,14 @@ def normalize(spec, profile=None):
         kind = _kind(raw)
         color = _color(raw, kind)
         size = raw.get("size")
+        lo, hi = SIZE_LIMITS.get(kind, (0.02, 0.40))
         if isinstance(size, (list, tuple)) and len(size) == 3 and all(isinstance(v, (int, float)) and v > 0 for v in size):
-            size = [float(np.clip(v, 0.02, 0.40)) for v in size]
+            size = [float(np.clip(v, lo, hi)) for v in size]
         else:
             size = list(KINDS[kind][0])
-        if KINDS[kind][2] == "cyl":
+        if KINDS[kind][2] in ROUND:
             size[1] = size[0]
+        exact = bool(raw.get("exact"))
         base = _slug(raw.get("name")) or (f"{color}_{kind}" if raw.get("color") else kind)
         name, k = base, 2
         while name in names:
@@ -149,7 +211,9 @@ def normalize(spec, profile=None):
                 if "left" in key and "back" in key or "right" in key and "back" in key:
                     xy[0] = reg["back"][0]
         m = 0.03 + r
-        if xy is not None:
+        if xy is not None and exact:                    # workpieces and fixtures: exactly where the pack put them
+            pass
+        elif xy is not None:
             cx = float(np.clip(xy[0], s["x"][0] + m, s["x"][1] - m))
             cy = float(np.clip(xy[1], s["y"][0] + m, s["y"][1] - m))
             if abs(cx - xy[0]) > 1e-6 or abs(cy - xy[1]) > 1e-6:
@@ -162,10 +226,25 @@ def normalize(spec, profile=None):
             if xy is None:
                 notes.append(f"no room for {name}")
                 continue
-        taken.append((xy, r))
-        out.append({"name": name, "kind": kind, "color": color, "size": [round(v, 4) for v in size],
-                    "pos": [round(xy[0], 3), round(xy[1], 3)], "movable": bool(raw.get("movable", True))})
-    return {"template": tpl, "objects": out}, notes
+        if not exact:
+            taken.append((xy, r))
+        o = {"name": name, "kind": kind, "color": color, "size": [round(v, 4) for v in size],
+             "pos": [round(xy[0], 4 if exact else 3), round(xy[1], 4 if exact else 3)], "movable": bool(raw.get("movable", True))}
+        if exact:
+            o["exact"] = True
+        if isinstance(raw.get("mass"), (int, float)) and raw["mass"] > 0:
+            o["mass"] = round(float(raw["mass"]), 3)
+        out.append(o)
+    spec_out = {"template": tpl, "objects": out}
+    if spec.get("pack"):
+        spec_out["pack"] = _slug(spec["pack"])
+    tool = _norm_tool(spec.get("tool"))
+    if tool:
+        spec_out["tool"] = tool
+    seams = _norm_seams(spec.get("seams"))
+    if seams:
+        spec_out["seams"] = seams
+    return spec_out, notes
 
 
 def _free_xy(s, r, taken, prefer=None):
@@ -221,7 +300,15 @@ def _object_xml(o, top):
         geoms += f'<geom {col} type="cylinder" size="{_f(0.065 * s, 0.071 * s)}" pos="{_f(0, -0.008 * s, 0.003 * s)}"/>'
         return f'<body name="{body}" pos="{_f(x, y, top + h)}"{mocap}>{geoms}</body>'
     hx, hy, hz = sx / 2, sy / 2, sz / 2
-    if KINDS[kind][2] == "box":
+    shape = KINDS[kind][2]
+    if shape in ("bench", "bar", "tool"):
+        geoms = _gear_geoms(kind, shape, (hx, hy, hz), rgba, vis)
+        if shape == "tool":
+            geoms += f'<geom {col} type="cylinder" size="{_f(hx, hz)}"/>'
+        else:
+            geoms += f'<geom {col} type="box" size="{_f(hx, hy, hz)}"/>'
+        return f'<body name="{body}" pos="{_f(x, y, top + hz)}"{mocap}>{geoms}</body>'
+    if shape == "box":
         geoms = f'<geom type="box" size="{_f(hx, hy, hz)}" rgba="{rgba}" {vis}/>'
         geoms += f'<geom {col} type="box" size="{_f(hx, hy, hz)}"/>'
     else:
@@ -242,6 +329,36 @@ def _object_xml(o, top):
             geoms = f'<geom type="cylinder" size="{_f(r, hz)}" rgba="{rgba}" {vis}/>'
         geoms += f'<geom {col} type="cylinder" size="{_f(r, hz)}"/>'
     return f'<body name="{body}" pos="{_f(x, y, top + hz)}"{mocap}>{geoms}</body>'
+
+
+def _gear_geoms(kind, shape, half, rgba, vis):
+    """Visual geoms of the pack objects (body frame at the object's centre)."""
+    hx, hy, hz = half
+    steel, dark = _rgba("steel"), "0.13 0.13 0.15 1"
+    if shape == "bench":                              # padded top on two legs
+        g = f'<geom type="box" size="{_f(hx, hy, 0.035)}" pos="{_f(0, 0, hz - 0.035)}" rgba="{rgba}" {vis}/>'
+        for ly in (-hy + 0.10, hy - 0.10):
+            g += f'<geom type="box" size="{_f(hx * 0.75, 0.025, hz - 0.035)}" pos="{_f(0, ly, -0.035)}" rgba="{steel}" {vis}/>'
+        return g
+    if shape == "bar":                                # a bar along y with two plates
+        g = f'<geom type="cylinder" fromto="{_f(0, -hy, 0, 0, hy, 0)}" size="0.0125" rgba="{steel}" {vis}/>'
+        for sgn in (-1, 1):
+            yc = sgn * (hy - 0.16)
+            g += f'<geom type="cylinder" fromto="{_f(0, yc - 0.025, 0, 0, yc + 0.025, 0)}" size="{_f(hx)}" rgba="{rgba}" {vis}/>'
+            g += f'<geom type="cylinder" fromto="{_f(0, yc - sgn * 0.045, 0, 0, yc - sgn * 0.03, 0)}" size="0.025" rgba="{steel}" {vis}/>'
+        return g
+    base = f'<geom type="box" size="{_f(hx * 0.9, hx * 0.9, 0.01)}" pos="{_f(0, 0, -hz + 0.01)}" rgba="{dark}" {vis}/>'
+    if kind == "wrench":                              # standing in its stand: handle, open-end head on top
+        return (base + f'<geom type="box" size="{_f(0.004, 0.011, hz * 0.72)}" pos="{_f(0, 0, -0.02)}" rgba="{rgba}" {vis}/>'
+                + f'<geom type="box" size="{_f(0.005, 0.022, 0.012)}" pos="{_f(0, 0, hz * 0.72)}" rgba="{rgba}" {vis}/>'
+                + "".join(f'<geom type="box" size="{_f(0.005, 0.006, 0.016)}" pos="{_f(0, sg * 0.016, hz * 0.72 + 0.026)}" rgba="{rgba}" {vis}/>'
+                          for sg in (-1, 1)))
+    if kind == "screwdriver":                         # handle up, shaft down into the stand
+        return (base + f'<geom type="cylinder" size="0.0035 {_f(hz * 0.4)}" pos="{_f(0, 0, -hz * 0.45)}" rgba="{steel}" {vis}/>'
+                + f'<geom type="capsule" size="0.015 {_f(hz * 0.42)}" pos="{_f(0, 0, hz * 0.45)}" rgba="{rgba}" {vis}/>')
+    return (base + f'<geom type="cylinder" size="0.009 {_f(hz * 0.62)}" pos="{_f(0, 0, -0.03)}" rgba="{rgba}" {vis}/>'      # brush
+            + f'<geom type="box" size="{_f(0.012, 0.026, 0.028)}" pos="{_f(0, 0, hz * 0.62)}" rgba="{rgba}" {vis}/>'
+            + f'<geom type="box" size="{_f(0.010, 0.024, 0.018)}" pos="{_f(0, 0, hz * 0.62 + 0.044)}" rgba="{dark}" {vis}/>')
 
 
 def _template_xml(s):
@@ -268,6 +385,9 @@ def _template_xml(s):
         for side, yy in (("right", y0 - 0.01), ("left", y1 + 0.01)):
             g += f'<geom name="shelf_{side}" type="box" size="{_f(hx, 0.01, (top + 0.5) / 2)}" pos="{_f(cx, yy, (top + 0.5) / 2)}" material="wood"/>'
         return g
+    if t == "gym":                                   # rubber lifting floor (the work surface) on a darker gym floor
+        return (f'<geom name="table" type="box" size="{_f(hx, hy, top / 2)}" pos="{_f(cx, cy, top / 2)}" rgba="0.20 0.21 0.24 1"/>'
+                f'<geom name="gym_floor" type="box" size="1.6 1.4 0.004" pos="0.6 0 0.002" rgba="0.33 0.34 0.38 1" {nc}/>')
     # floor mat
     return f'<geom name="table" type="box" size="{_f(hx, hy, top / 2)}" pos="{_f(cx, cy, top / 2)}" rgba="0.62 0.70 0.82 1"/>'
 
@@ -350,6 +470,7 @@ class World:
     legacy: bool = False                     # the UX 2.0 scene_pc.xml world
     robot_bodies: set = field(default_factory=set)
     notes: list = field(default_factory=list)
+    tool: dict | None = None                 # a tool mounted on the end effector (demo packs: the welding torch)
 
     @property
     def robot_roots(self):
@@ -383,9 +504,14 @@ def build(robot_id=None, spec=None):
     xml = (ROOT / profile.model_xml)
     if not xml.exists():
         raise ValueError(f"the {profile.label} model is not on disk ({profile.model_xml})")
+    child = mujoco.MjSpec.from_file(xml.as_posix())
+    tool = None
+    if spec_n.get("tool"):
+        profile, tool, note = mount_tool(profile, child, spec_n["tool"])
+        if note:
+            notes.append(note)
     arena_xml, props_xml = _arena_xml(profile, spec_n, s)
     arena = mujoco.MjSpec.from_string(arena_xml)
-    child = mujoco.MjSpec.from_file(xml.as_posix())
     key = _home_key(profile, child)
     for k in list(child.keys):
         child.delete(k)
@@ -436,9 +562,49 @@ def build(robot_id=None, spec=None):
         mujoco.mju_quat2Mat(R, qy)
         q[adr:adr + 3] = mpos + R.reshape(3, 3) @ np.array([p[0], p[1], 0.0]) + np.array([0, 0, p[2]])
         q[adr + 3:adr + 7] = _quat_mul(qy, q[adr + 3:adr + 7])
-    w = World(profile, spec_n, s, regions(s), m, q, False, notes=notes)
+    w = World(profile, spec_n, s, regions(s), m, q, False, notes=notes, tool=tool)
     w.robot_bodies = _robot_bodies(m)
     return w
+
+
+def mount_tool(profile, child, tool):
+    """Attach a tool (visual + collision geoms) to a single arm's end-effector body and make its tip the end effector
+    (the TCP: IK, paths and checks then work on the torch tip). -> (profile copy, tool info | None, note | None)."""
+    if profile.kind not in ("arm", "mobile_manipulator") or len(profile.ee) != 1:
+        return profile, None, f"the {TOOLS[tool['kind']]['label']} mounts on single arms only, so the {profile.label} works without it"
+    role, site_name = next(iter(profile.ee.items()))
+    try:
+        site = child.site(site_name)
+    except Exception:
+        return profile, None, "the tool could not be mounted"
+    body = site.parent
+    R = np.zeros(9)
+    mujoco.mju_quat2Mat(R, np.asarray(site.quat, float))
+    a = R.reshape(3, 3) @ np.asarray(profile.ee_axis, float)
+    a = a / np.linalg.norm(a)
+    p0 = np.asarray(site.pos, float)
+    L = float(tool["tcp"])
+
+    def capsule(r, s0, s1, rgba, collide=False, kind=mujoco.mjtGeom.mjGEOM_CAPSULE):
+        g = body.add_geom()
+        g.type = kind
+        g.fromto = np.concatenate([p0 + a * s0, p0 + a * s1])
+        g.size = [r, 0, 0]
+        if collide:
+            g.name, g.rgba, g.group, g.contype, g.conaffinity = "torch_collision", [0, 0, 0, 0], 3, 1, 1
+        else:
+            g.rgba, g.group, g.contype, g.conaffinity = rgba, 2, 0, 0
+    capsule(0.022, 0.0, 0.035, [0.10, 0.10, 0.12, 1])                      # mount
+    capsule(0.015, 0.035, L - 0.055, [0.16, 0.17, 0.19, 1])                # gun neck
+    capsule(0.011, L - 0.055, L - 0.012, [0.78, 0.47, 0.22, 1], kind=mujoco.mjtGeom.mjGEOM_CYLINDER)   # copper nozzle
+    capsule(0.0018, L - 0.012, L - 0.002, [0.70, 0.70, 0.72, 1], kind=mujoco.mjtGeom.mjGEOM_CYLINDER)  # wire stick-out
+    capsule(0.018, 0.01, L - 0.035, None, collide=True)                    # collision: the gun, not the last 3.5 cm
+    tcp = body.add_site()
+    tcp.name, tcp.pos, tcp.quat = "torch_tcp", p0 + a * L, np.asarray(site.quat, float)
+    tcp.size, tcp.rgba, tcp.group = [0.003, 0, 0], [1.0, 0.45, 0.1, 1], 4
+    info = {"kind": tool["kind"], "label": TOOLS[tool["kind"]]["label"], "tcp": L, "site": "torch_tcp", "mount": site_name}
+    import dataclasses
+    return dataclasses.replace(profile, ee={role: "torch_tcp"}, tool=info), info, None
 
 
 def _home_key(profile, child):

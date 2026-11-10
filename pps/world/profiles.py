@@ -46,10 +46,14 @@ class RobotProfile:
     grasp: str = "top"                 # default pick_place grasp: "top" | "side"
     freeze: tuple = ()                 # joint name substrings the IK must not move (fingers, head, wheels)
     reach_tol: float = 0.06
+    tool: dict | None = None           # a tool on the end effector (set by the scene: demo packs mount a welding torch;
+                                       # ee then names the tool's tip site, the TCP)
 
     def public(self):
         d = {"id": self.id, "label": self.label, "kind": self.kind, "base": self.base, "ee": list(self.ee),
              "capabilities": list(self.capabilities)}
+        if self.tool:
+            d["tool"] = {k: self.tool[k] for k in ("kind", "label", "tcp") if k in self.tool}
         if self.experimental:
             d["experimental"] = True
         if self.note:

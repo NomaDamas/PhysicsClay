@@ -185,8 +185,9 @@ async def run(t):
     t.check("watch: rule 'when I put my hand out, give me the mug' compiled", r.get("ok") and rule.get("when") == "hand_open_near_robot"
             and (rule.get("task") or {}).get("action") == "handover" and _w(t).get("mode") == "respond", f"{r.get('message')} {rule}")
     offer = synth.frames("offer", 0.5, target=[0.80, -0.05, TABLE_TOP + 0.25])
+    f0 = _w(t).get("fires", 0)                    # the counter is per server (earlier checks may have fired rules)
     await feed(t, offer, hold=30.0)
-    ok = await wait_for(t, lambda s: (s.get("watch") or {}).get("fires", 0) >= 1, 6.0)
+    ok = await wait_for(t, lambda s: (s.get("watch") or {}).get("fires", 0) >= f0 + 1, 6.0)
     task = t.state().get("task") or {}
     t.check("watch: open hand held out -> rule fires a handover", ok and task.get("action") == "handover" and str(task.get("id", "")).startswith("watch-R"),
             f"fires={_w(t).get('fires')} task={task.get('id')} {task.get('status')} {task.get('message', '')[:60]}")

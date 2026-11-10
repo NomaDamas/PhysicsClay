@@ -264,6 +264,11 @@ if __name__ == "__main__":
                 os.remove(ROOT / "recordings" / "skills" / f"{f}.json")
             except OSError:
                 pass
+        for f in list((ROOT / "skills").glob("selftest_*.json")) + list((ROOT / "skills").glob("p4check_*.json")):
+            try:                         # P4: skills the checks' demonstrations became (skills/ is user data)
+                f.unlink()
+            except OSError:
+                pass
     bad = [r for r in results if not r[1]]
     print(f"\n{len(results) - len(bad)}/{len(results)} passed")
     sys.exit(1 if bad else 0)

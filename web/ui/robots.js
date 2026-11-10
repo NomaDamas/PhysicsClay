@@ -30,6 +30,7 @@
     kitchen: ["Kitchen", "Counter with a sink side"],
     shelf: ["Shelf", "Shelf levels above a table"],
     floor: ["Floor", "Objects on the floor"],
+    gym: ["Gym", "Rubber floor for lifting"],
   };
   const KINDS = ["mug", "block", "bowl", "cup", "bottle", "can", "box", "plate", "fruit"];
   const COLORS = { red: "#e0574f", orange: "#f59145", yellow: "#e8c44e", green: "#4caf6e", blue: "#4a7fe0", purple: "#9b6fd6", white: "#f4f4f6", black: "#2a2a2e", grey: "#9a9aa0" };
@@ -77,7 +78,8 @@
       const robots = arr(W.robots).filter((r) => r && r.id);
       if (!robots.some((r) => r.id === robot.id)) robots.unshift(robot);
       const scene = W.scene && typeof W.scene === "object" ? W.scene : { template: "table", objects: [] };
-      return { world: true, rev: W.rev, id: robot.id, robot, robots, scene, templates: arr(W.templates).length ? arr(W.templates).map((t) => (t && typeof t === "object" ? String(t.id || "") : String(t))).filter(Boolean) : TEMPLATES };
+      return { world: true, rev: W.rev, id: robot.id, robot, robots, scene, packs: arr(W.packs).filter((p) => p && p.id), pack: W.pack || scene.pack || null,
+        templates: arr(W.templates).length ? arr(W.templates).map((t) => (t && typeof t === "object" ? String(t.id || "") : String(t))).filter(Boolean) : TEMPLATES };
     }
     const robot = { id: "g1", label: "Unitree G1", kind: "humanoid", base: "legged", capabilities: G1_CAPS };
     const objects = arr(s.scene_objects).map((o) => ({ name: String(o.name || ""), kind: "", color: "", pos: o.pos, movable: !/vase|blue block/.test(String(o.name)) }));
@@ -203,6 +205,17 @@
 .sc-tpl-btn[aria-pressed="true"] svg { color: var(--accent); }
 .sc-tpl-btn:disabled { cursor: default; opacity: .6; }
 .sc-tpl-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+.sc-packs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sc-pack { min-height: 96px; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 10px 12px; border-radius: 14px;
+  border: 1px solid var(--line); background: #fff; text-align: left; color: var(--t1); cursor: pointer; }
+.sc-pack b { font-size: var(--fs-sm); font-weight: 650; display: flex; align-items: center; gap: 6px; }
+.sc-pack span { font-size: 11px; color: var(--t2); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.sc-pack small { font-size: 11px; color: var(--t3); }
+.sc-pack:hover:not(:disabled) { border-color: rgba(245,145,69,.6); }
+.sc-pack[aria-pressed="true"] { border: 2px solid var(--hot, #f59145); padding: 9px 11px; }
+.sc-pack:disabled { cursor: default; opacity: .6; }
+.sc-pack:focus-visible { outline: none; box-shadow: var(--ring); }
+@media (max-width: 640px) { .sc-packs { grid-template-columns: minmax(0, 1fr); } .sc-pack { min-height: 0; } }
 .sc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 16px; background: #fff; overflow: hidden; }
 .sc-list li { display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 4px 6px 4px 14px; border-top: 1px solid var(--divider); }
 .sc-list li:first-child { border-top: 0; }
@@ -302,6 +315,7 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
     else if (b.dataset.tab) setTab(b.dataset.tab);
     else if (b.dataset.robot) pickRobot(b.dataset.robot);
     else if (b.dataset.tpl) pickTemplate(b.dataset.tpl);
+    else if (b.dataset.pack) pickPack(b.dataset.pack);
     else if (b.dataset.del) removeObject(b.dataset.del);
     else if (b.dataset.sceneReset != null) resetScene();
   });
@@ -342,6 +356,12 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
     if (t === m.scene.template || pending) return;
     const objects = arr(m.scene.objects);
     if (begin("scene", { type: "world", op: "set", scene: { template: t, objects } }, { label: `${(TPL[t] || [t])[0]} scene` })) U.say("sys", `Building the ${(TPL[t] || [t])[0].toLowerCase()} scene…`);
+  }
+  function pickPack(id) {
+    const m = model(U.state);
+    if (pending) return;
+    const p = arr(m.packs).find((x) => x.id === id) || { label: id };
+    if (begin("scene", { type: "world", op: "pack", name: id, id: `ui-pack-${Date.now() % 1e7}` }, { label: `Setting up the ${String(p.label).toLowerCase()}` })) U.say("sys", `Setting up the ${String(p.label).toLowerCase()}…`);
   }
   function removeObject(name) {
     if (pending) return;
@@ -513,7 +533,12 @@ html.pc-no-teach #teachPanel, html.pc-no-follow .menu-item[data-act="follow"], h
       : `<span class="sc-status" role="status">${objs.length} object${objs.length === 1 ? "" : "s"} · ${esc((TPL[tpl] || [tpl])[0])}</span>`;
     const opts = (list, sel, lab) => list.map((v) => `<option value="${esc(v)}" ${v === sel ? "selected" : ""}>${esc(lab ? lab(v) : v)}</option>`).join("");
     const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
-    return `${ro ? '<p class="rb-hint">Building scenes arrives with the world update. This is the current G1 table.</p>' : '<p class="rb-hint">Or just say it: “a kitchen counter with a bowl and two cups”.</p>'}
+    const packs = arr(m.packs);
+    const packsHTML = packs.length ? `<h3 class="rb-sec-title">Demo packs</h3>
+      <div class="sc-packs">${packs.map((p) => `<button type="button" class="sc-pack" data-pack="${esc(p.id)}" aria-pressed="${p.id === m.pack}" ${ro || busy ? "disabled" : ""}>
+        <b>${esc(p.label || p.id)}</b><span>${esc(p.summary || "")}</span><small>${esc((p.robots || []).length > 1 ? `${p.robot} (or ${p.robots.filter((r) => r !== p.robot).slice(0, 2).join(", ")})` : (p.robot || ""))}</small></button>`).join("")}</div>` : "";
+    return `${ro ? '<p class="rb-hint">Building scenes arrives with the world update. This is the current G1 table.</p>' : '<p class="rb-hint">Or just say it: “a kitchen counter with a bowl and two cups”, or “set up a weld cell”.</p>'}
+      ${packsHTML}
       <h3 class="rb-sec-title">Template</h3>
       <div class="sc-tpl">${m.templates.map((t) => `<button type="button" class="sc-tpl-btn" data-tpl="${esc(t)}" aria-pressed="${t === tpl}" ${ro || busy ? "disabled" : ""}>${icon(IC[t] ? t : "table", 20)}<b>${esc((TPL[t] || [cap(t)])[0])}</b><span>${esc((TPL[t] || [, ""])[1])}</span></button>`).join("")}</div>
       <h3 class="rb-sec-title">Objects</h3>

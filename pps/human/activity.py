@@ -9,10 +9,12 @@ No learning, no network: joint angles and the hands' paths over a short sliding 
   - `squat`  knees bend > 30 deg and the hips drop > 8 cm within the window (periodic, counted)
   - `press`  a wrist travels from shoulder height to overhead (periodic, counted)
   - `curl`   an elbow flexes > 60 deg while the wrist stays below the shoulder (periodic, counted)
-  - `wave`   a hand above the shoulder swings sideways (>= 3 direction changes, 5-60 cm)
-  - `weave`  a hand below the shoulder oscillates across its own travel direction (welding weave, stirring,
-             wiping): the path is detrended (least-squares travel line), the residual's main axis gives the
-             oscillation, its zero crossings the frequency and its RMS the amplitude
+  - `wave`   a hand at or above shoulder height swings sideways in place (>= 3 direction changes, 5-60 cm)
+  - `weave`  a hand below the shoulder oscillates across a path that travels (welding weave): pps/human/periodic.py
+             (least-squares travel line, FFT frequency, band-limited cycle width, periodicity strength). A still or
+             jittering hand is not a weave: it must travel (speed, straightness, distance), oscillate at 1-5 Hz with
+             a width of 3 mm-6 cm, and be clearly periodic (real-camera finding: a still, hanging hand jitters
+             1-3 cm at ~0.9 Hz in MediaPipe's world landmarks, which the old crossing-count rule called a weave)
   - `reach`  an arm straight and well in front of the body
   - `point`  co-presence reports an extended pointing arm
   - `still`  hands and hips move < 5 cm/s for a second
@@ -27,6 +29,8 @@ import math
 
 import numpy as np
 
+from . import periodic
+
 PERIODIC = ("squat", "press", "curl", "weave", "wave")
 WINDOW_S = 4.0         # s of history the periodic detectors look at
 OSC_WINDOW_S = 3.0     # s for the hand-oscillation detectors (wave, weave)
@@ -35,6 +39,7 @@ KEEP_S = 1.5           # s a periodic activity survives without being detected (
 STILL_V = 0.05         # m/s
 STALL_S = 0.7          # s the signal must stop moving mid-rep to count as a stall
 TOP, BOTTOM = 0.72, 0.28
+WAVE_Z = -0.08         # m: a wave is at or above shoulder height (wrist above the shoulder minus this)
 
 
 def _v(p):
@@ -93,6 +98,7 @@ def features(J):
         f[f"{s}_elfwd"] = float(np.dot(el - sh, fw))
         f[f"{s}_w"] = wr
     f["head_z"] = float(_v(J["head"])[2] - sh_mid[2]) if "head" in J else 0.25
+    f["across"] = np.cross([0.0, 0.0, 1.0], fw)     # the person's left-right (a wave swings along it)
     return f
 
 
@@ -227,7 +233,8 @@ class ActivityTracker:
             elo, ehi = self._rng(rows, f"{s}_elbow")
             if zhi > f["head_z"] - 0.02 and zlo < 0.12 and zhi - zlo > 0.25 and self._swings(rows, f"{s}_wz") >= 2:
                 best = best or ("press", s)
-            elif ehi - elo > 60 and zhi < 0.12 and best is None and self._swings(rows, f"{s}_elbow") >= 2:
+            elif ehi - elo > 60 and zhi < 0.12 and best is None and self._swings(rows, f"{s}_elbow") >= 2 \
+                    and not self._sideways(rows, s):
                 best = ("curl", s)
         if best:
             return best
@@ -239,13 +246,16 @@ class ActivityTracker:
                 o = oscillation(ts, ps)
                 if o is None:
                     continue
-                above = np.median([r[1][f"{s}_wz"] for r in osc_rows if f"{s}_wz" in r[1]]) > 0.05
-                if above and 0.05 <= o["amp"] <= 0.6 and o["crossings"] >= 3:
+                wz = float(np.median([r[1][f"{s}_wz"] for r in osc_rows if f"{s}_wz" in r[1]]))
+                if wz > WAVE_Z and 0.05 <= o["amp"] <= 0.6 and o["crossings"] >= 3 and o["travel"] < 0.15:
                     self.osc = dict(o, side=s)
                     return "wave", s
-                if not above and 0.004 <= o["amp"] <= 0.08 and o["crossings"] >= 4 and 0.6 <= o["freq"] <= 6.0:
-                    self.osc = dict(o, side=s)
-                    return "weave", s
+                if wz <= 0.05 and o["amp"] >= 0.002:
+                    a = periodic.analyze(ts, ps, n_fft=1024)
+                    if periodic.is_weave(a)[0]:
+                        self.osc = dict(o, side=s, amp=a["amp"], freq=a["freq"], travel=a["speed"], dir=a["dir"],
+                                        axis=a["axis"], kind=a["kind"])
+                        return "weave", s
         if extra.get("pointing"):
             return "point", None
         for s in ("l", "r"):
@@ -254,6 +264,16 @@ class ActivityTracker:
         if extra.get("speed", 1.0) < STILL_V and self._still(now):
             return "still", None
         return "moving", None
+
+    @staticmethod
+    def _sideways(rows, s):
+        """The wrist swings across the body more than it rises and falls (a wave at shoulder height, not a curl)."""
+        ws = [(r[1][f"{s}_w"], r[1].get("across")) for r in rows if f"{s}_w" in r[1]]
+        if len(ws) < 4 or ws[-1][1] is None:
+            return False
+        P = np.asarray([w for w, _ in ws])
+        lat = float(np.ptp(P @ np.asarray(ws[-1][1], float)))
+        return lat > 1.25 * float(np.ptp(P[:, 2]))
 
     def _active_sides(self, rows):
         """Arms ordered by how much the wrist moved in the window (the working hand first)."""
@@ -453,4 +473,5 @@ class ActivityTracker:
             return None
         o = self.osc
         return {"amp": round(o["amp"], 4), "freq": round(o["freq"], 2), "travel": round(o["travel"], 4),
-                "axis": [round(float(v), 3) for v in o["axis"]], "dir": [round(float(v), 3) for v in o["dir"]], "side": o["side"]}
+                "axis": [round(float(v), 3) for v in o["axis"]], "dir": [round(float(v), 3) for v in o["dir"]], "side": o["side"],
+                "kind": o.get("kind", "zigzag")}

@@ -4,6 +4,9 @@ the table, facing the robot, doing something.
     frames("squat", seconds=10, reps=5, valgus=True)     # 5 squats with knees caving in
     frames("weave", seconds=6, amp=0.015, freq=2.0)       # right hand weaving along a seam (welding)
     frames("wave", seconds=3)  frames("curl", ...)  frames("press", ...)  frames("offer", target=[x, y, z])
+    frames("wave", 4, z=0.0)                              # a wave at shoulder height
+    frames("jitter", 6, amp=0.02)                         # a still, hanging hand with MediaPipe-like jitter (~0.9 Hz)
+    frames("weave", 6, amp=0.005, freq=2.0, travel=0.01, noise=0.001, shape="tri")
     sequence([("rest", 1.0, {}), ("squat", 6.0, {"reps": 3})])
 
 Built in world coordinates (x toward the robot is -x for the person, y left of the robot, z up) and converted with
@@ -142,12 +145,29 @@ def frame_at(kind, t, anchor=PERSON, **kw):
         f = float(kw.get("freq", 1.5))
         B = body(anchor=anchor, arms={})
         sh = B["r_shoulder"]
-        wr = sh + np.array([-0.12, 0.18 + 0.15 * math.sin(2 * math.pi * f * t), 0.28])
+        z = float(kw.get("z", 0.28))             # wrist height over the shoulder (0 = a wave at shoulder height)
+        wr = sh + np.array([-0.12, 0.18 + 0.15 * math.sin(2 * math.pi * f * t), z])
         return _lm(body(anchor=anchor, arms={"r": (wr, True, [0.3, 1.0, -0.6])}), anchor)
+    if kind == "jitter":                          # a still hand by the side, as MediaPipe's world landmarks jitter it
+        a = float(kw.get("amp", 0.02))
+        rng = np.random.default_rng(int(kw.get("seed", 3)))
+        ph = rng.uniform(0, 2 * math.pi, (3, 3))
+        fr = (0.9, 0.55, 1.7)
+        off = np.array([sum(w * math.sin(2 * math.pi * fr[k] * t + ph[k, c]) for k, w in enumerate((1.0, 0.5, 0.25)))
+                        for c in range(3)]) * a / 1.75
+        B = body(anchor=anchor)
+        for k in ("r_wrist", "r_index", "r_pinky", "r_thumb"):
+            B[k] = B[k] + off
+        B["r_elbow"] = B["r_elbow"] + 0.4 * off
+        return _lm(B, anchor)
     if kind == "weave":
         f, amp, travel = float(kw.get("freq", 2.0)), float(kw.get("amp", 0.015)), float(kw.get("travel", 0.03))
         y0 = float(kw.get("y0", ay + 0.12))
-        wr = np.array([ax - 0.36 + amp * math.sin(2 * math.pi * f * t), y0 - travel * t, TABLE_TOP + 0.24])
+        ph = 2 * math.pi * f * t
+        wav = (2 / math.pi) * math.asin(math.sin(ph)) if kw.get("shape") == "tri" else math.sin(ph)
+        wr = np.array([ax - 0.36 + amp * wav, y0 - travel * t, TABLE_TOP + float(kw.get("z", 0.24))])
+        if kw.get("noise"):                       # deterministic per-frame noise (sensor jitter)
+            wr = wr + np.random.default_rng(int(round(t * 1000)) + 7).normal(0.0, float(kw["noise"]), 3)
         return _lm(body(lean=15.0, anchor=anchor, arms={"r": (wr, False)}), anchor)
     if kind == "reach":
         tgt = np.asarray(kw.get("target", [ax - 0.6, ay + 0.1, TABLE_TOP + 0.15]), float)

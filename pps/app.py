@@ -33,7 +33,7 @@ from .spatial import ER_MODEL, Spatial, byok, gemini_key, openai_key
 from .teach import Teacher
 from .demo import Demo
 from .tasks import REGIONS, Tasks, apply_surface, edit_skill, skills_meta
-from .world import profiles as world_profiles, scene as world_scene
+from .world import packs as world_packs, profiles as world_profiles, scene as world_scene
 from .world.runtime import make_runtime
 from . import ext
 
@@ -437,8 +437,10 @@ def world_target(c, world):
         spec["objects"] = keep
     elif op == "reset":
         robot, spec = world_profiles.DEFAULT_ROBOT, copy.deepcopy(world_scene.DEFAULT_SCENE)
+    elif op == "pack":                                   # P4 demo packs (pps/world/packs/): scene + body for one story
+        robot, spec = world_packs.target(c.get("name"), c.get("robot") or world.profile.id)
     else:
-        raise ValueError(f"Unknown world op '{op}'. Use set, add_object, remove_object or reset.")
+        raise ValueError(f"Unknown world op '{op}'. Use set, add_object, remove_object, pack or reset.")
     return robot, spec
 
 
@@ -446,14 +448,24 @@ def world_state(world, rev):
     return {"rev": rev, "robot": world.profile.public(), "scene": world.spec, "robots": world_profiles.listing(),
             "templates": world_scene.templates(), "surface": {"top": world.surface["top"], "x": list(world.surface["x"]),
                                                               "y": list(world.surface["y"])},
-            "regions": {k: list(v) for k, v in world.regions.items()}, "notes": world.notes}
+            "regions": {k: list(v) for k, v in world.regions.items()}, "notes": world.notes,
+            "packs": PACKS[0], "pack": world.spec.get("pack")}
+
+
+PACKS = [world_packs.listing()]                       # read once (the files ship with the code)
 
 
 def world_message(world):
     p = world.profile
     objs = [o["name"].replace("_", " ") for o in world.spec["objects"]]
-    msg = f"Now {p.label} at the {world_scene.TEMPLATES[world.spec['template']]['label'].lower()}"
-    msg += f" with {', '.join(objs)}." if objs else ", nothing on it yet."
+    pack = world_packs.find(world.spec["pack"]) if world.spec.get("pack") else None
+    if pack:
+        msg = f"{pack.get('label')}: {p.label}" + (f" with a {p.tool['label']}" if p.tool else "") + f", {', '.join(objs)}."
+        if pack.get("physics"):
+            msg += " " + pack["physics"].split(".")[0] + "."
+    else:
+        msg = f"Now {p.label} at the {world_scene.TEMPLATES[world.spec['template']]['label'].lower()}"
+        msg += f" with {', '.join(objs)}." if objs else ", nothing on it yet."
     if p.experimental:
         msg += " Experimental: " + p.note
     if world.notes:
