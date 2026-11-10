@@ -42,6 +42,8 @@ from . import ext, i18n, physics
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
 IK_ITERS, IK_DT = 4, 1 / 120
+MAX_FPS = 60            # frames a second at most: nothing paces a synthetic person (no camera), and without pictures to
+                        # render the loop would spin a core at 100+ fps for nothing
 SIM_W, SIM_H = 640, 480
 ASPECT = SIM_W / SIM_H
 # The pictures the server streams, by first byte: your camera (0x01), the robot view (0x02), picture-in-picture (0x03).
@@ -726,7 +728,7 @@ def worker(args, shared):
     video_job = None   # {"name", "frames", "i", "prev_cap", "prev_dt", "prev_source", "prev_view"}
     grip_hist = {"l": [], "r": []}
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
-    t_phys = time.time()
+    t_phys = t_put = time.time()
     ip = lan_ip()
     if args.https:
         print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}   (or https://127.0.0.1:{args.https_port})"
@@ -1036,6 +1038,10 @@ def worker(args, shared):
         shared.put(cam_jpg, sim_jpg, raw, pip_jpg)
         if args.frames and n >= args.frames:
             shared.running = False
+        spare = t_put + 1.0 / MAX_FPS - time.time()
+        if spare > 0:
+            time.sleep(spare)
+        t_put = time.time()
     if cap is not None:
         cap.release()
 
