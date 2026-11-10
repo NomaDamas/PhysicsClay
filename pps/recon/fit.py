@@ -67,21 +67,19 @@ def fit_plane(P, thresh, iters=250, seed=0):
     if len(P) < 3:
         return None
     rng = np.random.default_rng(seed)
-    best, best_n = None, -1
-    for _ in range(iters):
-        a, b, c = P[rng.choice(len(P), 3, replace=False)]
-        n = np.cross(b - a, c - a)
-        L = np.linalg.norm(n)
-        if L < 1e-12:
-            continue
-        n = n / L
-        d = -float(n @ a)
-        cnt = int(np.count_nonzero(np.abs(P @ n + d) < thresh))
-        if cnt > best_n:
-            best, best_n = (n, d), cnt
-    if best is None:
+    S = P[rng.choice(len(P), 6000, replace=False)] if len(P) > 6000 else P     # score on a sample, refine on all
+    idx = rng.integers(0, len(S), size=(iters, 3))                              # all hypotheses at once (one matmul)
+    a, b, c = S[idx[:, 0]], S[idx[:, 1]], S[idx[:, 2]]
+    N = np.cross(b - a, c - a)
+    L = np.sqrt((N * N).sum(1))
+    ok = L > 1e-12
+    if not np.any(ok):
         return None
-    n, d = best
+    N = N[ok] / L[ok, None]
+    D = -(N * a[ok]).sum(1)
+    counts = (np.abs(S @ N.T + D) < thresh).sum(0)
+    k = int(np.argmax(counts))
+    n, d = N[k], float(D[k])
     inl = np.abs(P @ n + d) < thresh
     Q = P[inl]
     if len(Q) >= 3:                                    # refine on the inliers

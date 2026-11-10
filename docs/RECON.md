@@ -59,7 +59,7 @@ metres; `px_per_unit` lets a reference in the photo (a marker) set the scale.
 
 | id | what | runs | speed (measured on this Mac, CPU, heavily loaded) | model license / terms | default |
 |---|---|---|---|---|---|
-| `primitive` | box / cylinder / turned profile (lathe) / mirrored hull fitted to depth + outline | offline, always | 8–16 s per photo, whole pipeline | Apache-2.0 (PhysicsClay); depth: **Depth Anything V2 Small, Apache-2.0** | **yes** |
+| `primitive` | box / cylinder / turned profile (lathe) / mirrored hull fitted to depth + outline | offline, always | whole pipeline: ~5 s with metric depth, ~14 s with Depth Anything (first photo loads the model); a table scan 1–6 s | Apache-2.0 (PhysicsClay); depth: **Depth Anything V2 Small, Apache-2.0** | **yes** |
 | `triposr` | one photo → full coloured mesh (TripoSR) | local, **opt-in** | load 10 s, then 22 s per object (resolution 192) | **MIT** (code and weights, `stabilityai/TripoSR`, 1.68 GB) | no |
 | `fal_trellis` | one photo → textured mesh (Microsoft TRELLIS via fal.ai) | cloud, your fal.ai key | not measured (no key here; adapter tested with stubbed HTTP) | TRELLIS weights **MIT**; fal.ai terms apply | no |
 | `meshy` | one photo → textured mesh (Meshy image-to-3d) | cloud, your Meshy key (the API needs a paid plan) | not measured (as above) | Meshy terms: free-plan outputs are owned by Meshy, **CC BY 4.0**; paid-plan outputs are yours; API outputs are deleted after 3 days | no |

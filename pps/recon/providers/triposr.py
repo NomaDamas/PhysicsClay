@@ -111,12 +111,9 @@ class TripoSR:
         pil = Image.fromarray(framed(img, mask))
         if progress:
             progress("shape", 0.3)
-        try:
-            import torch
-            ctx = torch.no_grad()
-        except ImportError:                                # the stub in tests
-            import contextlib
-            ctx = contextlib.nullcontext()
+        import contextlib
+        torch = sys.modules.get("torch")                   # loaded by _load for the real model (tests use a stub)
+        ctx = torch.no_grad() if torch is not None else contextlib.nullcontext()
         with ctx:
             codes = model([pil], device=device)
             meshes = model.extract_mesh(codes, True, resolution=int(resolution or os.environ.get("PC_TRIPOSR_RES", 192)))
