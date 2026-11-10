@@ -45,7 +45,7 @@ KINDS = {
     "can": ((0.066, 0.066, 0.12), "silver", "cyl"),
     "bottle": ((0.066, 0.066, 0.22), "green", "cyl"),
     "plate": ((0.20, 0.20, 0.02), "white", "cyl"),
-    "fruit": ((0.08, 0.08, 0.08), "orange", "cyl"),
+    "fruit": ((0.07, 0.07, 0.07), "orange", "cyl"),
     "vase": ((0.09, 0.09, 0.24), "blue", "cyl"),
 }
 KIND_ALIASES = {"cube": "block", "brick": "block", "glass": "cup", "tumbler": "cup", "dish": "plate", "apple": "fruit",
