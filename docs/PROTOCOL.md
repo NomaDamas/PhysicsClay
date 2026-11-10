@@ -391,3 +391,101 @@ target?: "hands"|<object>, max_force?, name?}`.
   "when I …, …" are handled there (`pc-hear`).
 - Test only: `pps/human/synth.py` builds synthetic people (squats with valgus / stall, curls, presses, waves, a weave,
   an offered hand, a hand at a point) as landmark frames for `{type:"copresence_feed"}`.
+
+## v7 · Trajectories in 3D (v1 P2, `pps/traj.py`, `pps/features/traj.py`, `web/ui/traj.js`)
+Language first: the agent writes a few keypoints relative to what it sees, the server turns them into a smooth, checked
+3D path and shows it as a ghost; the person fixes only what is wrong (drag a handle, Alt-drag / wheel for height, the
+wrist ring, per point chips, or "higher there"). Drawing from scratch (strokes, 3D waypoints, keyframes) still works and
+produces the same object.
+
+**The trajectory object** (one schema for every source; `pps/traj.py normalize()` is the validator):
+```
+{id, role: "right"|"left", frame: "world"|"object:<name>", source: "draw"|"vr"|"language"|"demo"|"keyframes"|"skill", label,
+ points: [{p: [x,y,z], q: [w,x,y,z]|null, t: s|null, grip: 0..1|null, speed: m/s|null, force: N|null, tol: m|null, note|null,
+           yaw?: deg, tilt?: deg, hold?: s}],
+ pattern: {kind: "zigzag"|"circle"|"figure8", amp: m, freq: Hz, axis: "lateral"|"normal"|"vertical", span?: [i0, i1]} | null,
+ check: {ok: [bool per point], why: str|null, duration: s} | null, meta?: {...}}
+```
+- `frame: "object:<name>"`: points are offsets from that object's **top centre**, axes parallel to the world, resolved
+  against the object's current pose every time the path is prepared (it moves with the object; it does not turn with it).
+- `q` absolute wins; otherwise the hand's approach orientation (captured when the world is built: down for arms) turned
+  by `yaw` (about the vertical, + = counter-clockwise from above) and then `tilt` (leans the tool's tip toward the
+  direction of travel). Orientation is slerped between points.
+- Timing: if every point has `t`, those times are used (demonstrations). Otherwise the hand travels at each point's
+  `speed` (linear in between; default per body kind: arm 0.25, humanoid / bimanual 0.20, mobile 0.15 m/s), with
+  min-jerk-shaped starts and stops (0.5 s). The hand stops at the first and last point, at `hold` points, and for
+  0.4 s wherever the gripper is commanded (`grip` set and different from before).
+- `grip` and `force` hold from their point on. `force` is passed to `rt.set_force(palm, N)` when the runtime has it (P0
+  impedance); `grip` to `rt.set_gripper(palm, v)`, else a kinematic grasp of the object at the hand (released on open).
+- `pattern` is superimposed in time (`freq` Hz of motion) across the path (`lateral`/`normal`: horizontal and
+  perpendicular to travel; `vertical`: up and down), faded in and out; `span` limits it to points i0..i1. A
+  demonstration's pattern only describes the weave already in its points (not applied again) unless `apply: true`.
+
+**Messages** `{type: "traj", op, id?}` (every op answers in `state.traj.reply = {id, op, ok, message, traj?, n?, duration?,
+why?, plan?, task?, notes?}`):
+| op | fields | |
+|---|---|---|
+| `propose` | `traj` (object) \| `spec` (language keypoints, below) \| `demo` (a P3 demo name); `task_id?` | check it, show the ghost and a plan card (state.plan, action `follow_path`, id `task_id`); nothing moves until "go" (`{type:"plan", op:"confirm"}`), the go-on gesture, `op:"run"` or the F key |
+| `set` | `traj` \| `spec` \| `demo`; `run?: bool`; `task_id?` | make it the current path (no card); `run` starts it right away |
+| `edit` | `index` (int or list, negatives from the end) \| `near` ("there", a marker, an object, start/end/middle/all) + `point: {p?, yaw?, tilt?, speed?, force?, grip?, tol?, hold?, note?}` and/or `changes: {dx, dy, dz, height, speed (m/s \| "slower"/"faster"), speed_factor, force, grip, tol, yaw, tilt, hold, note, remove}`; `insert: {after, p?}`; `remove: index`; `pattern: {...} \| null`; `profile: {lift, arch}` (m, the 2D fallback); `label`; `world` (default true: `p` is in world metres) | edits the proposed path (else the current one) and checks it again; a proposal stays a proposal (the card updates) |
+| `run` | | runs the proposal (= plan confirm), the current path, or the last one when nothing is shown |
+| `clear` | | drops the proposal and the current path (stops it first if it is running) |
+
+Language keypoints (`spec`, what the agent's `make_trajectory` sends; `pps/traj.py from_keypoints`):
+```
+{label, object?: anchor (the path then moves with it), role?, speed?, force?, grip?, tol?, clearance? (0.05 m), pattern?,
+ keypoints: [{of: "red_cup", rel: "above"|"at"|"left_of"|"right_of"|"in_front_of"|"behind"|"beside"|"around", dz?, dist?, turns?, dir?}
+           | {of: "vase", via: "over"|"around_left"|"around_right", clearance?} | {xyz: [x,y,z]} | {dxyz: [dx,dy,dz]}
+           | {marker: "A"|"P"} | {region: "left"} | {from: "hand"};  each + dx?, dy?, height? (above the surface),
+             speed?, force?, grip?, tol?, yaw?, tilt?, hold?, note?, pattern?: bool]}
+```
+`above` = dz (0.10) over the object's top, `at` = 0.02 over it, `left_of`… = `dist` (0.06) from its side at `dz` (0.10)
+over the table (robot's view: `in_front_of` = toward the robot), `around` = a loop of 12 points per turn. Every
+segment (and the move from the hand to the start) that would pass through or too low over an object gets lifted:
+points are added where it enters and leaves the object's footprint (inflated by the hand), at top + clearance, unless
+the segment ends on that object on purpose (going down to touch or grasp it). `meta.lifted` / `meta.notes` say so.
+
+**Checks** (per sample, the first objection wins; `check.ok` per point, `why` groups consecutive failures: "Out of my
+reach by 22 cm from point 3 to point 4."): reach and joint limits (IK precheck along the samples, with each sample's
+orientation and the point's `tol`), the work surface (pressing points may go 2 cm in), objects (the hand going into
+one; what it carries hitting one; objects it grasps along the way are exempt), keep-out zones, then any
+`pps.features.traj.register_checker(fn(ctx, pts, quats, info) -> [reason|None])` (P5 safety plugs in here). The move
+from the hand to the first point is checked too ("on the way to the start").
+
+**State** `state.traj` (every frame):
+```
+{current: traj|null, proposed: traj|null, ok: bool|null, why: str|null, running: bool, i: point index being approached,
+ progress: 0..1, t: s, rev, reply, plan_id,
+ ghost: {id, pts: [[x,y,z]] (<= 160 samples), ok: [bool], q: [[w,x,y,z]] | null (null: the wrist keeps kq[0]), t: [s], key: [sample index of each point],
+         keys: [[x,y,z]] (world, per point), kq: [[w,x,y,z]] (per point), grip: [per point], approach: [hand, start],
+         approach_ok, origin: [x,y,z]|null, surface, duration, speed, hand, axis: [x,y,z] (the gripper's approach axis
+         in its site frame)} | null,
+ info: [{i, h (m above the surface), near?, speed?, force?, grip?, yaw?, tilt?, hold?, note?}], issues: [{where, i, span, why}],
+ objects: [{name, pos, r, top, movable}], surface}
+```
+- An installed path *is* `rt.path` (`timed: true`, dense 30 Hz samples): the robot-view overlay, `follow_path`, F, "Run
+  path", plan preview of `follow_path` and "carry it along my path" all keep working. The runtime follows it in time
+  (`pps/traj.py follow_step`, called from `Runtime.update_targets`), starting with a min-jerk move from wherever the
+  hand target is; `speed_scale` still scales time.
+- Old messages: a stroke (`draw`) or 3D waypoints (`path3d`) go through `tasks.set_path_world` as before and are
+  adopted as a trajectory with `source: "draw"` (their own reach / zone verdicts are kept, so behaviour is unchanged);
+  editing one checks it fully. `clear`, `home` and other tasks that replace `rt.path` drop it (the last one is kept for
+  `op:"run"`). P3's `watch` `replay` proposes the demonstration through `propose {demo}` (timing, gripper, anchor object).
+- Agent tools (when the body has `follow_path`): `make_trajectory(description, keypoints[], object?, role?, speed?,
+  force?, clearance?, pattern?)` → `propose` (or `set` + run when confirm-before-moving is off); `edit_trajectory(point? |
+  near?, changes?, pattern?, remove_pattern?)` → `edit` (point is 1-based as shown); `run_trajectory()` → `run`. The
+  context sent with every model call has `trajectory: {state, label, source, frame, points: [{n, h_cm, near, ...}],
+  duration_s, ok, why, pattern}` so "higher there" can name points.
+- Browser (`web/ui/traj.js`): the ghost (tube blue / red per sample, dashed approach, a translucent gripper at every
+  point and one riding along at the planned speed), handles (drag on the horizontal plane; Alt-drag, the wheel or the
+  popover's ± for height, with a guide line and a height label to the surface or object below; the ring turns the
+  wrist), a popover for the selected point (height, speed, gripper, press force, wrist yaw / tilt, precision, insert,
+  remove), the "Path" dock tool (click 2–5 spots: keyframe grippers that connect into a proposed path), a card in the
+  side slot (state, why, the point strip, Go/Run, add, clear), keyboard (arrows / PageUp / PageDown / [ ] / Delete / Esc
+  on the selected point) and, on the robot's view, Lift / Arch sliders for a stroke.
+- **For VR (follow-up):** send the same object. A pinch-drawn path → `{type:"traj", op:"set"|"propose", traj: {source:
+  "vr", frame: "world", points: [{p, q?, speed? (from pinch distance), grip?}]}}`; a grabbed ghost gripper moved to a new
+  pose → `{op:"edit", index, point: {p, yaw?} | {p, q}}`; a dropped keyframe → `{op:"edit", insert: {after, p}}` (or a
+  `propose` with `source: "keyframes"`); confirm with `{op:"run"}`. Draw from `state.traj.ghost` (`keys`, `kq`, `pts`,
+  `ok`, `axis`). Live teleoperation (`{type:"teleop", role, p, q, grip}`) is not registered by P2; P3's mirror mode
+  already uses it when a handler exists.

@@ -1113,7 +1113,9 @@ def edit(traj, ids, changes, surface=None, origin=None):
             xyz[2] = surface + _num(changes["height"], -0.2, 1.5, "height") - origin[2]
         p["p"] = [float(x) for x in xyz]
         sp = changes.get("speed")
-        if isinstance(sp, str):
+        if "speed" in changes and sp is None:
+            p["speed"] = None                     # back to the robot's default speed
+        elif isinstance(sp, str):
             f = SPEED_WORDS.get(sp.strip().lower())
             if f is None:
                 raise TrajError("speed must be m/s, or 'slower' / 'faster'")

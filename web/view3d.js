@@ -480,8 +480,29 @@ function layer(name) {
   return layers.get(name);
 }
 function capture(fn) { captures.push(fn); return () => { const i = captures.indexOf(fn); if (i >= 0) captures.splice(i, 1); }; }
+// Fly the camera to frame these world points, keeping the current viewing direction (P2: a proposed trajectory).
+let flyAnim = 0;
+function focus(points, opts = {}) {
+  if (!camera || !orbit) return;
+  const box = new THREE.Box3();
+  for (const p of arr(points)) if (isXYZ(p)) box.expandByPoint(new THREE.Vector3(p[0], p[1], p[2]));
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3()), r = Math.max(opts.min || 0.22, box.getSize(new THREE.Vector3()).length() / 2);
+  const vf = THREE.MathUtils.degToRad(camera.fov), hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
+  const dir = new THREE.Vector3().subVectors(camera.position, orbit.target).normalize();
+  const dist = Math.min(6, r / Math.sin(Math.min(vf, hf) / 2) * (opts.pad || 1.1));
+  const p0 = camera.position.clone(), t0 = orbit.target.clone(), p1 = c.clone().addScaledVector(dir, dist);
+  const start = performance.now(), T = opts.ms == null ? 450 : opts.ms;
+  cancelAnimationFrame(flyAnim);
+  const step = (now) => {
+    const u = T > 0 ? Math.min(1, (now - start) / T) : 1, e = u * u * (3 - 2 * u);
+    camera.position.lerpVectors(p0, p1, e); orbit.target.lerpVectors(t0, c, e); orbit.update(); needs = true;
+    if (u < 1) flyAnim = requestAnimationFrame(step);
+  };
+  flyAnim = requestAnimationFrame(step);
+}
 window.PC3D = {
-  mount, setState, active, reload, editPath, get editing() { return editing; }, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE,
+  mount, setState, active, reload, editPath, get editing() { return editing; }, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE, focus,
   get scene() { return scene; }, get camera() { return camera; }, get mounted() { return !!root; }, get isActive() { return isActive; },
   tableHit: (ev) => (renderer ? tableHit(ev) : null),
   get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); },

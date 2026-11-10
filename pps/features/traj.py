@@ -424,7 +424,9 @@ def op_set(ctx, s, msg):
     text = f"Path ready: {_summary(prep)}." + ("" if prep["ok"] else " " + _why(prep))
     _reply(s, msg, prep["ok"], text, traj=tr["id"], n=len(tr["points"]), duration=prep["res"]["duration"], why=prep["res"]["why"])
     if msg.get("run") and prep["ok"]:
-        op_run(ctx, s, {"op": "run", "id": msg.get("id")})
+        op_run(ctx, s, {"op": "run", "id": msg.get("id"), "task_id": msg.get("task_id")})
+        r = s["reply"]
+        r.update(op="set", message=f"{text} {r['message']}", traj=tr["id"], n=len(tr["points"]), duration=prep["res"]["duration"])
 
 
 def _active(s):
@@ -476,7 +478,9 @@ def op_edit(ctx, s, msg):
         tr = dict(tr, label=str(msg["label"])[:160])
     if isinstance(msg.get("profile"), dict):              # 2D fallback: lift + arch over the drawn heights
         meta = dict(tr.get("meta") or {})
-        base = meta.get("profile_base") or [p["p"][2] for p in tr["points"]]
+        base = meta.get("profile_base") or []
+        if len(base) != len(tr["points"]):                # points were added or removed since: start from here
+            base = [p["p"][2] - (meta.get("profile") or {}).get("lift", 0.0) for p in tr["points"]]
         lift = float(np.clip(float(msg["profile"].get("lift", 0.0)), -0.1, 0.4))
         arch = float(np.clip(float(msg["profile"].get("arch", 0.0)), 0.0, 0.4))
         P = np.array([p["p"] for p in tr["points"]], float)
@@ -655,15 +659,19 @@ def _ghost(ctx, s):
     key_pos = {k: j for j, k in enumerate(idx)}
     hand = rt.data.mocap_pos[rt.hands_mid[prep["palm"]]]
     w = prep["world_traj"]
+    qs = d["q"][idx]
+    turns = len(qs) > 1 and float(np.max(np.abs(qs @ qs[0]))) > 0 and float(np.min(np.abs(qs @ qs[0]))) < 0.99996   # > ~1 degree
     g = {"id": prep["traj"]["id"], "pts": [_r(p, 3) for p in d["p"][idx]], "ok": [bool(o) for o in res["sample_ok"]],
-         "q": [_r(q, 3) for q in d["q"][idx]], "t": [round(float(t), 2) for t in d["t"][idx]],
+         "q": [_r(q, 3) for q in qs] if turns else None,       # null: the wrist keeps kq[0] all along
+         "t": [round(float(t), 2) for t in d["t"][idx]],
          "key": [key_pos.get(k, 0) for k in d["key"]], "keys": [_r(p["p"], 4) for p in w["points"]],
          "kq": [_r(d["q"][k], 4) for k in d["key"]],
          "grip": [None if not np.isfinite(d["grip"][k]) else round(float(d["grip"][k]), 2) for k in d["key"]],
          "approach": [_r(hand, 3), _r(d["p"][0], 3)], "approach_ok": all(res["approach_ok"]),
          "origin": _r(T.frame_origin(prep["traj"]["frame"], _poses(ctx)), 4) if T.frame_object(prep["traj"]["frame"]) else None,
          "surface": round(float(tasks_mod.TABLE_TOP), 4), "duration": round(float(d["duration"]), 2),
-         "speed": T.default_speed(prep["kind"]), "hand": "right" if prep["palm"].startswith("right") else "left"}
+         "speed": T.default_speed(prep["kind"]), "hand": "right" if prep["palm"].startswith("right") else "left",
+         "axis": [float(x) for x in getattr(getattr(rt, "profile", None), "ee_axis", (0, 0, 1))]}   # the gripper's approach axis
     return g
 
 

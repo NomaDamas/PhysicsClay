@@ -72,7 +72,7 @@ async def run(t):
             and p.get("id") == "tj-plan-1" and p.get("phase") == "proposing" and (st.get("task") or {}).get("status") == "proposed",
             f"{r.get('message', '')[:70]} | plan {p.get('phase')}")
     t.check("traj: ghost has dense points, handles, orientation, timing", len(g.get("pts") or []) > 10 and len(g.get("keys") or []) == len(tr.get("points") or [])
-            and len(g.get("q") or []) == len(g["pts"]) and (g.get("t") or [0])[-1] > 0.5 and all(g.get("ok") or [False]),
+            and (g.get("q") is None or len(g["q"]) == len(g["pts"])) and len(g.get("kq") or []) == len(g["keys"]) and (g.get("t") or [0])[-1] > 0.5 and all(g.get("ok") or [False]),
             f"{len(g.get('pts') or [])} samples, {len(g.get('keys') or [])} points, {(g.get('t') or [0])[-1]:.1f} s")
     vase = _obj(st, "vase")
     over = [q for q in g.get("pts") or [] if math.hypot(q[0] - vase["pos"][0], q[1] - vase["pos"][1]) < vase["r"] + 0.03]
