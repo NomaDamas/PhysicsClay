@@ -420,8 +420,17 @@ def world_target(c, world):
             robot = p.id
         if isinstance(c.get("scene"), dict):
             spec = c["scene"]
+            if c.get("seed") is not None and world_scene.is_room(spec.get("template")):
+                spec = dict(spec, seed=c["seed"])
+        elif isinstance(c.get("template"), str) and world_scene.is_room(c["template"]):   # a generated world: fresh
+            spec = {"template": c["template"], "seed": c.get("seed", 0)}
         elif isinstance(c.get("template"), str):
             spec["template"] = c["template"]
+        elif c.get("seed") is not None and world_scene.is_room(spec.get("template")):     # shuffle: same world, new seed
+            spec = {"template": spec["template"], "seed": c["seed"]}
+        if world_scene.is_room(spec.get("template")) and spec.get("seed") is not None and \
+                spec.get("seed") != world.spec.get("seed") and isinstance(spec.get("fixtures"), list):
+            spec = {"template": spec["template"], "seed": spec["seed"]}                  # a new seed regenerates it
     elif op == "add_object":
         o = c.get("object") if isinstance(c.get("object"), dict) else {k: c[k] for k in ("name", "kind", "color", "size", "pos", "movable") if k in c}
         if not o:
@@ -438,22 +447,47 @@ def world_target(c, world):
     elif op == "reset":
         robot, spec = world_profiles.DEFAULT_ROBOT, copy.deepcopy(world_scene.DEFAULT_SCENE)
     elif op == "pack":                                   # P4 demo packs (pps/world/packs/): scene + body for one story
-        robot, spec = world_packs.target(c.get("name"), c.get("robot") or world.profile.id)
+        robot, spec = world_packs.target(c.get("name"), c.get("robot") or world.profile.id, c.get("seed"))
     else:
         raise ValueError(f"Unknown world op '{op}'. Use set, add_object, remove_object, pack or reset.")
     return robot, spec
 
 
-def world_state(world, rev):
+def world_state(world, rev, tasks=None):
     robot = world_profiles.physics_public(world.profile, world.physics)    # + what the physics can't do (yet)
-    return {"rev": rev, "robot": robot, "scene": world.spec, "robots": world_profiles.listing(world.physics),
-            "templates": world_scene.templates(), "surface": {"top": world.surface["top"], "x": list(world.surface["x"]),
-                                                              "y": list(world.surface["y"])},
-            "regions": {k: list(v) for k, v in world.regions.items()}, "notes": world.notes,
-            "packs": PACKS[0], "pack": world.spec.get("pack")}
+    out = {"rev": rev, "robot": robot, "scene": world.spec, "robots": world_profiles.listing(world.physics),
+           "templates": TEMPLATES[0], "surface": {"top": world.surface["top"], "x": list(world.surface["x"]),
+                                                  "y": list(world.surface["y"])},
+           "regions": {k: list(v) for k, v in world.regions.items()}, "notes": world.notes,
+           "packs": PACKS[0], "pack": world.spec.get("pack")}
+    fx = getattr(tasks, "fx", None) if tasks is not None else None
+    if fx is not None:                                 # issue #48: what opens (and how far), what holds things
+        out["fixtures"] = fx.state()
+        out["containers"] = container_state(tasks)
+        out["seed"] = world.spec.get("seed")
+    return out
 
 
 PACKS = [world_packs.listing()]                       # read once (the files ship with the code)
+TEMPLATES = [world_scene.templates()]
+_CONTAINERS = {"t": 0.0, "v": [], "id": None}
+
+
+def container_state(tasks):
+    """Containers and what is in each (refreshed twice a second: it tests every object against every box)."""
+    now = time.time()
+    if _CONTAINERS["id"] == id(tasks) and now - _CONTAINERS["t"] < 0.5:
+        return _CONTAINERS["v"]
+    fx, out = tasks.fx, []
+    for c in fx.containers:
+        g = tasks.guard_of(c)
+        e = {"name": c["name"], "label": c["label"], "kind": c.get("kind"), "objects": tasks.contents(c)}
+        if g is not None:
+            e["behind"] = g["name"]
+            e["open"] = round(fx.frac(g), 2)
+        out.append(e)
+    _CONTAINERS.update(t=now, v=out, id=id(tasks))
+    return out
 
 
 def world_message(world):
@@ -464,6 +498,13 @@ def world_message(world):
         msg = f"{pack.get('label')}: {p.label}" + (f" with a {p.tool['label']}" if p.tool else "") + f", {', '.join(objs)}."
         if pack.get("physics"):
             msg += " " + pack["physics"].split(".")[0] + "."
+    elif world_scene.is_room(world.spec["template"]):    # issue #48: a generated home / industrial site
+        room = world.spec.get("room") or {}
+        parts = [q["label"] for q in (world.fixtures.parts if world.fixtures else []) if q.get("handle")]
+        belts = [b["label"] for b in (world.fixtures.belts if world.fixtures else [])]
+        msg = (f"Now {p.label} in the {str(room.get('label') or world.spec['template']).lower()} (seed {world.spec.get('seed', 0)}): "
+               f"{len(objs)} objects, {len(parts)} things that open" + (f" ({', '.join(parts[:4])}{'…' if len(parts) > 4 else ''})" if parts else "")
+               + (f", {', '.join(belts)}" if belts else "") + ".")
     else:
         msg = f"Now {p.label} at the {world_scene.TEMPLATES[world.spec['template']]['label'].lower()}"
         msg += f" with {', '.join(objs)}." if objs else ", nothing on it yet."
@@ -860,7 +901,13 @@ def worker(args, shared):
         video_flag[0] = video_job is not None
         st["robot"] = world.profile.id                     # UX 2.0 aliases of state.world
         st["robots"] = world_profiles.listing(world.physics)
-        st["world"] = world_state(world, world_rev[0])
+        st["world"] = world_state(world, world_rev[0], tasks)
+        if st["world"].get("containers"):               # issue #48: which container each object is in
+            inmap = {o: c["name"] for c in st["world"]["containers"] for o in c["objects"]}
+            for so in st["scene_objects"]:
+                k = so["name"].replace(" ", "_")
+                if k in inmap:
+                    so["in"] = inmap[k]
         st["spatial"] = spatial.state()
         st["server_gemini"] = gemini_key() is not None
         st["byok"] = byok()
@@ -950,6 +997,14 @@ def dispatch(tasks, rt, c, cam):
         tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT)
     elif a == "press":
         tasks.press(tid, c.get("target"), c.get("target_uv"), cam, ASPECT, c.get("force", 10.0), c.get("hold_s", 1.5))
+    elif a in ("open", "close"):                  # issue #48: drawers, doors, lids (pps/manip.py)
+        tasks.operate(tid, a, c.get("fixture") or c.get("target") or c.get("object") or "", c.get("amount"))
+    elif a == "pick_from":
+        tasks.pick_from(tid, c.get("container") or c.get("target") or "", c.get("object"))
+    elif a == "place_in":
+        tasks.place_in(tid, c.get("object"), c.get("container") or c.get("target") or "")
+    elif a in ext.ACTIONS:                         # task actions a feature registers (e.g. "sequence": plan_steps)
+        ext.ACTIONS[a](c)
     elif a == "reach":
         tasks.reach(tid, c.get("target"), c.get("target_uv"), cam, ASPECT)
     elif a == "follow_path":

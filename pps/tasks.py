@@ -8,7 +8,9 @@ import time
 import mujoco
 import numpy as np
 
+from .manip import FixtureTasks
 from .robot_runtime import HANDS, ROOT, slerp
+from .world import objects as wobj
 
 TABLE_TOP = 0.74
 TABLE_X = (0.22, 0.82)
@@ -62,7 +64,7 @@ def densify(pts, step=0.035):
     return np.array(out)
 
 
-class Tasks:
+class Tasks(FixtureTasks):
     def __init__(self, rt, kinds=None):
         """kinds: {object name: kind} from the world spec (scenes built on the fly), used to understand 'the cup'."""
         self.rt = rt
@@ -125,6 +127,7 @@ class Tasks:
         self.fired = set()
         self.kind = None         # "task" | "path"
         self.on_done = None
+        self.fixture_init()      # issue #48: drawers, doors, containers, conveyors (pps/manip.py)
         os.makedirs(SKILL_DIR, exist_ok=True)
 
     # ------------------------------------------------------------------ geometry
@@ -429,7 +432,8 @@ class Tasks:
             return False
         rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
         if self.plant is not None:                # physics: the last segment into a grasp / a release is slow
-            rt.path["slow"] = [(idx_map[k - 1], idx_map[k]) for k, nm in events.items() if nm in ("grasp", "release", "press") and k > 0]
+            rt.path["slow"] = [(idx_map[k - 1], idx_map[k]) for k, nm in events.items() if nm in ("grasp", "release", "press", "grasp_fx") and k > 0]
+        rt.path["slow"] = rt.path.get("slow", []) + self.fx_slow(events, idx_map)   # a drawer / door moves slowly
         if qs is not None:
             rt.path["q"] = qs
         rt.path_msg = None
@@ -482,13 +486,15 @@ class Tasks:
             for palm, obj in self.holding.items():
                 if obj in self.objs and self.grasp_off is not None:
                     self.set_obj_pose(obj, d.site_xpos[rt.palm_sid[palm]] + self.grasp_off)
+            self._fx_kin_tick()                   # kinematic: a held drawer / door follows the hand
         active = (self.kind in ("task", "path") and (rt.mode == "FOLLOW" or (self.ph or {}).get("phase") == "press")) \
             or (self.kind == "skill" and rt.mode == "PREVIEW") or (self.kind == "drive" and getattr(rt, "driving", False))
         if self.kind and not active:
             rt.orient(False)                      # the next reach / mirroring moves the hand freely again
             self._free_obstacles()
             if self.task and self.task["status"] == "running":
-                bad = self._placed_badly() if self.task.get("action") == "pick_place" else None
+                act = self.task.get("action")
+                bad = self._placed_badly() if act in ("pick_place", "place_in") else self._fx_short() if act in ("open", "close") else None
                 if bad:
                     self.set_task(self.task["id"], self.task["action"], "failed", bad)
                 else:
@@ -513,6 +519,7 @@ class Tasks:
             self.held.pop(palm, None)
             pl.grip_cmd(self.role(palm), "open")
         self.ph, self.place_at = None, None
+        self._fx_cleanup()
         self._hold_path(False)
         rt.mode = "MIRROR"
         rt.hold_here()
@@ -627,6 +634,8 @@ class Tasks:
             self._slip_check(palm, h, now)
         if ph is not None and ph["phase"] == "press":
             self._press_tick(now)
+        if self.ph is not None and str(self.ph.get("phase", "")).startswith("fx_"):
+            self._fx_tick(now)                    # a drawer / door in hand (pps/manip.py)
 
     def _slip_check(self, palm, h, now):
         rt, pl = self.rt, self.plant
@@ -731,7 +740,15 @@ class Tasks:
                      loose=[(0, len(kps) - 3)])
 
     def _placed_badly(self):
-        """Physics: after a pick & place, is the object resting where it should, upright? -> reason it isn't, or None."""
+        """Physics: after a pick & place, is the object resting where it should, upright? -> reason it isn't, or None.
+        Into a container (place_in): is it inside it?"""
+        chk, self.place_check = getattr(self, "place_check", None), None
+        if chk is not None and self.place_at is not None and self.fx is not None:
+            name, cont = self.place_at[0], chk
+            self.place_at = None
+            if name in self.objs and not self.fx.inside(cont, self.mug_center(name), margin=0.03):
+                return f"I let go of {self.pretty(name)} but it didn't end up in {cont['label']}."
+            return None
         if self.plant is None or self.place_at is None:
             return None
         name, dest = self.place_at
@@ -741,6 +758,8 @@ class Tasks:
         c = self.mug_center(name)
         err = float(np.hypot(*(c[:2] - dest[:2])))
         tilt = float(np.degrees(np.arccos(np.clip(self.obj_mat(name)[2, 2], -1, 1))))
+        if self.kinds.get(name) in wobj.KINDS and wobj.grasp_class(self.kinds[name]) in ("long", "flat"):
+            tilt = 0.0                                # lying things lie: their tilt isn't a fall
         if tilt > 35:
             return f"I let go of {self.pretty(name)} but it fell over ({tilt:.0f}°)."
         if err > 0.06:
@@ -749,6 +768,9 @@ class Tasks:
 
     def _event(self, name, palm):
         d = self.rt.data
+        if name in ("grasp_fx", "release_fx"):            # a drawer / door handle (pps/manip.py)
+            self._fx_event(name, palm)
+            return
         if self.plant is not None and name == "press":     # compliance: the force loop takes over the hand target
             now = float(self.plant.d.time)
             self.ph = {"phase": "press", "palm": palm, "t0": now, "t_last": now, "fmax": 0.0, "fs": [], "on": None,
@@ -783,7 +805,11 @@ class Tasks:
                 self.task["step"] = "placed"
 
     # ------------------------------------------------------------------ actions
-    def pick_place(self, tid, obj, target, target_uv, cam, aspect, via_pts=None, grasp=None):
+    def pick_place(self, tid, obj, target, target_uv, cam, aspect, via_pts=None, grasp=None, dest=None, hold=False,
+                   action="pick_place"):
+        """dest: (xyz, label) given by the caller (place_in: a spot inside a container, xyz[2] its floor); hold: pick it
+        up and keep it in the hand (pick_from). Generated worlds set place_z / transit_z (pps/manip.py)."""
+        self.cur_action = action
         caps = getattr(self.rt, "capabilities", None)
         if caps is not None and "pick_place" not in caps:
             prof = getattr(self.rt, "profile", None)
@@ -809,23 +835,26 @@ class Tasks:
             self.set_task(tid, "pick_place", "failed", f"I'm still holding {self.pretty(held_other)}.")
             return
         self.cur = name
+        given = dest
         via = [np.asarray(v, float) for v in via_pts] if via_pts else None
-        if via is None and target and str(target).strip().lower() in ("path", "my path", "along my path", "the path", "route", "경로", "경로대로", "내 경로"):
+        if given is not None or hold:                 # place_in / pick_from: the caller worked out where
+            dest, label = (None, given[1] if given else "") if hold else (np.asarray(given[0], float), given[1])
+        elif via is None and target and str(target).strip().lower() in ("path", "my path", "along my path", "the path", "route", "경로", "경로대로", "내 경로"):
             if self.rt.path is None or len(self.rt.path["pts"]) < 2:
                 self.set_task(tid, "pick_place", "failed", "There is no route yet. Draw one on my view or in 3D first.")
                 return
             via = [np.array(p) for p in self.rt.path["pts"][::2]] + [np.array(self.rt.path["pts"][-1])]
             end = via[-1]
             dest, label = np.array([end[0], end[1], TABLE_TOP]), "the end of your route"
-        if not (target and str(target).strip().lower() in ("path", "my path", "along my path", "the path", "route", "경로", "경로대로", "내 경로")):
+        if given is None and not hold and not (target and str(target).strip().lower() in ("path", "my path", "along my path", "the path", "route", "경로", "경로대로", "내 경로")):
             dest, label = self.resolve(target, target_uv, cam, aspect)
-        if dest is None:
+        if dest is None and not hold:
             self.set_task(tid, "pick_place", "failed", label[0].upper() + label[1:] + ".")
             return
-        if not self.on_table(dest):
+        if given is None and not hold and not self.on_table(dest):
             self.set_task(tid, "pick_place", "failed", f"I can't place it there: {label} is not on the {SURFACE}.")
             return
-        if via is None:
+        if via is None and given is None and not hold:
             free, blocker = self.free_spot(dest, name)
             if free is None:
                 self.set_task(tid, "pick_place", "failed", f"{label[0].upper() + label[1:]} is taken by {self.pretty(blocker)} and there is no free spot nearby.")
@@ -842,7 +871,12 @@ class Tasks:
             self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, None, q_now)
             return
         grasp = (self.rt.profile.physics or {}).get("grasp", grasp) if getattr(self.rt, "profile", None) else grasp
-        self.rt.set_obstacles((name,))            # the planner keeps the gripper clear of everything else on the table
+        if self.fx is not None:                   # a generated world: what's near the pick and the drop (drawer walls too);
+            # things in the same bin / drawer as the one being picked are not kept away from (the fingers go in among them)
+            co = tuple(self.contents(self.container_of(name), skip=name)) if self.container_of(name) is not None else ()
+            self.rt.set_obstacles((name,) + co, near=[c] + ([dest] if dest is not None else []), fixtures=True)
+        else:
+            self.rt.set_obstacles((name,))        # the planner keeps the gripper clear of everything else on the table
         palms = [palm] if held else [palm] + [h for h in self.hands if h != palm]   # two hands: the other one may get there
         stop, first = False, None
         for k, p in enumerate(palms):
@@ -883,8 +917,13 @@ class Tasks:
             off, n = plan
         q_grip = d.mocap_quat[mid].copy()          # grasp_plan sets the orientation the grasp needs
         self.cur_off = off
-        place_c = np.array([dest[0], dest[1], TABLE_TOP + self.mug_half_h])
-        place_hand = place_c + off + (np.array([0, 0, 0.008]) if n is not None else 0.0)   # let go just above the surface
+        hold = dest is None                        # pick_from: pick it up and keep it
+        tz = getattr(self, "transit_z", None)      # generated worlds: carry over the counter / out of the drawer
+        up = (lambda p, dz: np.array([p[0], p[1], max(p[2] + dz, tz)])) if tz is not None else (lambda p, dz: p + np.array([0, 0, dz]))
+        pz = TABLE_TOP if getattr(self, "place_z", None) is None else self.place_z
+        place_c = None if hold else np.array([dest[0], dest[1], pz + self.mug_half_h])
+        drop = getattr(self, "place_drop", 0.0) or 0.0
+        place_hand = None if hold else place_c + off + (np.array([0, 0, 0.008 + drop]) if n is not None else 0.0)   # let go just above
         sidegrasp = n is not None and n[2] > -0.7
         nh = n if sidegrasp else None             # side grasps come in (and back out) along the approach axis
         kps, ev = [cur], {}
@@ -900,17 +939,31 @@ class Tasks:
                 pre = g - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else g + np.array([0, 0, 0.09])
             kps += [pre, g]
             ev[len(kps) - 1] = "grasp"
-            kps += [g + np.array([0, 0, 0.12])]
+            kps += [up(g, 0.12)]
+        if hold:                                  # pick_from: lifted clear, held there
+            if n is not None and held is None:
+                self.plant.grip_cmd(self.role(palm), "open")
+            quats = None if n is None else [q_now] + [q_grip] * (len(kps) - 1)
+            what = self.pretty(name)
+            self.done_msg = f"I'm holding {what}" + (f", taken from {label}." if label else ".")
+            gk = [k for k, e in ev.items() if e == "grasp"]
+            loose = ([(0, gk[0] - 1)] if gk and gk[0] > 1 else []) if n is not None else None
+            side = "right" if palm.startswith("right") else "left"
+            ok = self._launch(tid, getattr(self, "cur_action", "pick_from"), kps, palm, ev, "task",
+                              f"Every waypoint is reachable. Taking {what}" + (f" from {label}" if label else "") + f" with my {self.limb(side)}.",
+                              quats=quats, loose=loose)
+            self.fail_reason = "reach" if ok else getattr(self, "fail_reason", "reach")
+            return ok
         if via is not None:
             kps += [np.array(v) for v in via]
             if via_pts is None:
                 label = "the end of your route"
-        kps += [place_hand + np.array([0, 0, 0.12]), place_hand]
+        kps += [up(place_hand, 0.12), place_hand]
         ev[len(kps) - 1] = "release"
         if n is None:
             retreat = place_hand + np.array([-0.10, 0, 0.07])
         else:                                     # back off along the approach axis before going home
-            retreat = place_hand - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else place_hand + np.array([0, 0, 0.10])
+            retreat = place_hand - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else up(place_hand, 0.10)
             self.place_at = (name, place_c)
             if held is None:
                 self.plant.grip_cmd(self.role(palm), "open")
@@ -932,18 +985,20 @@ class Tasks:
                 quats = qmap
         side = "right" if palm.startswith("right") else "left"
         what = self.pretty(name)
-        self.done_msg = f"Placed {what} on {label}."
+        into = getattr(self, "cur_action", "pick_place") == "place_in"
+        self.done_msg = f"Put {what} in {label}." if into else f"Placed {what} on {label}."
         loose = None
         if n is not None:                         # physics: getting there and going home are transit, not the work
             gk = [k for k, e in ev.items() if e == "grasp"]
             rk = [k for k, e in ev.items() if e == "release"]
             loose = ([(0, gk[0] - 1)] if gk and gk[0] > 1 else []) + ([(rk[-1], len(kps) - 1)] if rk else [])
-        ok = self._launch(tid, "pick_place", kps, palm, ev, "task",
-                          f"Every waypoint is reachable. Picking up {what} with my {self.limb(side)} and placing it on {label}.",
+        ok = self._launch(tid, getattr(self, "cur_action", "pick_place"), kps, palm, ev, "task",
+                          "Every waypoint is reachable. " + (f"Putting {what} in {label} with my {self.limb(side)}." if into else
+                                                             f"Picking up {what} with my {self.limb(side)} and placing it on {label}."),
                           quats=quats, loose=loose)
         if not ok:
             self.place_at = None
-        if not ok and last and getattr(self, "fail_reason", "reach") == "reach" and via is None:
+        if not ok and last and getattr(self, "fail_reason", "reach") == "reach" and via is None and not into:
             self.suggest(tid, dest, palm, off)
         reason = getattr(self, "fail_reason", "reach")
         self.fail_reason = "reach"
@@ -1035,24 +1090,36 @@ class Tasks:
         Rt = Rt.reshape(3, 3)
         Ro = self.obj_mat(name)
         kind = pl.objects.get(name, {}).get("kind", "block")
+        cls = wobj.grasp_class(kind)              # box | round | long | flat | mug (pps/world/objects.py)
+        boxy = kind in ("block", "box") or (kind in wobj.KINDS and wobj.KINDS[kind]["shape"] == "box" and cls in ("box", "flat"))
+        if kind not in wobj.KINDS and cls not in ("mug",):
+            cls = "box" if kind in ("block", "box") else "round"   # the basic kinds keep their old handling
         o = self.objs[name]
         top_z, w = c[2] + o["half_h"], g["width"]
-        if style == "side" and variant >= len(SIDE_WAYS) and kind in ("block", "box", "can", "cup", "bottle", "fruit") \
+        sup = self.support_z(name)                # what it rests on: the table, a drawer's floor, a shelf (generated worlds)
+        if self.fx is not None:
+            top_z = sup + 2 * self.vertical_half(name)
+        if style == "side" and variant >= len(SIDE_WAYS) and (kind in ("block", "box", "can", "cup", "bottle", "fruit") or
+                                                             (cls in ("box", "round", "long", "flat") and kind in wobj.KINDS)) \
                 and variant - len(SIDE_WAYS) < 2:  # small things: from above as a last resort (doesn't sweep its neighbours)
             sh = rt.retargeter.robot_shoulders[palm]
             h = np.array([c[0] - sh[0], c[1] - sh[1], 0.0])
             h = h / (np.linalg.norm(h) or 1.0)
             a = np.cross([0.0, 0.0, 1.0], h) if variant == len(SIDE_WAYS) else h
             n = np.array([0.0, 0.0, -1.0])
-            if kind in ("block", "box"):          # jaws square to the block's faces
+            if boxy:          # jaws square to the block's faces
                 psi = np.arctan2(Ro[1, 0], Ro[0, 0])
                 ang = np.arctan2(a[1], a[0])
                 ang = psi + np.round((ang - psi) / (np.pi / 2)) * np.pi / 2
                 a = np.array([np.cos(ang), np.sin(ang), 0.0])
+            elif cls == "long":                   # across the handle
+                u = Ro[:, 0]
+                a = np.cross([0.0, 0.0, 1.0], [u[0], u[1], 0.0])
+                a = a / (np.linalg.norm(a) or 1.0)
             L = np.column_stack([g["axis"], g["approach"], np.cross(g["axis"], g["approach"])])
             W = np.column_stack([a, n, np.cross(a, n)])
             mujoco.mju_mat2Quat(rt.data.mocap_quat[mid], (W @ L.T).flatten())
-            z = max(top_z - min(0.025, 0.8 * o["half_h"]), TABLE_TOP + g["tip"] + 0.006)
+            z = max(top_z - min(0.025, 0.8 * o["half_h"]), sup + g["tip"] + 0.006)
             style = "top"
         elif style == "side":                     # humanoid hands / Stretch: from the robot's side, jaws closing horizontally
             if variant >= len(SIDE_WAYS):
@@ -1070,34 +1137,55 @@ class Tasks:
             L = np.column_stack([g["axis"], g["approach"], np.cross(g["axis"], g["approach"])])
             W = np.column_stack([a, n, np.cross(a, n)])
             mujoco.mju_mat2Quat(rt.data.mocap_quat[mid], (W @ L.T).flatten())
-            z = max(c[2], TABLE_TOP + g["tip"] * np.sin(pitch) + g.get("pad_h", 0.018) * np.cos(pitch) + 0.006)
+            z = max(c[2], sup + g["tip"] * np.sin(pitch) + g.get("pad_h", 0.018) * np.cos(pitch) + 0.006)
         else:
-            if variant >= 3:
+            if variant >= 3 or (cls == "long" and variant >= 2):
                 return None, None, None
             n = np.array([0.0, 0.0, -1.0])
             a = Rt @ g["axis"]
-            dz = [0.0, np.pi / 2, -np.pi / 2][variant]
-            if kind in ("block", "box"):          # square up the jaws with the block's faces (smallest wrist turn)
-                phi, psi = np.arctan2(a[1], a[0]), np.arctan2(Ro[1, 0], Ro[0, 0])
+            dzs = [0.0, np.pi / 2, -np.pi / 2]
+            phi = np.arctan2(a[1], a[0])
+            if boxy:   # square up the jaws with the block's faces (smallest wrist turn)
+                psi = np.arctan2(Ro[1, 0], Ro[0, 0])
                 k = np.round((phi - psi) / (np.pi / 2))
-                dz += psi + k * np.pi / 2 - phi
+                dzs = [d + psi + k * np.pi / 2 - phi for d in dzs]
             elif kind == "mug":                   # jaws across the handle's direction: they hold the round body only
-                phi, psi = np.arctan2(a[1], a[0]), np.arctan2(-Ro[1, 1], -Ro[0, 1]) + np.pi / 2
-                dz += psi + np.round((phi - psi) / np.pi) * np.pi - phi
+                psi = np.arctan2(-Ro[1, 1], -Ro[0, 1]) + np.pi / 2
+                dzs = [d + psi + np.round((phi - psi) / np.pi) * np.pi - phi for d in dzs]
+            elif cls == "long":                   # across the handle (either way round: the jaws are symmetric)
+                psi = np.arctan2(Ro[1, 0], Ro[0, 0]) + np.pi / 2
+                base = psi + np.round((phi - psi) / np.pi) * np.pi - phi
+                dzs = [base, base + np.pi]
+            if self.fx is not None and cls not in ("long", "mug"):     # a busy world: the side with room for the fingers first
+                hs0 = pl.m.geom_size[o["geom"]]
+
+                def span(dz):                     # how wide the object is between the jaws turned by dz
+                    if not boxy:
+                        return 2 * o["r"]
+                    aa = np.array([np.cos(phi + dz), np.sin(phi + dz), 0.0])
+                    return 2 * (abs(np.dot(aa, Ro[:, 0])) * hs0[0] + abs(np.dot(aa, Ro[:, 1])) * hs0[1])
+                dzs = self.jaw_order(name, c, phi, dzs, w, span)
+            dz = dzs[variant]
             if dz:
                 qz = np.array([np.cos(dz / 2), 0, 0, np.sin(dz / 2)])
                 q = np.zeros(4)
                 mujoco.mju_mulQuat(q, qz, rt.data.mocap_quat[mid].copy())
                 rt.data.mocap_quat[mid] = q
                 a = np.array([np.cos(dz) * a[0] - np.sin(dz) * a[1], np.sin(dz) * a[0] + np.cos(dz) * a[1], a[2]])
-            z = max(top_z - min(0.025, 0.8 * o["half_h"]), TABLE_TOP + g["tip"] + 0.006)
+            z = max(top_z - min(0.025, 0.8 * o["half_h"]), sup + g["tip"] + 0.006)
         a = np.array([a[0], a[1], 0.0]) / (np.hypot(a[0], a[1]) or 1.0)
-        if kind in ("block", "box"):
+        if boxy:
             hs = pl.m.geom_size[o["geom"]]
             ext = 2 * (abs(np.dot(a, Ro[:, 0])) * hs[0] + abs(np.dot(a, Ro[:, 1])) * hs[1])
         else:
             ext = 2 * o["r"]
         p = np.array([c[0], c[1], z])
+        if cls == "long":                         # held at its grip (a spoon's handle), as wide as it is there
+            hs = pl.m.geom_size[o["geom"]]
+            gp = wobj.grip(kind, hs)
+            if gp is not None:
+                gx = c + Ro @ np.array([gp[0], 0.0, 0.0])
+                p, ext = np.array([gx[0], gx[1], z]), gp[1]
         if kind == "mug":                         # its real outline along the jaws: the body and, maybe, the handle
             from .physics import MUG
             s = o["r"] / 0.065
@@ -1282,6 +1370,7 @@ class Tasks:
             self.task["status"], self.task["message"] = "failed", "Stopped by you before it finished."
             self.stopped_task = dict(self.task)
         self.kind = None
+        self._fx_cleanup()
         if self.plant is not None:                # stop where the arm *is*, not where the plan was heading
             self.ph, self.place_at, rt.follow_hold = None, None, False
             rt.orient(False)
@@ -1294,6 +1383,7 @@ class Tasks:
         rt.home()
         rt.retargeter.reset()
         rt.engaged, rt.mode, rt.path, self.kind = False, "MIRROR", None, None
+        self._fx_cleanup()
         if self.plant is not None:
             self.ph, self.place_at, rt.follow_hold = None, None, False
             rt.orient(False)
@@ -1310,6 +1400,7 @@ class Tasks:
             else:
                 for n, o in self.objs.items():
                     self.set_obj_pose(n, o["home"], o["home_q"])
+            self.fixture_reset()
             self.markers, self.next_marker = [], 0
         else:
             for palm, obj in self.holding.items():
