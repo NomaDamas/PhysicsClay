@@ -220,3 +220,35 @@ def test_log_round_trip(tmp_path, panda):
     p = rec_log.save(tmp_path / "a.npz")
     back = Log.load(p)
     assert back.probe == "swing" and np.array_equal(back.q, rec_log.q) and np.isnan(back.ee_force).all() and (back.seg == -1).all()
+
+
+def test_lerobot_episode_reader(tmp_path, panda):
+    """A P1 LeRobot episode (parquet + meta/info.json): named state / action columns ("joint:<name>", "gripper:<role>")
+    are mapped onto the plant's joints by name; the episode replays in the headless simulator."""
+    pa = pytest.importorskip("pyarrow")
+    import json
+    import pyarrow.parquet as pq
+    from pps.bridge.sim import joint_labels
+    from pps.calib.log import from_lerobot
+    w, rt, _, _ = panda
+    labels = joint_labels(rt.plant.m, rt.plant.nq_r)            # joint1..7, finger_joint1, finger_joint2
+    arm = [j for j in labels if not j.startswith("finger")]
+    names = [f"joint:{j}" for j in arm] + ["gripper:right"]
+    root = tmp_path / "ds"
+    (root / "meta").mkdir(parents=True)
+    (root / "data" / "chunk-000").mkdir(parents=True)
+    (root / "meta" / "info.json").write_text(json.dumps({"features": {"observation.state": {"names": names}, "action": {"names": names}}}))
+    q0 = np.array(rt.configuration.q, float)
+    n = 30
+    rows = [[float(q0[labels.index(j)]) + (0.002 * k if j == arm[0] else 0.0) for j in arm] for k in range(n)]
+    tab = pa.table({"observation.state": [r + [1.0] for r in rows], "action": [r + [0.0] for r in rows],
+                    "timestamp": [k / 30 + 5.0 for k in range(n)], "frame_index": list(range(n)),
+                    "observation.ee_force": [[0.0, 0.0, -0.1 * k] for k in range(n)]})
+    pq.write_table(tab, root / "data" / "chunk-000" / "episode_000000.parquet")
+    lg = from_lerobot(root / "data" / "chunk-000" / "episode_000000.parquet", labels, roles=("right",), q_home=q0,
+                      meta={"robot": "panda", "scene": w.spec})
+    j1 = labels.index(arm[0])
+    assert len(lg) == n and lg.q.shape == (n, len(labels)) and lg.t[0] == 0.0 and lg.ee_force[3, 0, 2] == pytest.approx(-0.3)
+    assert lg.q_des[2, j1] == pytest.approx(q0[j1] + 0.004) and np.isnan(lg.q[:, labels.index("finger_joint1")]).all()
+    r = sysid.PlantSim("panda", w.spec).rollout(lg, {})           # unrecorded fingers start at their command
+    assert r["ok"] and np.isfinite(sysid.errors(lg, r)["q"])

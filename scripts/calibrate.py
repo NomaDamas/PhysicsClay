@@ -59,7 +59,7 @@ def heldout_task(rt, tasks, drv, meta, dt=1 / 120, limit=40.0):
     return log, dict(tasks.task or {})
 
 
-def run_seed(seed, robot, budget, workers, log=print):
+def run_seed(seed, robot, budget, workers, log=print, save_dir=None):
     from pps.calib import params as P, probes as PR, sysid
     from pps.calib.randomize import Randomizer
     t0 = time.time()
@@ -70,6 +70,10 @@ def run_seed(seed, robot, budget, workers, log=print):
     logs = PR.run_headless(runner)
     t_probe = time.time() - t0
     hold, task = heldout_task(rt, tasks, drv, meta)
+    if save_dir:                                         # keep the logs: the numbers can be re-checked without rerunning
+        os.makedirs(save_dir, exist_ok=True)
+        for lg in logs + [hold]:
+            lg.save(os.path.join(save_dir, f"seed{seed}_{lg.probe}.npz"))
     log(f"  seed {seed}: secret {json.dumps({k: round(v, 3) for k, v in secret.items()})}; probes {[lg.probe for lg in logs]} "
         f"{sum(lg.duration for lg in logs):.0f} s sim in {t_probe:.0f} s; held-out task: {task.get('status')} ({task.get('message', '')[:60]})")
     t1 = time.time()
@@ -79,6 +83,10 @@ def run_seed(seed, robot, budget, workers, log=print):
     nominal = {n: P.PARAMS[n].default for n in fit["params"]}
     track = {"nominal": sysid.tracking(sim, hold, nominal), "calibrated": sysid.tracking(sim, hold, fit["params"]),
              "true": sysid.tracking(sim, hold, {k: secret[k] for k in fit["params"]})}
+    for k, v in track.items():
+        if v.get("diverged_s") is not None:
+            log(f"    note: the {k} replay of the held-out task diverged at {v['diverged_s']} s (MuJoCo instability); "
+                f"errors are over the part before it")
     rows = []
     for n, v in fit["params"].items():
         tv = float(secret[n])
@@ -103,6 +111,8 @@ def report(results, robot, budget):
     for r in results:
         cells = [f"{p['true']:.3g} → {p['fit']:.3g}" + ("" if p["ok"] else " ✗") for p in r["params"]]
         h = r["heldout"]
+        div = [k for k in ("nominal", "calibrated") if h[k].get("diverged_s") is not None]
+        cells[-1] += "".join(f" ({k} replay diverged at {h[k]['diverged_s']} s)" for k in div)
         out.append(f"| {r['seed']} | " + " | ".join(cells) +
                    f" | {h['nominal']['q_deg']:.2f} → {h['calibrated']['q_deg']:.2f} | {h['nominal']['tcp_mm']:.1f} → {h['calibrated']['tcp_mm']:.1f} "
                    f"| {h['nominal'].get('p_mm') or 0:.1f} → {h['calibrated'].get('p_mm') or 0:.1f} |")
@@ -133,7 +143,7 @@ def demo(a):
     t0 = time.time()
     print(f"Hidden-real demo: {a.robot}, seeds {seeds}, budget {a.budget}", flush=True)
     for s in seeds:
-        r = run_seed(s, a.robot, a.budget, a.workers, log=lambda m: print(m, flush=True))
+        r = run_seed(s, a.robot, a.budget, a.workers, log=lambda m: print(m, flush=True), save_dir=a.save if a.save_logs else None)
         results.append(r)
         print("    " + ", ".join(f"{p['name']} {p['true']:.3g}→{p['fit']:.3g} ({fmt_err(p['name'], p['err'])})" for p in r["params"])
               + f"; held-out joints {r['heldout']['nominal']['q_deg']:.2f}°→{r['heldout']['calibrated']['q_deg']:.2f}°"
@@ -148,6 +158,13 @@ def demo(a):
         print(f"Saved {a.out}")
     fails = sum(1 for r in results for p in r["params"] if not p["ok"] and p["name"] in ("friction_scale", "mass_scale", "kp_scale", "latency_ms"))
     return 0 if fails <= len(results) else 1
+
+
+def rereport(a):
+    """Re-render the tables of a saved --demo run (no simulation)."""
+    data = json.load(open(a.report))
+    print(report(data["results"], data["robot"], data["budget"]))
+    return 0
 
 
 def probe(a):
@@ -170,8 +187,11 @@ def fit(a):
     if a.lerobot:
         from pps.world import scene as S
         scene = json.load(open(a.scene)) if a.scene else DEMO_SCENE
+        from pps.bridge.sim import joint_labels
         w = S.build(a.robot, scene, physics=True)
-        logs = [from_lerobot(p, w.ik_model.nq, meta={"robot": a.robot, "scene": w.spec}) for p in a.lerobot]
+        labels = joint_labels(w.model, w.ik_model.nq)
+        home = w.home_q if w.home_q is not None else w.ik_model.qpos0
+        logs = [from_lerobot(p, labels, q_home=home, meta={"robot": a.robot, "scene": w.spec}) for p in a.lerobot]
     else:
         logs = [Log.load(p) for p in a.fit]
     robot, scene = logs[0].meta.get("robot", a.robot), logs[0].meta.get("scene", DEMO_SCENE)
@@ -195,9 +215,13 @@ def main():
     ap.add_argument("--seed0", type=int, default=0)
     ap.add_argument("--budget", default="normal", choices=["quick", "normal", "thorough"])
     ap.add_argument("--workers", type=int, default=2, help="rollout processes (at most 2)")
-    ap.add_argument("--save", default="recordings/calib/logs")
+    ap.add_argument("--save", default="recordings/calib/logs", help="where --probe (and --demo --save-logs) write logs")
+    ap.add_argument("--save-logs", action="store_true", help="--demo: also save every seed's probe and held-out logs")
+    ap.add_argument("--report", default=None, help="re-render the tables of a saved --demo JSON")
     ap.add_argument("--out", default="recordings/calib/demo.json")
     a = ap.parse_args()
+    if a.report:
+        return rereport(a)
     if a.demo:
         return demo(a)
     if a.probe:

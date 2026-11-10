@@ -311,7 +311,7 @@ def tool_specs(st, confirm=True):
                                        "arm, press the table, lift an object, slide an object across the table), fit friction, object mass, "
                                        "joint damping, servo stiffness and latency to what the robot did, and apply the fit. Use it when the "
                                        "user says the table is slippery or sticky, things are heavier or lighter than expected, the robot "
-                                       "lags or overshoots, or asks to calibrate. Takes one to two minutes; the arm moves on its own meanwhile.",
+                                       "lags or overshoots, or asks to calibrate. Takes a few minutes (about 45 s of probing, then the fit); the arm moves on its own while probing.",
                      {"budget": {"type": "string", "enum": ["quick", "normal"], "description": "quick (default) or normal (slower, a bit more precise)."}}))
     T += [
         _fn("set_robot", "Switch to another robot body." + ("" if has_world else " (Not available in this build yet.)"),

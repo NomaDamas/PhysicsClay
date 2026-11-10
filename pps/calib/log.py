@@ -101,25 +101,77 @@ class Recorder:
                    seg=np.array(cols[9], int), meta=dict(self.meta))
 
 
-def from_lerobot(path, nq, roles=("right",), objects=(), meta=None):
-    """A P1 LeRobot episode (parquet) -> Log. `observation.state` / `action` are [robot qpos (nq), gripper per role];
-    object poses are read from `observation.objects` ([O*7] per row: p, q per object) when the dataset has them.
-    Without object poses or a force column only the joint terms of the fit are informative (kp, damping, latency)."""
+def _names(path, key):
+    """Feature names of a P1 dataset (meta/info.json two folders above data/chunk-XXX/), or None."""
+    import json as _json
+    from pathlib import Path
+    info = Path(path).resolve().parents[2] / "meta" / "info.json"
+    try:
+        return list((_json.loads(info.read_text())["features"][key] or {}).get("names") or []) or None
+    except (OSError, KeyError, ValueError, TypeError):
+        return None
+
+
+def _columns(names, joints, roles):
+    """Feature names ("joint:<name>", "gripper:<role>") -> (qpos index per column | None, role per column | None)."""
+    jidx = {n: i for i, n in enumerate(joints)}
+    qcol, gcol = [], []
+    for n in names:
+        kind, _, what = str(n).partition(":")
+        qcol.append(jidx.get(what) if kind == "joint" else jidx.get(n) if not what else None)
+        gcol.append(what if kind == "gripper" and what in roles else None)
+    return qcol, gcol
+
+
+def from_lerobot(path, joints, roles=("right",), objects=(), meta=None, names=None, q_home=None):
+    """A P1 LeRobot episode (parquet) -> Log.
+
+    joints: the robot's qpos labels (`pps.bridge.sim.joint_labels(model, nq)`), or just nq. P1 records
+    `observation.state` / `action` as named columns ("joint:<joint name>" for the robot's 1-dof joints, "gripper:<role>",
+    from meta/info.json); they are mapped onto the plant's qpos by name. Joints the dataset doesn't record (fingers,
+    a legged base) are NaN in `q` and q_home (default 0) in `q_des` (the fingers follow the gripper command anyway).
+    Without names the layout is taken as [robot qpos, gripper per role]. Object poses come from `observation.objects`
+    ([O*7] per row) when the dataset has them; without them, or a force column, only the joint terms of the fit are
+    informative (stiffness, damping, latency). Fixed-base robots: a legged base needs its pose, which P1 doesn't record."""
     import pyarrow.parquet as pq                      # optional dependency (P1 datasets)
     tab = pq.read_table(path).to_pydict()
     state = np.array(tab["observation.state"], float)
     action = np.array(tab["action"], float)
     t = np.array(tab.get("timestamp") or np.arange(len(state)) / 30.0, float)
     R, O, N = len(roles), len(objects), len(state)
-    grip = action[:, nq:nq + R] if action.shape[1] >= nq + R else np.zeros((N, R))
+    if isinstance(joints, (int, np.integer)):
+        joints = [f"q{i}" for i in range(int(joints))]
+    nq = len(joints)
+    q = np.full((N, nq), np.nan)
+    q_des = np.tile(np.zeros(nq) if q_home is None else np.asarray(q_home, float)[:nq], (N, 1))
+    grip = np.zeros((N, R))
+    s_names = names or _names(path, "observation.state")
+    a_names = names or _names(path, "action") or s_names
+    if s_names is None:                                # no names: [qpos..., gripper per role]
+        q[:, :min(nq, state.shape[1])] = state[:, :nq]
+        q_des[:, :min(nq, action.shape[1])] = action[:, :nq]
+        if action.shape[1] >= nq + R:
+            grip = action[:, nq:nq + R]
+    else:
+        for arr, nm, dst in ((state, s_names, q), (action, a_names, q_des)):
+            qcol, gcol = _columns(nm, joints, roles)
+            for c, (qi, role) in enumerate(zip(qcol, gcol)):
+                if c >= arr.shape[1]:
+                    break
+                if qi is not None:
+                    dst[:, qi] = arr[:, c]
+                elif role is not None and arr is action:
+                    grip[:, list(roles).index(role)] = arr[:, c]
+        q_des = np.where(np.isnan(q_des), 0.0, q_des)
     f = np.full((N, R, 3), np.nan)
     if "observation.ee_force" in tab:
         ef = np.array(tab["observation.ee_force"], float).reshape(N, -1)
         f[:, :, :] = ef[:, :R * 3].reshape(N, R, 3)
-    p, q = np.full((N, O, 3), np.nan), np.full((N, O, 4), np.nan)
+    p, qo = np.full((N, O, 3), np.nan), np.full((N, O, 4), np.nan)
     if O and "observation.objects" in tab:
         ob = np.array(tab["observation.objects"], float).reshape(N, O, 7)
-        p, q = ob[:, :, :3], ob[:, :, 3:]
-    m = {"version": 1, "probe": "dataset", "source": str(path), "roles": list(roles), "objects": list(objects), **(meta or {})}
-    return Log(t=t - t[0], q_des=action[:, :nq], grip=grip, q=state[:, :nq], dq=np.full((N, 0), np.nan), ee_force=f,
-               obj_p=p, obj_q=q, base=np.full((N, 7), np.nan), meta=m)
+        p, qo = ob[:, :, :3], ob[:, :, 3:]
+    m = {"version": 1, "probe": "dataset", "source": str(path), "roles": list(roles), "objects": list(objects),
+         "joints": list(joints), **(meta or {})}
+    return Log(t=t - t[0], q_des=q_des, grip=grip, q=q, dq=np.full((N, 0), np.nan), ee_force=f,
+               obj_p=p, obj_q=qo, base=np.full((N, 7), np.nan), meta=m)

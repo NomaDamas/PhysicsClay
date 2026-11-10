@@ -19,6 +19,7 @@ import multiprocessing as mp
 import os
 import tempfile
 import time
+import warnings
 
 import mujoco
 import numpy as np
@@ -63,9 +64,13 @@ class PlantSim:
         pl, d = self.pl, self.pl.d
         P.apply(pl, {**P.defaults(P.PARAMS), **params})
         N = len(log)
-        roles, objs = log.meta.get("roles") or list(pl.grip), log.meta.get("objects") or list(pl.objects)
+        roles = list(log.meta["roles"]) if "roles" in log.meta else list(pl.grip)
+        objs = list(log.meta["objects"]) if "objects" in log.meta else list(pl.objects)   # what the log tracked
         k0 = _rest_rows(log)
-        q0 = np.nanmean(log.q[:k0], axis=0)
+        with warnings.catch_warnings():                  # all-NaN columns (joints a dataset doesn't record)
+            warnings.simplefilter("ignore", RuntimeWarning)
+            q0 = np.nanmean(log.q[:k0], axis=0)
+        q0 = np.where(np.isfinite(q0), q0, log.q_des[0])  # joints a dataset doesn't record: start at their command
         pl.reset(q0)
         for j, n in enumerate(objs):                     # objects where the log saw them at the start, then let them settle
             if n in pl.objects and not np.isnan(log.obj_p[0, j, 0]):
@@ -183,7 +188,8 @@ def errors(log, sim):
     if not sim.get("ok", True):
         return {"q": 1e3, "p": 1e3, "f": 1e3}
     eq = sim["q"] - log.q
-    out["q"] = float(np.nanmean(eq ** 2) * eq.shape[1]) if np.isfinite(eq).any() else None
+    ok = np.isfinite(eq)
+    out["q"] = float(np.sum(np.where(ok, eq, 0.0) ** 2) / ok.any(axis=1).sum()) if ok.any() else None
     if log.obj_p.size and not np.all(np.isnan(log.obj_p)):
         ep = sim["p"] - log.obj_p
         m = np.isfinite(ep).all(axis=2)
@@ -270,6 +276,8 @@ class CMA:
 def _minimize(f_batch, x0, sigma0, gens, popsize=None, seed=0, on_gen=None, tol=2e-3):
     """CMA-ES on [0,1]^n. f_batch(list of x) -> list of J. Uses `cma` (pycma) when installed."""
     try:
+        if len(x0) < 2:                                  # pycma does not do one dimension
+            raise ImportError
         import cma  # noqa: F401  (optional)
         es = cma.CMAEvolutionStrategy(list(x0), sigma0, {"bounds": [0, 1], "popsize": popsize or 4 + int(3 * math.log(len(x0))),
                                                          "seed": seed + 1, "verbose": -9, "maxiter": gens})
@@ -439,15 +447,21 @@ def _rms(e):
 
 def tracking(sim, log, params):
     """How well the simulator with `params` reproduces a log (a held-out task): RMS joint error (deg), hand path (mm),
-    object path (mm), final object position (mm) and wrist force (N)."""
+    object path (mm), final object position (mm) and wrist force (N, segment means). A replay that diverges (MuJoCo
+    instability) is scored over the part before it and says when (`diverged_s`)."""
     r = sim.rollout(log, params, tcp=True)
-    e = errors(log, r)
-    out = _rms(e)
-    real_tcp = sim.tcp_of(log)
-    out["tcp_mm"] = round(1000 * float(np.sqrt(np.nanmean(np.sum((r["tcp"] - real_tcp) ** 2, axis=-1)))), 2)
-    if log.obj_p.size and not np.all(np.isnan(log.obj_p)):
+    n = len(log)
+    if not r["ok"]:
+        bad = np.where(~np.isfinite(r["q"]).all(axis=1))[0]
+        n = max(2, int(bad[0])) if len(bad) else n
+    lg = log.slice(0, n)
+    rr = {"q": r["q"][:n], "p": r["p"][:n], "f": r["f"][:n], "ok": True}
+    out = _rms(errors(lg, rr))
+    real_tcp = sim.tcp_of(lg)
+    out["tcp_mm"] = round(1000 * float(np.sqrt(np.nanmean(np.sum((r["tcp"][:n] - real_tcp) ** 2, axis=-1)))), 2)
+    out["diverged_s"] = None if n == len(log) else round(float(log.t[n] - log.t[0]), 2)
+    if n == len(log) and log.obj_p.size and not np.all(np.isnan(log.obj_p)):
         k = min(len(log), max(1, int(0.2 / max(float(np.median(np.diff(log.t))), 1e-3))))
         fin_real = np.nanmean(log.obj_p[-k:], axis=0)
-        fin_sim = r["p"][-1]
-        out["final_obj_mm"] = round(1000 * float(np.nanmax(np.linalg.norm(fin_sim - fin_real, axis=-1))), 2)
+        out["final_obj_mm"] = round(1000 * float(np.nanmax(np.linalg.norm(r["p"][-1] - fin_real, axis=-1))), 2)
     return out
