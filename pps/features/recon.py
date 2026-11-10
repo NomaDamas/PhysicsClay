@@ -21,7 +21,7 @@ from ..recon.base import ReconError
 from ..recon.http import server_keys, start_import, start_scan
 
 KEY = "recon"
-_cache = {"t": 0.0, "providers": [], "library": []}
+_cache = {"t": 0.0, "providers": {}, "library": 0, "depth": "off"}
 
 
 def _st(ctx):
@@ -173,9 +173,9 @@ def recon_state(ctx):
     now = time.time()
     if now - _cache["t"] > 5.0:
         from ..recon.providers import listing
-        _cache.update(t=now, providers={p["id"]: p["ok"] for p in listing()}, library=library.count())
+        d = depthmod.status()
+        _cache.update(t=now, providers={p["id"]: p["ok"] for p in listing()}, library=library.count(),
+                      depth="ready" if d["ready"] else ("downloading" if d["downloading"] else "on first use" if d["can_download"] else "off"))
     s = _st(ctx)
-    d = depthmod.status()
-    return {KEY: {"jobs": jobs.recent(3), "providers": _cache["providers"], "depth": "ready" if d["ready"] else
-                  ("downloading" if d["downloading"] else "on first use" if d["can_download"] else "off"),
+    return {KEY: {"jobs": jobs.recent(3), "providers": _cache["providers"], "depth": _cache["depth"],
                   "library": _cache["library"], "reply": s["reply"]}}
