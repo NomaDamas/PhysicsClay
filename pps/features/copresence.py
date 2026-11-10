@@ -723,15 +723,6 @@ def _ask(ctx, msg, names, why):
         return None
 
 
-def _grasp_kps(tasks, name, palm):
-    c = tasks.mug_center(name)
-    o = tasks.objs[name]
-    off = np.array([-(o["r"] + 0.015), 0.0, 0.01])
-    tasks.cur_off = off
-    g = c + off
-    return [g + np.array([-0.08, 0, 0.07]), g, g + np.array([0, 0, 0.14])]
-
-
 def _pick_hold(ctx, msg):
     tasks, tid = ctx.tasks, str(msg.get("id", "cp-pick"))
     cands = [c for c in (msg.get("candidates") or []) if c in tasks.objs]
@@ -753,13 +744,13 @@ def _pick_hold(ctx, msg):
     c = tasks.mug_center(name)
     palm = _pick_palm(ctx.rt, c[1])
     cur = ctx.rt.data.site_xpos[ctx.rt.palm_sid[palm]].copy()
-    kps = [cur] + _grasp_kps(tasks, name, palm)
-    ev = {2: "grasp"}
+    g_kps, quats, gi = tasks.grasp_waypoints(name, palm, cur)
+    kps, ev = [cur] + g_kps, {gi: "grasp"}
     if getattr(tasks, "keepout", None):
         kps, ev, _ = tasks.keepout.route(kps, ev, palm)
     what = _pretty(tasks, name)
     tasks.done_msg = f"I'm holding {what}. Say 'put it there' while you point, or 'give it to me'."
-    tasks._launch(tid, "pick_place", kps, palm, ev, "task", f"Picking up {what}, the one you pointed at.")
+    tasks._launch(tid, "pick_place", kps, palm, ev, "task", f"Picking up {what}, the one you pointed at.", quats=quats)
     _st(ctx)["last_obj"] = name
     return True
 
@@ -816,20 +807,23 @@ def _handover(ctx, msg):
         c = tasks.mug_center(name)
         palm = _pick_palm(ctx.rt, c[1])
     cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()
-    kps, ev = [cur], {}
+    kps, ev, quats = [cur], {}, None
     if held is None:
         tasks.cur = name
-        kps += _grasp_kps(tasks, name, palm)
-        ev[2] = "grasp"
+        g_kps, quats, gi = tasks.grasp_waypoints(name, palm, cur)
+        kps += g_kps
+        ev[gi] = "grasp"
     target, exact = _clamp_reach(ctx, palm, kps, hand)
     if target is None:
         tasks.set_task(tid, "handover", "failed", "I can't reach toward your hand from here.")
         return True
     kps.append(target)
+    if quats is not None:
+        quats = list(quats) + [quats[-1]]
     what = _pretty(tasks, name)
     tasks.done_msg = (f"Here you go: take {what}. I'll let go when your hand is close." if exact else
                       f"That's as far as I reach: take {what} from my hand. I'll let go when your hand is close.")
-    ok = tasks._launch(tid, "handover", kps, palm, ev, "task", f"Bringing {what} to your hand.")
+    ok = tasks._launch(tid, "handover", kps, palm, ev, "task", f"Bringing {what} to your hand.", quats=quats)
     if ok:
         st["handover"] = {"phase": "carrying", "object": name, "palm": palm, "target": target, "hand": hand,
                           "side": side, "tid": tid, "t": time.time(), "exact": exact}
@@ -862,9 +856,11 @@ def _handover_tick(ctx, st, J, now):
                     obj = ho["object"]
                     tasks.holding[palm] = None
                     tasks.grasp_off = None
-                    o = tasks.objs[obj]
+                    if getattr(tasks, "plant", None) is not None:     # physics: the gripper opens, the person takes it
+                        tasks.held.pop(palm, None)
+                        tasks.plant.grip_cmd(tasks.role(palm), "open")
                     st["given"] = {"object": obj, "side": near[1],
-                                   "off": rt.data.mocap_pos[o["mid"]] - hand_pos(J, near[1]), "last": None}
+                                   "off": tasks.obj_pos(obj) - hand_pos(J, near[1]), "last": None}
                     ho["phase"], ho["t"] = "given", now
                     _say(ctx, "Here you go.")
                     if (tasks.task or {}).get("id") == ho["tid"]:
@@ -875,13 +871,13 @@ def _handover_tick(ctx, st, J, now):
     if g is not None:
         obj = g["object"]
         o = tasks.objs.get(obj)
-        mpos = None if o is None else rt.data.mocap_pos[o["mid"]]
-        moved = g["last"] is not None and mpos is not None and float(np.linalg.norm(mpos - g["last"])) > 0.01
+        mpos = None if o is None else tasks.obj_pos(obj)
+        moved = g["last"] is not None and mpos is not None and float(np.linalg.norm(mpos - g["last"])) > (0.05 if getattr(tasks, "plant", None) is not None else 0.01)
         if o is None or obj in tasks.holding.values() or moved:
             st["given"] = None                    # the robot took it back, or the scene was reset
         elif J is not None and f"{g['side']}_wrist" in J:
             p = hand_pos(J, g["side"]) + 0.5 * g["off"]
-            rt.data.mocap_pos[o["mid"]] = p
+            tasks.set_obj_pose(obj, p)               # the person holds it (not simulated): it follows the hand
             g["last"] = p.copy()
 
 

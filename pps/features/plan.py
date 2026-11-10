@@ -49,11 +49,14 @@ def _dry_run(ctx, msg):
     confirmed task and the suggested alternative can name them."""
     tasks, rt = ctx.tasks, ctx.rt
     rt_keys = ("path", "path_msg", "mode", "engaged", "follow_s")
-    t_keys = ("task", "kind", "events", "fired", "done_msg", "cur", "cur_off", "fail_reason", "hit_obstacle", "stopped_task")
+    t_keys = ("task", "kind", "events", "fired", "done_msg", "cur", "cur_off", "fail_reason", "hit_obstacle", "stopped_task",
+              "place_at")
     snap_rt = {k: getattr(rt, k) for k in rt_keys}
     snap_t = {k: getattr(tasks, k) for k in t_keys if hasattr(tasks, k)}
+    snap_q = rt.data.mocap_quat.copy()            # physics plans turn the hand target to the grasp orientation
+    grips = {r: g["cmd"] for r, g in tasks.plant.grip.items()} if getattr(tasks, "plant", None) is not None else {}
     before = {id(mk) for mk in tasks.markers}
-    cap = {}
+    cap, caps = {}, []
     real_launch, real_hits = type(tasks)._launch, type(tasks).carry_hits_vase
 
     def hits(pts, events, palm):
@@ -62,14 +65,15 @@ def _dry_run(ctx, msg):
         cap["hit_obstacle"] = getattr(tasks, "hit_obstacle", None)
         return r
 
-    def launch(tid, action, keypoints, palm, events, kind, ok_msg):
+    def launch(tid, action, keypoints, palm, events, kind, ok_msg, **kw):
         cap.update(keypoints=[np.asarray(k, float).copy() for k in keypoints], palm=palm, events=dict(events),
                    ok_msg=ok_msg, done_msg=getattr(tasks, "done_msg", ""), cur=tasks.cur, cur_off=getattr(tasks, "cur_off", None))
-        ok = real_launch(tasks, tid, action, keypoints, palm, events, kind, ok_msg)
+        ok = real_launch(tasks, tid, action, keypoints, palm, events, kind, ok_msg, **kw)
         cap["dists"] = list(getattr(rt, "last_precheck_dists", []) or [])
         cap["path"] = rt.path
         cap["launched"] = ok
         cap["why"] = getattr(tasks, "fail_reason", "reach") if not ok else None
+        caps.append(dict(cap))                    # physics tries a few grasps: keep each attempt
         return ok
 
     tasks._launch, tasks.carry_hits_vase = launch, hits
@@ -91,6 +95,11 @@ def _dry_run(ctx, msg):
             setattr(rt, k, v)
         for k, v in snap_t.items():
             setattr(tasks, k, v)
+        rt.data.mocap_quat[:] = snap_q
+        for r, c in grips.items():
+            tasks.plant.grip_cmd(r, c)
+    if caps:                                      # the attempt that launched, else the first (the one the verdict names)
+        cap.update(next((c for c in caps if c["launched"]), caps[0]))
     cap["new_markers"] = [mk["id"] for mk in tasks.markers if id(mk) not in before]
     return verdict, cap
 
