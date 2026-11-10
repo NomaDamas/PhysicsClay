@@ -562,7 +562,8 @@ kept). Message ids from the headset start with `vr-`.
 | `{op:"stop"}` | let go: the hand stays where it is |
 
 Every target is clamped to the arm's reach (a sphere around the shoulder; mobile bases 1.6 m) and above the work surface
-(plus what the hand carries), rate limited (1 m/s, 3 rad/s, × P5 `rt.safety_scale`), ignored during a protective stop
+(plus what the hand carries), rate limited (1 m/s, 3 rad/s of the robot's time, sim time with physics, × P5
+`rt.safety_scale`; with physics never more than 5 cm ahead of the measured hand), ignored during a protective stop
 (`rt.safety_scale <= 0` or `tasks.safety.stopped`) or when `tasks.safety.check_point` says it is inside the person, and
 ignored while a task / path runs (`held: "busy …"`). It goes into the hand's mocap target (the path P3 mirroring uses;
 P3's mirror mode now sends bare commands through this handler). `grip` → `rt.set_gripper(palm, g)` when the runtime has

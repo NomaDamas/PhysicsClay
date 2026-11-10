@@ -65,6 +65,8 @@ GRAB_HOLD_S, PRESENT_S = 0.4, 0.8
 HANDOVER_GAP = 0.10      # m: the robot offers the object this far in front of your hand; you close the gap (P5 safety:
                          #    the robot never moves into you)
 OFFER_TIMEOUT = 15.0     # s the robot holds an offered object out before it gives up (and keeps holding it)
+CLEAR_S = 0.15           # s (robot time) the robot's fingers must be off an object it let go before the person moves it
+TAKE_SPEED = 0.4         # m/s (robot time) the person draws a taken object out of the open hand and toward themselves
 PATH_S = 4.0
 SMOOTH = 0.5             # EMA factor for joints (calm avatar)
 SHARED_FOVY = 90.0       # robot-eye field of view in the Shared space view (sees the table and the person)
@@ -882,29 +884,136 @@ def _handover_tick(ctx, st, J, now):
                     obj = ho["object"]
                     tasks.holding[palm] = None
                     tasks.grasp_off = None
-                    if getattr(tasks, "plant", None) is not None:     # physics: the gripper opens, the person takes it
-                        tasks.held.pop(palm, None)
-                        tasks.plant.grip_cmd(tasks.role(palm), "open")
                     st["given"] = {"object": obj, "side": near[1],
                                    "off": tasks.obj_pos(obj) - hand_pos(J, near[1]), "last": None}
+                    pl = getattr(tasks, "plant", None)
+                    if pl is not None:            # physics: the person's hand closes on it where it is, the gripper opens,
+                        tasks.held.pop(palm, None)   # and only once the fingers are off it does the person draw it away
+                        role = tasks.role(palm)
+                        pl.grip_cmd(role, "open")
+                        st["given"].update(stage="release", role=role, pos=tasks.obj_pos(obj).copy(),
+                                           quat=pl.d.xquat[pl.objects[obj]["bid"]].copy(), t=float(pl.d.time), clear=None)
                     ho["phase"], ho["t"] = "given", now
                     _say(ctx, "Here you go.")
                     if (tasks.task or {}).get("id") == ho["tid"]:
                         tasks.task["message"] = f"Handed {_pretty(tasks, obj)} to you."
-        elif ho["phase"] == "given" and now - ho["t"] > 3.0:
-            st["handover"] = None
+        elif ho["phase"] == "given" and now - ho["t"] > 3.0 and (st["given"] or {}).get("stage") in (None, "held"):
+            st["handover"] = None                 # (still cooperating, P5, while the fingers come off it)
     g = st["given"]
     if g is not None:
         obj = g["object"]
         o = tasks.objs.get(obj)
+        pl = getattr(tasks, "plant", None)
         mpos = None if o is None else tasks.obj_pos(obj)
-        moved = g["last"] is not None and mpos is not None and float(np.linalg.norm(mpos - g["last"])) > (0.05 if getattr(tasks, "plant", None) is not None else 0.01)
+        moved = g["last"] is not None and mpos is not None and float(np.linalg.norm(mpos - g["last"])) > (0.05 if pl is not None else 0.01)
         if o is None or obj in tasks.holding.values() or moved:
+            _person_holds(pl, obj, False)
             st["given"] = None                    # the robot took it back, or the scene was reset
         elif J is not None and f"{g['side']}_wrist" in J:
-            p = hand_pos(J, g["side"]) + 0.5 * g["off"]
-            tasks.set_obj_pose(obj, p)               # the person holds it (not simulated): it follows the hand
+            want = hand_pos(J, g["side"]) + 0.5 * g["off"]
+            if pl is None:
+                p = want
+                tasks.set_obj_pose(obj, p)           # the person holds it (not simulated): it follows the hand
+            else:
+                p = _taking(tasks, pl, g, want)
+                tasks.set_obj_pose(obj, p, g["quat"])
+                _person_holds(pl, obj, True)
             g["last"] = p.copy()
+        else:                                     # the person is gone: nobody holds it any more
+            _person_holds(pl, obj, False)
+
+
+def _person_holds(pl, obj, on):
+    """Physics: the person's hand (not simulated) carries the object's weight while it holds it; set_obj_pose puts it
+    where the hand is once per frame, and between frames it must not fall out of the hand."""
+    if pl is None or obj not in pl.objects:
+        return
+    o = pl.objects[obj]
+    pl.d.xfrc_applied[o["bid"]] = 0.0
+    if on:
+        pl.d.xfrc_applied[o["bid"], 2] = -float(pl.m.body_subtreemass[o["bid"]]) * float(pl.m.opt.gravity[2])
+
+
+def _fingers_touch(pl, role, obj):
+    """Is either of the gripper's fingers (its pads) in contact with the object? (The palm it rests against doesn't
+    hold it: the person draws it away from the palm.)"""
+    return any(pl.touching(role, obj))
+
+
+def _taking(tasks, pl, g, want):
+    """Physics: where the object the robot let go of is this frame. The person's hand (not simulated) took it where the
+    robot held it out. It stays there while the gripper opens (stage "release") until no finger has touched it for
+    CLEAR_S; then the person draws it out of the open hand ("out": past the fingertips, through the side of the jaws that
+    is open and faces them most, never down into the table) and brings it to their hand ("hand") at TAKE_SPEED, after
+    which it follows their hand ("held"). It never moves while a finger still touches it: the move is the person's,
+    not a push through the fingers."""
+    obj, role = g["object"], g["role"]
+    now = float(pl.d.time)
+    dt = float(np.clip(now - g["t"], 0.0, 0.1))
+    g["t"] = now
+    p = np.asarray(g["pos"], float)
+    touch = _fingers_touch(pl, role, obj)
+    if g["stage"] == "release":
+        if touch:
+            g["clear"] = None
+        elif g["clear"] is None:
+            g["clear"] = now
+        elif now - g["clear"] >= CLEAR_S:
+            g["stage"], g["exit"] = "out", p + _exit(tasks, pl, role, obj, want - p)
+        return p
+    if touch and g["stage"] in ("out", "hand"):
+        return p                                   # a finger is still on it: wait (the jaws keep opening)
+    if g["stage"] == "held":
+        g["pos"] = np.asarray(want, float).copy()
+        return g["pos"]
+    goal = g["exit"] if g["stage"] == "out" else np.asarray(want, float)
+    v = goal - p
+    n = float(np.linalg.norm(v))
+    step = TAKE_SPEED * dt
+    if n <= step:
+        p = goal.copy()
+        g["stage"] = "hand" if g["stage"] == "out" else "held"
+    else:
+        p = p + v * (step / n)
+    g["pos"] = p
+    return p
+
+
+def _exit(tasks, pl, role, obj, toward):
+    """The shortest way out of the open jaws for the object: along the gripper's approach (out past the fingertips) or
+    sideways across the pads' width, whichever leads most toward the person; never down into the work surface. -> the
+    displacement of the object."""
+    m, d = pl.m, pl.d
+    sid = pl.site_ids[role]
+    R = d.site_xmat[sid].reshape(3, 3)
+    gr = pl.grip[role]
+    app = R @ np.asarray(gr["approach"], float)
+    ax = R @ np.asarray(gr["axis"], float)
+    third = np.cross(app, ax)
+    c = tasks.mug_center(obj)
+    o = tasks.objs[obj]
+    r, hh = float(o.get("r", 0.04)), float(o.get("half_h", 0.04))
+    pads = [gid for side in gr["pads"] for gid in side]
+    tw = np.asarray(toward, float)
+    tw = tw / (float(np.linalg.norm(tw)) or 1.0)
+    best = None
+    for k, u in enumerate((app, third, -third)):
+        u = u / (float(np.linalg.norm(u)) or 1.0)
+        reach = 0.0                                # how far the fingers reach past the object's centre along u
+        for gid in pads:
+            Rg, s = d.geom_xmat[gid].reshape(3, 3), m.geom_size[gid]
+            ext = float(np.abs(Rg.T @ u) @ s) if m.geom_type[gid] == mujoco.mjtGeom.mjGEOM_BOX else float(m.geom_rbound[gid])
+            reach = max(reach, float(np.dot(d.geom_xpos[gid] - c, u)) + ext)
+        own = abs(u[2]) * hh + math.sqrt(max(0.0, 1.0 - u[2] * u[2])) * r
+        dv = u * (max(0.0, reach) + own + 0.015)
+        bottom = c[2] + dv[2] - hh
+        over = TABLE_X[0] - 0.05 <= c[0] + dv[0] <= TABLE_X[1] + 0.05 and TABLE_Y[0] - 0.05 <= c[1] + dv[1] <= TABLE_Y[1] + 0.05
+        if over and bottom < TABLE_TOP + 0.01:
+            continue
+        score = float(np.dot(u, tw)) + (0.1 if k == 0 else 0.0)
+        if best is None or score > best[0]:
+            best = (score, dv)
+    return best[1] if best is not None else np.array([0.0, 0.0, 0.0])
 
 
 # ---------------------------------------------------------------------- messages
