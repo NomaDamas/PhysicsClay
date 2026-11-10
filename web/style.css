@@ -90,7 +90,7 @@ kbd { font-family: var(--sans); font-size: 11px; padding: 0 5px; border-radius: 
   padding: 0 20px; background: var(--bar); border-bottom: 1px solid var(--line-soft); position: relative; z-index: 20;
   -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px);
 }
-.brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.brand { display: flex; align-items: center; gap: 10px; min-width: 0; overflow: hidden; }
 .logo { width: 28px; height: 28px; border-radius: 9px; flex: none; background: var(--accent); display: grid; place-items: center; }
 .logo i { width: 12px; height: 12px; border-radius: 4px; background: var(--hot); }
 .brand-text { display: flex; flex-direction: column; min-width: 0; }
@@ -173,9 +173,44 @@ kbd { font-family: var(--sans); font-size: 11px; padding: 0 5px; border-radius: 
 .cam { flex: none; border: 0; border-radius: var(--r-card); background: var(--cam-bg); box-shadow: var(--shadow); }
 .cam-frame { aspect-ratio: 4 / 3; background: var(--cam-bg); border-radius: inherit; }
 #camOverlay { pointer-events: none; }
-.cam-empty { flex-direction: column; gap: 10px; color: rgba(255, 255, 255, .78); }
-.cam-empty .cam-on { pointer-events: auto; height: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .28); background: rgba(255, 255, 255, .1); color: #fff; font-size: var(--fs-sm); font-weight: 500; }
-.cam-empty .cam-on:hover { background: rgba(255, 255, 255, .18); }
+/* camera off: an opaque card over the frame (no synthetic stand-in shows through), one click to turn it on */
+.cam-empty { z-index: 2; flex-direction: column; gap: 6px; padding: 12px 14px 52px; background: var(--cam-bg); color: rgba(255, 255, 255, .78); }
+.cam-empty .ce-title { color: #fff; font-size: var(--fs-md); font-weight: 650; }
+.cam-empty .ce-sub { max-width: 250px; font-size: var(--fs-xs); line-height: 1.4; text-wrap: pretty; }
+.cam-empty[data-state="error"] .ce-sub { color: #ffc2bd; }
+.cam-empty .ce-btns { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-top: 6px; width: min(210px, 100%); }
+.cam-empty .cam-on { pointer-events: auto; display: inline-flex; align-items: center; justify-content: center; gap: 7px; height: 36px; padding: 0 14px; border-radius: 999px;
+  border: 0; background: var(--accent); color: var(--on-accent); font-size: var(--fs-sm); font-weight: 600; white-space: nowrap; }
+.cam-empty .cam-on.alt { border: 1px solid rgba(255, 255, 255, .3); background: rgba(255, 255, 255, .08); color: #fff; font-weight: 500; }
+.cam-empty .cam-on svg { width: 16px; height: 16px; flex: none; }
+.cam-empty .cam-on:hover:not(:disabled) { filter: brightness(1.08); }
+.cam-empty .cam-on.alt:hover { background: rgba(255, 255, 255, .16); }
+.cam-empty .cam-on:disabled { opacity: .6; cursor: default; }
+.cam-empty .cam-on:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.frame > video.cam-self { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; display: block; transform: scaleX(-1); background: var(--cam-bg); }
+.cam-off-btn { position: absolute; right: 8px; top: 8px; z-index: 6; width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%;
+  background: var(--glass); color: var(--t1); box-shadow: 0 2px 8px rgba(0, 0, 0, .18); }
+.cam-off-btn::before { content: ""; position: absolute; inset: -6px; }
+.cam-off-btn svg { width: 14px; height: 14px; }
+.cam-off-btn:focus-visible { outline: none; box-shadow: var(--ring); }
+.cam-chips { right: 48px; }
+
+/* "Use my phone": QR code + steps + live status */
+.phone-dlg { width: min(620px, calc(100vw - 32px)); }
+.phone-body { gap: 14px; }
+.phone-qr-row { display: flex; gap: 18px; align-items: flex-start; }
+.qr-box { flex: none; width: 196px; height: 196px; padding: 10px; border-radius: 16px; background: #fff; color: #111; border: 1px solid var(--line); }
+.qr-box svg { display: block; width: 100%; height: 100%; }
+.phone-steps { margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: var(--fs-sm); line-height: 1.45; color: var(--t1); }
+.phone-steps li::marker { color: var(--t2); font-weight: 600; }
+.phone-url { font-family: var(--mono); font-size: var(--fs-xs); color: var(--accent-ink); overflow-wrap: anywhere; }
+.phone-warn { margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--hot-tint); color: var(--t1); font-size: var(--fs-sm); line-height: 1.45; }
+.phone-warn code { font-family: var(--mono); font-size: var(--fs-xs); }
+.phone-status { display: flex; align-items: center; gap: 10px; margin: 0; padding: 10px 12px; border-radius: 12px; background: var(--field); font-size: var(--fs-sm); font-weight: 500; }
+.phone-status i { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+.phone-status[data-state="live"] { background: var(--ok-tint); color: var(--ok-ink); }
+.phone-status[data-state="live"] i { background: var(--ok); animation: none; }
+@media (max-width: 560px) { .phone-qr-row { flex-direction: column; align-items: center; } .qr-box { width: 180px; height: 180px; } }
 .cam-chips { position: absolute; left: 12px; top: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 6px; pointer-events: none; z-index: 2; }
 .gesture-chip { color: var(--accent-ink); }
 .cam-video-btn {
@@ -575,7 +610,7 @@ dialog[open] { animation: rise var(--med) var(--ease); }
   .meter-label { display: none; }
   .stage-frame.v3d .stage-hint { display: none; }
 }
-@media (max-width: 1180px) { .sp-stats { display: none; } }
+@media (max-width: 1500px) { .sp-stats { display: none; } }   /* fps · IK Hz: room for Record, Demo, Help and Settings */
 
 /* ---------------------------------------------------------------- tablet: camera becomes a PiP over the stage, feed under the plan */
 @media (max-width: 1099px) and (min-width: 761px) {
@@ -587,7 +622,10 @@ dialog[open] { animation: rise var(--med) var(--ease); }
   .feed { grid-area: feed; min-height: 0; }
   .cam { grid-area: stage; align-self: start; justify-self: start; z-index: 8; width: 176px; margin: 12px; border: 2px solid var(--raised); border-radius: 14px; box-shadow: var(--shadow-md); }
   .cam-chips { left: 6px; top: 6px; }
-  .cam-video-btn span, .cam-empty > span { display: none; }
+  .cam-video-btn span, .cam-empty > span, .cam-empty .cam-on span { display: none; }
+  .cam-empty { padding: 6px 6px 44px; }
+  .cam-empty .ce-btns { flex-direction: row; justify-content: center; width: auto; margin: 0; }
+  .cam-empty .cam-on { width: 40px; height: 40px; padding: 0; }
   .cam-video-btn { right: 6px; bottom: 6px; width: 36px; padding: 0; justify-content: center; }
   .stage-tl { left: auto; right: 14px; justify-content: flex-end; max-width: calc(100% - 210px); }
   .pip { top: auto; bottom: 14px; width: 144px; height: 96px; }
@@ -600,7 +638,7 @@ dialog[open] { animation: rise var(--med) var(--ease); }
   :root { --topbar: 56px; }
   body { overflow-y: auto; overflow-x: hidden; height: auto; min-height: 100%; }
   .topbar { position: sticky; top: 0; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; padding: 0 8px 0 16px; }
-  .brand .tag, .meter, .speed-chip, .sp-stats { display: none; }
+  .brand .tag, .meter, .speed-chip, .sp-stats, #demoBtn { display: none; }   /* Demo stays in Settings → Demo */
   .brand .name { font-size: var(--fs-md); }
   .logo { width: 26px; height: 26px; border-radius: 8px; }
   .logo i { width: 10px; height: 10px; border-radius: 3px; }
@@ -620,9 +658,11 @@ dialog[open] { animation: rise var(--med) var(--ease); }
   .cam-chips .badge, .cam-chips .ov-chip { height: 18px; padding: 0 6px; font-size: 9px; }
   .cam-chips .gesture-chip { display: none; }
   .cam-video-btn, #noPose { display: none; }
-  .cam-empty { gap: 0; }
-  .cam-empty > span { display: none; }
-  .cam-empty .cam-on { height: 100%; width: 100%; border: 0; border-radius: 0; background: transparent; font-size: 11px; line-height: 1.25; padding: 4px; white-space: normal; }
+  .cam-empty { gap: 0; padding: 0; }
+  .cam-empty > span, .cam-empty .cam-on.alt, .cam-off-btn { display: none; }
+  .cam-empty .ce-btns { width: 100%; height: 100%; margin: 0; }
+  .cam-empty .cam-on { height: 100%; width: 100%; flex-direction: column; gap: 3px; border: 0; border-radius: 0; background: transparent; font-size: 11px; line-height: 1.2; padding: 4px; white-space: normal; }
+  .cam-empty .cam-on span { display: inline; }
   .video-bar { left: 4px; right: 4px; bottom: 4px; padding: 3px 6px; }
   .video-bar #videoName, .video-bar #videoPct { display: none; }
   .timeline-slot { grid-area: timeline; flex-wrap: nowrap; overflow-x: auto; }
@@ -694,10 +734,6 @@ dialog[open] { animation: rise var(--med) var(--ease); }
 [data-slot="plan"] .plan-card .plan-head { display: none; }
 /* timeline / skills strip never widens the page (phone) */
 [data-slot="timeline"], [data-slot="timeline"] > * { min-width: 0; max-width: 100%; }
-/* gesture legend: bottom-left of the camera, compact, so it never covers "Show a video"; phone camera is a tiny PiP */
-body .pcg-legend { max-width: calc(100% - 160px); }
-body .pcg-toggle .pcg-strip { display: none; }
-@media (max-width: 760px) { body .pcg-legend { display: none; } body .pcg-chip { top: 4px; padding: 4px 8px; font-size: 11px; } }
 /* "which one?" sits in the plan column like the design's "Needs you" state; the idle plan card steps aside meanwhile */
 [data-slot="plan"] .cand-card.in-plan { position: static; transform: none; width: auto; max-width: none; margin: 0; border: 2px solid var(--hot); }
 [data-slot="plan"]:has(.cand-card.in-plan:not([hidden])) .plan-card { display: none; }
@@ -706,3 +742,12 @@ body .pcg-toggle .pcg-strip { display: none; }
 .plan-scroll > [data-slot="side"] { order: 1; }
 .plan-scroll > * { order: 2; }
 .byok-note { margin: 0 0 10px; padding: 10px 12px; border-radius: 12px; background: var(--accent-tint); color: var(--t1); line-height: 1.45; }
+/* small phones: the top bar keeps the logo, the robot pill, Record (dot), Help and Settings without overlapping */
+@media (max-width: 480px) {
+  .brand .name { display: none; }
+  .topbar .ds-btn .ds-lbl { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .topbar .ds-btn { padding: 0 8px; }
+}
+/* conversation header: the brain chip (web/ui/agent.js) needs the room more than the intent count */
+.feed .panel-head:has(.pca-brain) #feedCount { display: none; }
+.feed .panel-head .pca-brain { flex: 0 1 auto; min-width: 0; max-width: 170px; }

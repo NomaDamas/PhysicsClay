@@ -595,3 +595,18 @@ Details: `docs/skills.md` and `docs/packs.md`; as-built notes in `docs/V1.md` (P
   slow_s, range}`. Demonstrations skip the synthetic no-camera person and record `smoothing: {ema, dt}`.
 - With P0 physics the server sends itself `{type:"physics", op:"set", params:{impedance, force_limit}}` around spotting.
 - Agent tools: `learn_skill_from_demo`, `list_skills`, `apply_skill`, `edit_skill_params`, `load_pack`.
+
+## v9 · UX polish: camera in, phone camera, voice, view zoom
+
+* **Camera in.** `state.cam_in = {fps, mobile} | null`: a browser camera is streaming `0x10 + JPEG` frames to the server
+  (fps over the last 2 s; `mobile` when the last sender's user agent is a phone or tablet). The laptop UI shows
+  "Camera on · 15 fps" or "Phone connected · 15 fps" from it.
+* **Phone camera page.** `GET /phone` serves `web/phone.html`, a light page that only streams the phone's camera over
+  the same `/ws` (getUserMedia needs https on a phone: run with `--https`). `GET /phone/info` →
+  `{ip, port, https_port | null, url | null}` (`url` = `https://<lan-ip>:<https_port>/phone`, shown as a QR code).
+* **Voice.** `GET /tts?voice&lang&text` answers `200 audio/mpeg`, or `204` with `X-TTS: no-key | key-rejected |
+  upstream-<status> | upstream-unreachable` when there is no working OpenAI key (the browser then speaks with its own
+  voice; 204 keeps the console clean). `voice` is one of OpenAI's voices (default `coral`); a key OpenAI rejected is
+  not retried for the rest of the run. `state.tts_server`: the server has an OpenAI key (never with `--byok`).
+* **Server views zoom.** `{type: "camera", zoom}`: one proportional factor per message (the browser sums wheel deltas
+  and sends at most every 30 ms); the server clamps it to 0.25–4 and the distance to 0.35–8 m.

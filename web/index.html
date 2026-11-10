@@ -75,23 +75,29 @@
     <div class="col-head">
       <h2 class="col-title">You</h2>
       <span class="grow"></span>
-      <span id="phoneCamChip" class="chip phone-cam-chip" title="This device's camera is the robot's view of you" hidden>Phone camera</span>
+      <span id="phoneCamChip" class="chip phone-cam-chip" title="The camera the robot sees you through" role="status" hidden></span>
       <span id="source" class="src-chip" title="Camera source">—</span>
     </div>
     <div class="panel cam" id="camPanel" aria-label="Your camera">
       <div class="frame cam-frame" id="camFrame">
         <img id="camImg" alt="Your camera" draggable="false">
+        <video id="camSelf" class="cam-self" muted playsinline autoplay hidden aria-label="You, from this computer's camera"></video>
         <canvas id="camOverlay" aria-hidden="true"></canvas>
         <div id="camEmpty" class="empty cam-empty">
-          <span>Camera is off</span>
-          <button id="camBtnM" class="btn sm cam-on" type="button">Turn on camera</button>
+          <span class="ce-title" id="camEmptyTitle">Camera is off</span>
+          <span class="ce-sub" id="camEmptySub">Turn it on so the robot can see you, where you point and your gestures.</span>
+          <div class="ce-btns">
+            <button id="camBtnM" class="cam-on" type="button"><svg aria-hidden="true"><use href="#i-cam"/></svg><span>Turn on camera</span></button>
+            <button id="camPhoneBtn" class="cam-on alt" type="button"><svg aria-hidden="true"><use href="#i-phone"/></svg><span>Use my phone</span></button>
+          </div>
         </div>
+        <button type="button" id="camOffBtn" class="cam-off-btn" title="Turn off this computer's camera" aria-label="Turn off camera" hidden><svg aria-hidden="true"><use href="#i-x"/></svg></button>
         <div class="cam-chips">
           <span id="followBadge" class="badge follow" hidden>Following you</span>
           <span id="recBadge" class="badge rec" hidden>REC 0.0s</span>
           <span id="gestureChip" class="ov-chip gesture-chip" hidden></span>
         </div>
-        <div id="noPose" class="toast" hidden>No person detected</div>
+        <div id="noPose" class="toast" hidden>I can't see you yet: step back so your upper body is in view</div>
         <div id="dropHint" class="drop-hint" hidden>Drop a video — the robot will imitate it</div>
         <div id="videoBar" class="video-bar" hidden><span id="videoName"></span><span class="vb-track"><span id="videoFill"></span></span><span id="videoPct"></span></div>
         <button type="button" id="videoBtn" class="cam-video-btn" title="Show a video: the robot imitates it"><svg aria-hidden="true"><use href="#i-video"/></svg><span>Show a video</span></button>
@@ -283,7 +289,9 @@
       </section>
       <section class="set-sec" id="secCamera"><h3>Camera</h3>
         <label class="check"><input id="setPhoneCam" type="checkbox"><span>Use this device's camera</span></label>
-        <div class="set-row"><button type="button" class="btn sm" id="camFlip">Switch front / back</button><span id="camStatus" class="muted small"></span></div>
+        <div class="set-row"><button type="button" class="btn sm" id="camFlip">Switch front / back</button><button type="button" class="btn sm" id="camPhoneBtn2"><svg aria-hidden="true"><use href="#i-phone"/></svg>Use my phone instead…</button></div>
+        <small id="camStatus" class="muted" role="status"></small>
+        <small class="muted">Off by default. Frames go only to this PhysicsClay server, which runs pose tracking on them.</small>
       </section>
       <section class="set-sec" id="secSkills"><h3>Skills</h3>
         <div class="set-row">
@@ -337,10 +345,16 @@
         <label class="check"><input id="setSendCam" type="checkbox" checked><span>Send my camera to Gemini</span></label>
         <label class="check"><input id="setSendRobot" type="checkbox"><span>Send robot view to Gemini</span></label>
         <label class="check"><input id="setMock" type="checkbox"><span>Mock AI (offline demo: gestures + scripted replies)</span></label>
-        <label class="field"><span>Speech language (no-key fallback)</span>
+        <label class="field"><span>Talk language (speech recognition without a Gemini key)</span>
           <select id="setLang"><option value="en-US">English (en-US)</option><option value="ko-KR">한국어 (ko-KR)</option></select>
         </label>
         <p id="geminiStatus" class="muted small"></p>
+      </section>
+      <section class="set-sec" id="secVoice"><h3>Voice</h3>
+        <label class="check"><input id="setSpeak" type="checkbox" checked><span>Speak the robot's replies</span></label>
+        <div id="voicePickers" class="voice-pickers"></div>
+        <small id="voiceNote" class="muted"></small>
+        <small class="muted">The robot answers in the language you use: Korean in, Korean out.</small>
       </section>
       <section class="set-sec" id="secDemo"><h3>Demo</h3>
         <div class="set-row">
@@ -360,10 +374,32 @@
   </form>
 </dialog>
 
+<dialog id="phoneDlg" class="phone-dlg" aria-labelledby="phoneTitle">
+  <form method="dialog">
+    <header class="dlg-head"><h2 id="phoneTitle">Use your phone as the camera</h2><button class="icon-btn" value="cancel" aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <div class="dlg-body phone-body">
+      <div class="phone-qr-row">
+        <div class="qr-box" id="phoneQr" role="img" aria-label="QR code for the phone camera page"></div>
+        <ol class="phone-steps">
+          <li>Put the phone on the <b>same Wi-Fi</b> as this computer.</li>
+          <li><b>Scan the code</b> with the phone's camera, or open<br><a id="phoneUrl" class="phone-url" href="#" target="_blank" rel="noopener">…</a> <button type="button" class="btn sm ghost" id="phoneCopy">Copy</button></li>
+          <li>The phone warns that the connection isn't private: this server's certificate is self-signed. <b>Safari:</b> Show Details → visit this website. <b>Chrome:</b> Advanced → Proceed.</li>
+          <li>Tap <b>Start camera</b>, then prop the phone up facing you, 1–2 m away, upper body in view.</li>
+        </ol>
+      </div>
+      <p class="phone-warn" id="phoneNoHttps" hidden>Phones only share their camera over https, and this server is running without it. Restart it with <code>--https</code> (<code>scripts/run.sh</code> and <code>make run</code> do), then open this again.</p>
+      <p class="phone-status" id="phoneStatus" role="status" aria-live="polite"><i aria-hidden="true"></i><span>Waiting for the phone…</span></p>
+    </div>
+    <footer class="dlg-foot"><button class="btn primary" value="cancel">Done</button></footer>
+  </form>
+</dialog>
+
+<script src="/static/qr.js"></script>
 <script src="/static/gemini.js"></script>
 <script src="/static/app.js"></script>
 <script type="module" src="/static/view3d.js"></script>
 <script type="module" src="/static/xr.js"></script>
+<script src="/static/help-content.js"></script>
 <script src="/static/ui/core.js"></script>
 <script src="/static/shell.js"></script>
 </body>

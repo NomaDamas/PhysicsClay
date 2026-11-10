@@ -95,7 +95,7 @@
 .cp-demo:hover { color: var(--t1, #1d1d1f); }
 .cp-demo:focus-visible { outline: none; box-shadow: var(--ring, 0 0 0 3px rgba(92,119,223,.32)); }
 body.pc-shared #camPanel { width: 78%; align-self: flex-start; transition: width var(--med, .26s) var(--ease, ease); }
-@media (max-width: 760px) { .cp-bar { top: auto; bottom: 120px; max-width: calc(100% - 28px); } body.pc-shared #camPanel { width: auto; } }
+@media (max-width: 760px) { .cp-bar { top: auto; bottom: 52px; left: 10px; max-width: calc(100% - 20px); gap: 6px; } .cp-toggle { min-height: 32px; font-size: 12px; padding: 0 10px 0 8px; } .cp-look { height: 28px; font-size: 11px; } .cp-demo { display: none !important; } body.pc-shared #camPanel { width: auto; } }
 @media (prefers-reduced-motion: reduce) { .cp-sw, .cp-sw::after, body.pc-shared #camPanel { transition: none; } }
 `;
   document.head.appendChild(css);

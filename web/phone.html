@@ -1,0 +1,905 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#fbfbfd">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="Use this phone's camera as the PhysicsClay robot's view of you.">
+<link rel="icon" href="data:,">
+<title>PhysicsClay · Phone camera</title>
+<script>
+  /* theme before first paint: localStorage["pc.theme"] = "light" | "dark" | "system" (shared with the full app) */
+  (function () {
+    try {
+      var t = localStorage.getItem("pc.theme");
+      if (t === "light" || t === "dark") document.documentElement.setAttribute("data-theme", t);
+    } catch (e) { /* storage blocked: follow the system */ }
+  })();
+</script>
+<style>
+  :root {
+    --ground: #fbfbfd; --panel: #ffffff; --raised: #ffffff; --field: #f2f2f5;
+    --ink: #1d1d1f; --t2: rgba(29, 29, 31, .64);
+    --line: rgba(29, 29, 31, .1); --line2: rgba(29, 29, 31, .16);
+    --accent: #5c77df; --accent-ink: #3f59c4; --accent-btn: #4a65d6; --on-accent: #ffffff;
+    --accent-tint: rgba(92, 119, 223, .1);
+    --ok: #1f8f55; --ok-ink: #17703f; --ok-tint: rgba(31, 143, 85, .08);
+    --warn: #e07a2c; --warn-ink: #a8561a; --warn-tint: rgba(245, 145, 69, .1);
+    --bad: #d6453a; --bad-ink: #b3342b; --bad-tint: rgba(214, 69, 58, .07);
+    --idle: #8e8e94;
+    --cam-bg: #26262b; --cam-ink: rgba(255, 255, 255, .78);
+    --shadow: 0 1px 2px rgba(0, 0, 0, .04), 0 10px 28px rgba(40, 30, 90, .07);
+    --ring: 0 0 0 3px rgba(92, 119, 223, .4);
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Apple SD Gothic Neo", Pretendard, "Noto Sans KR", system-ui, sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #0f1013; --panel: #17181c; --raised: #1e1f24; --field: #23242a;
+      --ink: #f3f3f6; --t2: rgba(243, 243, 246, .7);
+      --line: rgba(255, 255, 255, .11); --line2: rgba(255, 255, 255, .18);
+      --accent: #6680ea; --accent-ink: #aebcff; --accent-btn: #4a65d6; --on-accent: #ffffff;
+      --accent-tint: rgba(102, 128, 234, .16);
+      --ok: #72dca2; --ok-ink: #72dca2; --ok-tint: rgba(114, 220, 162, .1);
+      --warn: #ffb57f; --warn-ink: #ffb57f; --warn-tint: rgba(255, 181, 127, .1);
+      --bad: #ff958c; --bad-ink: #ff958c; --bad-tint: rgba(255, 149, 140, .1);
+      --idle: #8a8a92;
+      --cam-bg: #1a1a1e;
+      --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 28px rgba(0, 0, 0, .3);
+      --ring: 0 0 0 3px rgba(130, 152, 245, .55);
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #0f1013; --panel: #17181c; --raised: #1e1f24; --field: #23242a;
+    --ink: #f3f3f6; --t2: rgba(243, 243, 246, .7);
+    --line: rgba(255, 255, 255, .11); --line2: rgba(255, 255, 255, .18);
+    --accent: #6680ea; --accent-ink: #aebcff; --accent-btn: #4a65d6; --on-accent: #ffffff;
+    --accent-tint: rgba(102, 128, 234, .16);
+    --ok: #72dca2; --ok-ink: #72dca2; --ok-tint: rgba(114, 220, 162, .1);
+    --warn: #ffb57f; --warn-ink: #ffb57f; --warn-tint: rgba(255, 181, 127, .1);
+    --bad: #ff958c; --bad-ink: #ff958c; --bad-tint: rgba(255, 149, 140, .1);
+    --idle: #8a8a92;
+    --cam-bg: #1a1a1e;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 10px 28px rgba(0, 0, 0, .3);
+    --ring: 0 0 0 3px rgba(130, 152, 245, .55);
+    color-scheme: dark;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  html:lang(ko) { word-break: keep-all; }
+  body {
+    margin: 0; min-height: 100vh; min-height: 100dvh;
+    background: var(--ground); color: var(--ink);
+    font: 400 15px/1.45 var(--sans);
+    -webkit-font-smoothing: antialiased; -webkit-tap-highlight-color: transparent;
+  }
+  [hidden] { display: none !important; }
+  svg { flex: none; }
+  .wrap {
+    max-width: 520px; margin: 0 auto;
+    padding: max(10px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+             max(20px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    display: flex; flex-direction: column; gap: 12px;
+  }
+
+  /* header */
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .mark {
+    width: 30px; height: 30px; border-radius: 9px; flex: none; position: relative;
+    background: conic-gradient(from 210deg, #ed7473, #f59145, #e8c44e, #5ac576, #1da8e5, #5c77df, #b679e1, #ed7473);
+  }
+  .mark::after { content: ""; position: absolute; inset: 6px; border-radius: 5px; background: var(--ground); }
+  .brand-text { min-width: 0; }
+  .brand h1 { margin: 0; font-size: 17px; line-height: 1.2; font-weight: 650; letter-spacing: -.01em; }
+  .brand p { margin: 1px 0 0; font-size: 13px; line-height: 1.3; color: var(--t2); }
+  .lang {
+    display: inline-flex; flex: none; padding: 3px; border-radius: 12px;
+    background: var(--field); border: 1px solid var(--line);
+  }
+  .lang button {
+    appearance: none; border: 0; background: transparent; color: var(--t2);
+    font: 600 13px/1 var(--sans); min-width: 44px; min-height: 38px; padding: 0 10px; border-radius: 9px; cursor: pointer;
+  }
+  .lang button[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+  .lang button:focus-visible, .btn:focus-visible, .flip:focus-visible, .applink:focus-visible { outline: none; box-shadow: var(--ring); }
+
+  /* camera preview */
+  .preview {
+    position: relative; width: 100%; aspect-ratio: 3 / 4; max-height: 46vh; max-height: 46svh; min-height: 220px;
+    border-radius: 22px; overflow: hidden; background: var(--cam-bg); box-shadow: var(--shadow);
+  }
+  /* the ring sits above the video: green while the robot sees you, amber while it doesn't */
+  .preview::after {
+    content: ""; position: absolute; inset: 0; z-index: 2; border-radius: inherit; pointer-events: none;
+    box-shadow: inset 0 0 0 3px transparent; transition: box-shadow .25s ease;
+  }
+  .preview[data-ring="ok"]::after { box-shadow: inset 0 0 0 3px var(--ok); }
+  .preview[data-ring="warn"]::after { box-shadow: inset 0 0 0 3px var(--warn); }
+  @media (min-width: 600px) { .preview { aspect-ratio: 4 / 3; } }
+  .preview video {
+    position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block;
+    background: var(--cam-bg);
+  }
+  .preview video.mirror { transform: scaleX(-1); }
+  .placeholder {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 10px; padding: 24px; text-align: center; color: var(--cam-ink); font-size: 15px;
+  }
+  .placeholder svg { width: 40px; height: 40px; opacity: .85; }
+  .live, .flip {
+    position: absolute; z-index: 3; display: inline-flex; align-items: center;
+    border-radius: 999px; background: rgba(12, 12, 14, .66); color: #fff;
+    -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
+  }
+  .live { top: 12px; left: 12px; gap: 7px; padding: 6px 10px 6px 9px; font: 600 13px/1 var(--sans); }
+  .flip {
+    right: 12px; bottom: 12px; max-width: calc(100% - 24px); gap: 8px; min-height: 44px; padding: 0 16px 0 13px;
+    appearance: none; border: 1px solid rgba(255, 255, 255, .2); font: 600 14px/1.2 var(--sans); cursor: pointer;
+  }
+  .flip svg { width: 18px; height: 18px; }
+  .flip:active:not(:disabled) { transform: scale(.97); }
+  .live .rec { width: 8px; height: 8px; border-radius: 50%; background: #6fe0a3; }
+  .preview[data-ring="warn"] .live .rec { background: #ffb57f; }
+
+  /* status */
+  .status {
+    display: flex; align-items: flex-start; gap: 11px; padding: 12px 14px; min-height: 48px;
+    border-radius: 16px; background: var(--panel); border: 1px solid var(--line);
+  }
+  .status .dot {
+    width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; flex: none;
+    background: var(--idle); box-shadow: 0 0 0 4px color-mix(in srgb, var(--idle) 18%, transparent);
+  }
+  .status[data-tone="ok"] .dot { background: var(--ok); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ok) 20%, transparent); }
+  .status[data-tone="warn"] .dot { background: var(--warn); box-shadow: 0 0 0 4px color-mix(in srgb, var(--warn) 22%, transparent); }
+  .status[data-tone="bad"] .dot { background: var(--bad); box-shadow: 0 0 0 4px color-mix(in srgb, var(--bad) 20%, transparent); }
+  .status[data-tone="info"] .dot { background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent); }
+  .status[data-pulse="1"] .dot { animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .status[data-tone="bad"] { background: var(--bad-tint); border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .status[data-tone="warn"] { background: var(--warn-tint); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+  .status[data-tone="ok"] { background: var(--ok-tint); border-color: color-mix(in srgb, var(--ok) 30%, transparent); }
+  .status-text { min-width: 0; flex: 1; }
+  .status-main { margin: 0; font-weight: 600; font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+  .status-fix { margin: 3px 0 0; font-size: 14px; line-height: 1.45; color: var(--ink); opacity: .86; overflow-wrap: anywhere; }
+  .status-link {
+    display: inline-flex; align-items: center; gap: 6px; min-height: 44px; margin-top: 4px; padding: 0 14px;
+    border-radius: 12px; background: var(--accent-btn); color: var(--on-accent); font-weight: 600; font-size: 15px;
+    text-decoration: none;
+  }
+  .status-link svg { width: 16px; height: 16px; }
+  .status-link:focus-visible { outline: none; box-shadow: var(--ring); }
+
+  /* controls */
+  .controls { display: flex; }
+  .btn {
+    appearance: none; flex: 1 1 0; min-width: 0; min-height: 52px; padding: 8px 14px; border-radius: 14px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    font: 600 16px/1.2 var(--sans); text-align: center; cursor: pointer;
+    border: 1px solid transparent; transition: background-color .15s ease, transform .1s ease;
+  }
+  .btn svg { width: 20px; height: 20px; }
+  .btn:active:not(:disabled) { transform: scale(.98); }
+  .btn.primary { background: var(--accent-btn); color: var(--on-accent); }
+  .btn.stop { background: var(--panel); color: var(--ink); border-color: var(--line2); }
+  .btn:disabled { opacity: .45; cursor: not-allowed; }
+
+  /* how it works */
+  .how { padding: 2px 2px 0; }
+  .how h2 { margin: 0 0 4px; font-size: 13px; font-weight: 650; color: var(--t2); letter-spacing: .01em; }
+  .how p { margin: 0; font-size: 14px; line-height: 1.5; color: var(--ink); }
+  .note { display: flex; align-items: flex-start; gap: 8px; margin-top: 8px !important; color: var(--t2) !important; }
+  .note svg { width: 16px; height: 16px; margin-top: 2px; }
+  .meta { margin: 0; padding: 0 2px; font-size: 13px; color: var(--t2); overflow-wrap: anywhere; }
+
+  .foot { display: flex; justify-content: center; padding-top: 2px; }
+  .applink {
+    display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 14px; border-radius: 12px;
+    color: var(--accent-ink); font-weight: 600; font-size: 15px; text-decoration: none;
+  }
+  .applink svg { width: 16px; height: 16px; }
+  .applink:hover { background: var(--accent-tint); }
+
+  @media (prefers-reduced-motion: reduce) {
+    .status[data-pulse="1"] .dot { animation: none; }
+    .preview, .btn { transition: none; }
+  }
+</style>
+</head>
+<body>
+<main class="wrap">
+  <header class="top">
+    <div class="brand">
+      <span class="mark" aria-hidden="true"></span>
+      <div class="brand-text">
+        <h1 data-i18n="heading">Phone camera</h1>
+        <p data-i18n="tagline">Lets the robot see you.</p>
+      </div>
+    </div>
+    <div class="lang" role="group" data-i18n-aria="language" aria-label="Language">
+      <button type="button" data-lang="en" lang="en" aria-pressed="true">EN</button>
+      <button type="button" data-lang="ko" lang="ko" aria-pressed="false">한국어</button>
+    </div>
+  </header>
+
+  <section class="preview" id="preview" data-i18n-aria="previewLabel" aria-label="Camera preview">
+    <video id="video" autoplay muted playsinline disablepictureinpicture aria-hidden="true"></video>
+    <div class="placeholder" id="placeholder">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14.5 4h-5L7.5 6.5H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2.5z"/>
+        <circle cx="12" cy="13" r="3.5"/>
+      </svg>
+      <span id="placeholderText">Camera off</span>
+    </div>
+    <div class="live" id="live" hidden><span class="rec" aria-hidden="true"></span><span id="liveText">Live</span></div>
+    <button type="button" class="flip" id="flipBtn">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M20.5 11A8.5 8.5 0 0 0 5.6 6.4L3.5 8.5"/><path d="M3.5 4v4.5H8"/>
+        <path d="M3.5 13a8.5 8.5 0 0 0 14.9 4.6l2.1-2.1"/><path d="M20.5 20v-4.5H16"/>
+      </svg>
+      <span id="flipLabel">Switch to back camera</span>
+    </button>
+  </section>
+
+  <div class="status" id="status" role="status" aria-live="polite" aria-atomic="true" data-tone="info" data-pulse="1">
+    <span class="dot" aria-hidden="true"></span>
+    <div class="status-text">
+      <p class="status-main" id="statusMain">Connecting to PhysicsClay…</p>
+      <p class="status-fix" id="statusFix" hidden></p>
+      <a class="status-link" id="statusLink" href="#" hidden>
+        <span id="statusLinkText">Open the https page</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M7 17 17 7"/><path d="M9 7h8v8"/>
+        </svg>
+      </a>
+    </div>
+  </div>
+
+  <div class="controls">
+    <button type="button" class="btn primary" id="startBtn">
+      <svg id="iconStart" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M14.5 4h-5L7.5 6.5H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2h-2.5z"/>
+        <circle cx="12" cy="13" r="3.5"/>
+      </svg>
+      <svg id="iconStop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" hidden>
+        <rect x="6.5" y="6.5" width="11" height="11" rx="2.5"/>
+      </svg>
+      <span id="startLabel">Start camera</span>
+    </button>
+  </div>
+
+  <section class="how" aria-labelledby="howTitle">
+    <h2 id="howTitle" data-i18n="howTitle">How it works</h2>
+    <p data-i18n="how">Prop the phone up across the table from you, where the robot would be, facing you about 1–2 m away so your upper body is in view. Keep this page open.</p>
+    <p class="note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="5" y="11" width="14" height="9.5" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+      </svg>
+      <span data-i18n="privacy">Frames go only to the PhysicsClay server on your network.</span>
+    </p>
+  </section>
+
+  <p class="meta" id="meta"></p>
+
+  <nav class="foot">
+    <a class="applink" href="/">
+      <span data-i18n="openApp">Open the full app</span>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M7 17 17 7"/><path d="M9 7h8v8"/>
+      </svg>
+    </a>
+  </nav>
+</main>
+
+<script>
+(() => {
+  "use strict";
+
+  // ------------------------------------------------------------------ constants
+  const FPS = 15;                     // target send rate
+  const OUT_W = 640, OUT_H = 360;     // the server resizes every frame to 16:9 without keeping aspect: pillarbox here
+  const JPEG_Q = 0.6;
+  const MAX_BUFFERED = 300000;        // backpressure: skip a frame while this much is still queued on the socket
+  const STATE_FRESH_MS = 3000;        // a server state older than this is not used for the status
+  const WS_SILENT_MS = 6000;          // no message at all for this long -> the socket is dead, reconnect
+  const UNREACHABLE_MS = 10000;       // without a connection for this long -> "Can't reach PhysicsClay"
+  const HDR = new Uint8Array([0x10]); // binary tag: "your camera" JPEG
+  const K_FACING = "pc.facing", K_LANG = "pc.uiLang", K_ON = "pc.phoneCamPage", K_THEME = "pc.theme";
+
+  const $ = (id) => document.getElementById(id);
+  const LS = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : v; } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* storage blocked */ } },
+  };
+  const UA = navigator.userAgent || "";
+  const IS_IOS = /iPhone|iPad|iPod/.test(UA) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const IS_ANDROID = /Android/.test(UA);
+
+  // ------------------------------------------------------------------ strings
+  const STR = {
+    en: {
+      title: "PhysicsClay · Phone camera",
+      heading: "Phone camera",
+      tagline: "Lets the robot see you.",
+      language: "Language",
+      previewLabel: "Camera preview",
+      start: "Start camera", stop: "Stop",
+      startAria: "Start the camera and stream it to the robot", stopAria: "Stop the camera",
+      toBack: "Switch to back camera", toFront: "Switch to front camera",
+      camOff: "Camera off", camUnavailable: "Camera unavailable", camStarting: "Starting camera…",
+      live: "Live",
+      connecting: "Connecting to PhysicsClay…",
+      reconnecting: "Reconnecting…",
+      reconnectingCam: "The camera stays on; sending resumes as soon as the connection is back.",
+      unreachable: "Can't reach PhysicsClay · retrying…",
+      unreachableFix: "Check that PhysicsClay is still running on the laptop and this phone is on the same Wi-Fi.",
+      idle: "Connected · camera off",
+      starting: "Starting camera…",
+      startingFix: "Allow camera access when your browser asks.",
+      stream: "Streaming", streamFps: "Streaming {fps} fps",
+      seesYou: "the robot sees you",
+      stepBack: "step back so your upper body is in view",
+      looking: "looking for you…",
+      waiting: "waiting for PhysicsClay to use this camera…",
+      waitingFix: "Frames aren't reaching the robot yet. If this stays, reload this page.",
+      videoBusy: "PhysicsClay is playing a video; it switches to this camera when the video ends",
+      paused: "Paused · sending resumes when this page is back on screen",
+      pausedIdle: "Paused · reconnects when this page is back on screen",
+      stalled: "Camera on · sending has stalled",
+      stalledFix: "The network is slow right now. Move the phone closer to the Wi-Fi router.",
+      noFrames: "Camera on · no picture from the camera",
+      noFramesFix: "The phone may have paused the camera. Tap Stop, then Start camera.",
+      insecure: "The camera needs the https address",
+      insecureFix: "Your browser only shares the camera over https. Open the https address shown on the laptop (it ends in /phone) and accept the certificate warning.",
+      insecureFixUrl: "Your browser only shares the camera over https. Open {url} and accept the certificate warning.",
+      insecureNoHttps: "Your browser only shares the camera over https, and PhysicsClay isn't serving https. Restart it with --https, then open the https address it shows.",
+      openHttps: "Open the https page",
+      unsupported: "This browser can't share the camera",
+      unsupportedFix: "Open this page in Safari or Chrome.",
+      err_denied: "Camera access is blocked",
+      fix_denied_ios: "Tap aA in the address bar → Website Settings → Camera → Allow, then reload this page.",
+      fix_denied_android: "Tap the icon left of the address → Permissions → Camera → Allow, then reload this page.",
+      fix_denied: "Open this site's settings (the icon left of the address) → Camera → Allow, then reload this page.",
+      err_nocam: "No camera found",
+      fix_nocam: "This browser can't find a camera on this device. Open this page on a phone with a camera.",
+      err_busy: "The camera is busy",
+      fix_busy: "Close other apps or tabs using the camera (video calls, the Camera app), then tap Start camera.",
+      err_ended: "The camera stopped",
+      fix_ended: "Another app may have taken it. Tap Start camera to resume.",
+      err_other: "The camera didn't start ({name})",
+      fix_other: "Reload this page and try again.",
+      howTitle: "How it works",
+      how: "Prop the phone up across the table from you, where the robot would be, facing you about 1–2 m away so your upper body is in view. Keep this page open.",
+      privacy: "Frames go only to the PhysicsClay server on your network.",
+      server: "Server {host}", robot: "Robot {name}",
+      openApp: "Open the full app",
+    },
+    ko: {
+      title: "PhysicsClay · 휴대폰 카메라",
+      heading: "휴대폰 카메라",
+      tagline: "로봇이 이 카메라로 당신을 봐요.",
+      language: "언어",
+      previewLabel: "카메라 미리보기",
+      start: "카메라 켜기", stop: "중지",
+      startAria: "카메라를 켜고 로봇에게 영상 보내기", stopAria: "카메라 끄기",
+      toBack: "후면 카메라로 전환", toFront: "전면 카메라로 전환",
+      camOff: "카메라 꺼짐", camUnavailable: "카메라를 쓸 수 없어요", camStarting: "카메라를 켜는 중…",
+      live: "전송 중",
+      connecting: "PhysicsClay에 연결 중…",
+      reconnecting: "다시 연결하는 중…",
+      reconnectingCam: "카메라는 켜져 있어요. 연결되면 바로 다시 보내요.",
+      unreachable: "PhysicsClay에 연결할 수 없어요 · 다시 시도하는 중…",
+      unreachableFix: "노트북에서 PhysicsClay가 실행 중인지, 이 휴대폰이 같은 Wi-Fi에 연결돼 있는지 확인해 주세요.",
+      idle: "연결됨 · 카메라 꺼짐",
+      starting: "카메라를 켜는 중…",
+      startingFix: "브라우저가 물어보면 카메라 사용을 허용해 주세요.",
+      stream: "스트리밍", streamFps: "스트리밍 {fps}fps",
+      seesYou: "로봇이 당신을 보고 있어요",
+      stepBack: "상반신이 보이도록 조금 뒤로 물러나 주세요",
+      looking: "로봇이 당신을 찾는 중…",
+      waiting: "PhysicsClay가 이 카메라로 전환하기를 기다리는 중…",
+      waitingFix: "영상이 아직 로봇에 닿지 않고 있어요. 계속 이러면 이 페이지를 새로고침해 주세요.",
+      videoBusy: "PhysicsClay가 동영상을 재생 중이에요. 끝나면 이 카메라로 전환돼요",
+      paused: "일시정지됨 · 이 페이지가 다시 화면에 보이면 이어서 보내요",
+      pausedIdle: "일시정지됨 · 이 페이지가 다시 화면에 보이면 다시 연결해요",
+      stalled: "카메라 켜짐 · 전송이 멈췄어요",
+      stalledFix: "지금 네트워크가 느려요. 휴대폰을 Wi-Fi 공유기 가까이로 옮겨 보세요.",
+      noFrames: "카메라 켜짐 · 카메라 화면이 들어오지 않아요",
+      noFramesFix: "휴대폰이 카메라를 잠시 멈췄을 수 있어요. '중지'를 누른 뒤 '카메라 켜기'를 눌러 주세요.",
+      insecure: "카메라를 쓰려면 https 주소가 필요해요",
+      insecureFix: "브라우저는 https에서만 카메라를 공유해요. 노트북에 표시된 https 주소(/phone으로 끝나요)를 열고 인증서 경고를 수락해 주세요.",
+      insecureFixUrl: "브라우저는 https에서만 카메라를 공유해요. {url} 을 열고 인증서 경고를 수락해 주세요.",
+      insecureNoHttps: "브라우저는 https에서만 카메라를 공유하는데, PhysicsClay가 https를 켜지 않았어요. --https 옵션으로 다시 실행한 뒤 표시되는 https 주소를 열어 주세요.",
+      openHttps: "https 페이지 열기",
+      unsupported: "이 브라우저는 카메라를 공유할 수 없어요",
+      unsupportedFix: "Safari나 Chrome에서 이 페이지를 열어 주세요.",
+      err_denied: "카메라 사용이 차단돼 있어요",
+      fix_denied_ios: "주소창의 '가가'(aA) 버튼 → 웹 사이트 설정 → 카메라 → 허용을 누른 뒤 페이지를 새로고침해 주세요.",
+      fix_denied_android: "주소창 왼쪽 아이콘 → 권한 → 카메라 → 허용을 누른 뒤 페이지를 새로고침해 주세요.",
+      fix_denied: "이 사이트 설정(주소창 왼쪽 아이콘) → 카메라 → 허용으로 바꾼 뒤 페이지를 새로고침해 주세요.",
+      err_nocam: "카메라를 찾을 수 없어요",
+      fix_nocam: "이 기기에서 쓸 수 있는 카메라가 없어요. 카메라가 있는 휴대폰에서 이 페이지를 열어 주세요.",
+      err_busy: "다른 앱이 카메라를 쓰고 있어요",
+      fix_busy: "카메라를 쓰는 다른 앱이나 탭(영상 통화, 카메라 앱)을 닫고 '카메라 켜기'를 눌러 주세요.",
+      err_ended: "카메라가 멈췄어요",
+      fix_ended: "다른 앱이 카메라를 가져갔을 수 있어요. '카메라 켜기'를 눌러 다시 시작해 주세요.",
+      err_other: "카메라를 켜지 못했어요 ({name})",
+      fix_other: "페이지를 새로고침한 뒤 다시 시도해 주세요.",
+      howTitle: "사용 방법",
+      how: "휴대폰을 테이블 건너편, 로봇이 있을 자리에 1–2m 떨어지게 세우고 나를 향하게 해서 상반신이 화면에 들어오게 하세요. 이 페이지는 열어 두세요.",
+      privacy: "영상은 같은 네트워크에 있는 PhysicsClay 서버로만 전송돼요.",
+      server: "서버 {host}", robot: "로봇 {name}",
+      openApp: "전체 앱 열기",
+    },
+  };
+  const pickLang = (v) => (String(v || "").toLowerCase().startsWith("ko") ? "ko" : "en");
+  let lang = pickLang(LS.get(K_LANG, "") || navigator.language || "en");
+  function t(key, vars) {
+    const s = (STR[lang] && STR[lang][key]) || STR.en[key] || key;
+    return vars ? s.replace(/\{(\w+)\}/g, (_, n) => (vars[n] == null ? "" : String(vars[n]))) : s;
+  }
+
+  // ------------------------------------------------------------------ elements
+  const el = {
+    video: $("video"), preview: $("preview"), placeholder: $("placeholder"), placeholderText: $("placeholderText"),
+    live: $("live"), liveText: $("liveText"), status: $("status"), main: $("statusMain"), fix: $("statusFix"),
+    link: $("statusLink"), linkText: $("statusLinkText"),
+    start: $("startBtn"), startLabel: $("startLabel"), iconStart: $("iconStart"), iconStop: $("iconStop"),
+    flip: $("flipBtn"), flipLabel: $("flipLabel"), meta: $("meta"),
+  };
+  const canvas = document.createElement("canvas");
+  canvas.width = OUT_W; canvas.height = OUT_H;
+  let ctx = null;
+
+  // ------------------------------------------------------------------ state
+  const S = {
+    secure: !!window.isSecureContext,
+    supported: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+    // socket
+    ws: null, wsOpen: false, everOpen: false, downSince: performance.now(), retry: 0, retryTimer: 0, lastMsgAt: 0,
+    pendingText: null, st: null, stAt: 0,
+    seen: null, seenCand: null, seenN: 0,
+    // camera
+    facing: LS.get(K_FACING, "user") === "environment" ? "environment" : "user",
+    stream: null, starting: false, gen: 0, camErr: null, cams: null, actualFacing: null,
+    timer: 0, busy: false, busyAt: 0, sent: 0, sendTimes: [], camOnAt: 0, measureFrom: 0, skip: "",
+    fpsShown: null, fpsShownAt: 0,
+    wake: null, wakePending: false, resumeCam: false,
+    key: "", camPerm: null, httpsUrl: null, noHttps: false,
+  };
+
+  // ------------------------------------------------------------------ theme
+  const darkMQ = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+  function applyTheme() {
+    const v = LS.get(K_THEME, "system");
+    const root = document.documentElement;
+    if (v === "light" || v === "dark") root.setAttribute("data-theme", v); else root.removeAttribute("data-theme");
+    const dark = v === "dark" || (v !== "light" && !!(darkMQ && darkMQ.matches));
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", dark ? "#0f1013" : "#fbfbfd");
+  }
+  if (darkMQ) {
+    try { darkMQ.addEventListener("change", applyTheme); } catch (e) { try { darkMQ.addListener(applyTheme); } catch (e2) { /* old browser */ } }
+  }
+
+  // ------------------------------------------------------------------ language
+  function applyStrings() {
+    document.documentElement.lang = lang;
+    document.title = t("title");
+    document.querySelectorAll("[data-i18n]").forEach((n) => { const s = t(n.dataset.i18n); if (n.textContent !== s) n.textContent = s; });
+    document.querySelectorAll("[data-i18n-aria]").forEach((n) => n.setAttribute("aria-label", t(n.dataset.i18nAria)));
+    document.querySelectorAll(".lang button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.lang === lang)));
+  }
+  function setLang(l) {
+    lang = pickLang(l); LS.set(K_LANG, lang);
+    applyStrings(); render();
+  }
+  document.querySelectorAll(".lang button").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
+
+  // ------------------------------------------------------------------ websocket (auto-reconnect, 1 s -> 5 s backoff)
+  function wsUrl() { return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`; }
+  function connect() {
+    clearTimeout(S.retryTimer); S.retryTimer = 0;
+    if (S.ws) return;
+    let ws;
+    try { ws = new WebSocket(wsUrl()); } catch (e) { scheduleReconnect(); render(); return; }
+    ws.binaryType = "arraybuffer";
+    S.ws = ws;
+    ws.onopen = () => {
+      if (S.ws !== ws) return;
+      S.wsOpen = true; S.everOpen = true; S.retry = 0; S.lastMsgAt = performance.now();
+      if (S.stream) { S.measureFrom = S.lastMsgAt; S.sendTimes = []; S.fpsShown = null; }   // fps counts from the reconnect
+      render();
+    };
+    ws.onmessage = (ev) => {
+      if (S.ws !== ws) return;
+      S.lastMsgAt = performance.now();
+      if (typeof ev.data === "string") S.pendingText = ev.data;   // parsed at most 4x a second in uiTick
+      // binary frames (0x01 camera echo, 0x02 robot view, 0x03 pip) are not used here
+    };
+    ws.onclose = () => { if (S.ws === ws) dropSocket(); };
+    ws.onerror = () => { /* onclose follows */ };
+  }
+  // Close without reconnecting. The server writes every frame to every client in turn, so a frozen page that keeps its
+  // socket open but stops reading (back/forward cache, an iOS tab in the background) would stall it for everyone.
+  function closeSocket() {
+    clearTimeout(S.retryTimer); S.retryTimer = 0;
+    const ws = S.ws, wasOpen = S.wsOpen;
+    S.ws = null; S.wsOpen = false; S.st = null; S.pendingText = null; S.seen = null; S.seenN = 0;
+    if (ws) { ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null; try { ws.close(); } catch (e) { /* already closed */ } }
+    if (wasOpen) S.downSince = performance.now();
+  }
+  function dropSocket() {
+    closeSocket();
+    scheduleReconnect();
+    render();
+  }
+  function scheduleReconnect() {
+    clearTimeout(S.retryTimer);
+    const delay = Math.min(5000, Math.round(1000 * Math.pow(1.6, S.retry)));
+    S.retry++;
+    S.retryTimer = setTimeout(connect, delay);
+  }
+  function readState(txt) {
+    let st;
+    try { st = JSON.parse(txt); } catch (e) { return; }
+    if (!st || typeof st !== "object" || !("source" in st)) return;
+    const h = st.human && typeof st.human === "object" ? st.human : {};
+    let robotName = typeof st.robot === "string" ? st.robot : (st.robot && (st.robot.label || st.robot.id)) || "";
+    if (Array.isArray(st.robots)) {
+      const r = st.robots.find((x) => x && typeof x === "object" && x.id === robotName);
+      if (r && (r.label || r.name)) robotName = r.label || r.name;
+    }
+    S.st = { source: st.source, pose_ok: st.pose_ok === true, hv: h.visible === true, hsrc: h.src, robot: robotName };
+    S.stAt = performance.now();
+    // "the robot sees you": debounced over two samples so a single noisy frame does not flip the message
+    if (S.st.source !== "phone") { S.seen = null; S.seenN = 0; S.seenCand = null; return; }
+    const want = S.st.pose_ok || (S.st.hv && S.st.hsrc === "phone");
+    if (want === S.seenCand) S.seenN++; else { S.seenCand = want; S.seenN = 1; }
+    if (S.seenN >= 2) S.seen = want;
+  }
+
+  // ------------------------------------------------------------------ camera
+  function errKind(e) {
+    const n = e && e.name;
+    if (n === "NotAllowedError" || n === "PermissionDeniedError") return "denied";
+    if (n === "NotFoundError" || n === "DevicesNotFoundError" || n === "OverconstrainedError") return "nocam";
+    if (n === "NotReadableError" || n === "TrackStartError" || n === "AbortError") return "busy";
+    if (n === "SecurityError") return "insecure";
+    return "other";
+  }
+  function camStop() {
+    S.gen++;
+    clearInterval(S.timer); S.timer = 0; S.busy = false; S.starting = false;
+    if (S.stream) { try { S.stream.getTracks().forEach((tr) => tr.stop()); } catch (e) { /* gone */ } }
+    S.stream = null;
+    try { el.video.srcObject = null; } catch (e) { /* old browser */ }
+    S.sendTimes = []; S.fpsShown = null; S.seen = null; S.seenN = 0;
+    wakeOff();
+  }
+  async function camStart(auto) {
+    if (!S.secure || !S.supported) { render(); return; }
+    camStop();
+    const gen = S.gen;
+    S.starting = true; S.camErr = null; render();
+    let st;
+    try {
+      st = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: S.facing, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false,
+      });
+    } catch (e) {
+      if (gen !== S.gen) return;
+      S.starting = false;
+      const kind = errKind(e);
+      if (kind === "insecure") S.secure = false;
+      else if (!(auto && kind === "denied")) S.camErr = { kind, name: (e && e.name) || "Error" };   // a failed auto-start stays quiet
+      render();
+      return;
+    }
+    if (gen !== S.gen) { st.getTracks().forEach((tr) => tr.stop()); return; }
+    S.stream = st;
+    const track = st.getVideoTracks()[0];
+    if (track) {
+      track.addEventListener("ended", () => {
+        if (gen !== S.gen) return;
+        camStop(); S.camErr = { kind: "ended", name: "" }; render();
+      });
+    }
+    try { el.video.srcObject = st; } catch (e) { /* very old browser */ }
+    try { const p = el.video.play(); if (p && p.catch) p.catch(() => { /* muted autoplay may still be refused; frames flow anyway */ }); } catch (e) { /* noop */ }
+    let fm = "";
+    try { fm = (track && track.getSettings && track.getSettings().facingMode) || ""; } catch (e) { /* noop */ }
+    S.actualFacing = fm || null;
+    S.starting = false;
+    S.camOnAt = S.measureFrom = performance.now();
+    S.sendTimes = []; S.fpsShown = null; S.skip = "";
+    clearInterval(S.timer);
+    S.timer = setInterval(tick, Math.round(1000 / FPS));
+    LS.set(K_ON, "1");
+    wakeOn();
+    countCameras();
+    render();
+  }
+  async function countCameras() {
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      S.cams = list.filter((d) => d.kind === "videoinput").length;
+    } catch (e) { S.cams = null; }
+    render();
+  }
+  function mirrored() {
+    // a mirror view only for a user-facing camera; a single camera without facing info (a laptop) faces the user
+    const f = S.actualFacing || (S.cams !== null && S.cams <= 1 ? "user" : S.facing);
+    return f === "user";
+  }
+
+  // one frame: video -> 640x360 canvas (pillarboxed, aspect kept) -> JPEG -> [0x10][JPEG] on the socket
+  function tick() {
+    const now = performance.now();
+    if (!S.stream || document.hidden) return;
+    if (S.busy) {
+      if (now - S.busyAt < 1500) return;
+      S.busy = false;                              // a toBlob callback that never came back: do not stall forever
+    }
+    const v = el.video;
+    const track = S.stream.getVideoTracks()[0];
+    if (v.readyState < 2 || !v.videoWidth || !v.videoHeight || (track && track.muted)) { S.skip = "video"; return; }
+    const ws = S.ws;
+    if (!ws || ws.readyState !== 1) { S.skip = "socket"; return; }
+    if (ws.bufferedAmount > MAX_BUFFERED) { S.skip = "net"; return; }
+    if (!ctx) { ctx = canvas.getContext("2d", { alpha: false }); if (!ctx) return; }
+    const vw = v.videoWidth, vh = v.videoHeight;
+    const s = Math.min(OUT_W / vw, OUT_H / vh);
+    const dw = Math.round(vw * s), dh = Math.round(vh * s);
+    const dx = (OUT_W - dw) >> 1, dy = (OUT_H - dh) >> 1;
+    try {
+      if (dw < OUT_W || dh < OUT_H) { ctx.fillStyle = "#000"; ctx.fillRect(0, 0, OUT_W, OUT_H); }
+      ctx.drawImage(v, dx, dy, dw, dh);
+    } catch (e) { S.skip = "video"; return; }
+    S.busy = true; S.busyAt = now;
+    const gen = S.gen;
+    try {
+      canvas.toBlob((blob) => {
+        if (gen !== S.gen) return;
+        S.busy = false;
+        const w = S.ws;
+        if (!blob || !w || w.readyState !== 1) return;
+        try {
+          w.send(new Blob([HDR, blob]));
+          S.sent++; S.skip = "";
+          S.sendTimes.push(performance.now());
+        } catch (e) { /* socket closing: the next tick waits for the reconnect */ }
+      }, "image/jpeg", JPEG_Q);
+    } catch (e) { S.busy = false; }
+  }
+
+  // sent fps over the last 2 s (shorter right after a start / resume)
+  function measureFps(now) {
+    const from = now - 2000;
+    while (S.sendTimes.length && S.sendTimes[0] < from) S.sendTimes.shift();
+    const span = Math.min(2000, now - S.measureFrom);
+    if (span < 700) return null;
+    return (S.sendTimes.length * 1000) / span;
+  }
+  function shownFps(now) {
+    const f = measureFps(now);
+    if (f == null) { S.fpsShown = null; return null; }
+    const r = Math.round(f);
+    // hysteresis: the status is a live region, so do not re-announce for 14 <-> 15 jitter
+    if (S.fpsShown == null || Math.abs(f - S.fpsShown) >= 2 || (r !== S.fpsShown && now - S.fpsShownAt > 4000)) {
+      S.fpsShown = r; S.fpsShownAt = now;
+    }
+    return S.fpsShown;
+  }
+
+  // ------------------------------------------------------------------ keep the screen awake while streaming
+  async function wakeOn() {
+    if (S.wake || S.wakePending || document.hidden || !S.stream) return;
+    if (!navigator.wakeLock || !navigator.wakeLock.request) return;
+    S.wakePending = true;
+    try {
+      const w = await navigator.wakeLock.request("screen");
+      if (!S.stream) { w.release().catch(() => {}); return; }
+      S.wake = w;
+      w.addEventListener("release", () => { if (S.wake === w) S.wake = null; });
+    } catch (e) { /* not allowed (battery saver, iframe, ...): the page still works */ }
+    finally { S.wakePending = false; }
+  }
+  function wakeOff() {
+    const w = S.wake; S.wake = null;
+    if (w) { try { w.release().catch(() => {}); } catch (e) { /* noop */ } }
+  }
+
+  // ------------------------------------------------------------------ status
+  function deniedFix() { return t(IS_IOS ? "fix_denied_ios" : IS_ANDROID ? "fix_denied_android" : "fix_denied"); }
+  function insecureModel() {
+    const m = { key: "insecure", tone: "bad", main: t("insecure") };
+    const url = S.httpsUrl || (location.protocol === "https:" ? `https://${location.host}/phone` : "");
+    if (url) { m.fix = t("insecureFixUrl", { url }); m.link = url; }
+    else m.fix = t(S.noHttps ? "insecureNoHttps" : "insecureFix");
+    return m;
+  }
+  // on http the page can't know the https port; the server tells it (GET /phone/info -> {https_port, ...})
+  async function loadPhoneInfo() {
+    if (S.secure || !window.fetch) return;
+    try {
+      const r = await fetch("/phone/info", { cache: "no-store" });
+      if (!r.ok) return;
+      const j = await r.json();
+      const port = j && Number(j.https_port);
+      if (port > 0 && port < 65536) S.httpsUrl = `https://${location.hostname}:${port}/phone`;
+      else if (j && "https_port" in j) S.noHttps = true;
+    } catch (e) { /* an older server without /phone/info: keep the generic hint */ }
+    render();
+  }
+  function model(now) {
+    if (!S.secure) return insecureModel();
+    if (!S.supported) return { key: "unsupported", tone: "bad", main: t("unsupported"), fix: t("unsupportedFix") };
+    if (S.camErr) {
+      const k = S.camErr.kind;
+      return { key: "err_" + k, tone: k === "ended" ? "warn" : "bad", main: t("err_" + k, { name: S.camErr.name }),
+               fix: k === "denied" ? deniedFix() : t("fix_" + k) };
+    }
+    const on = !!S.stream;
+    if (document.hidden) return { key: "paused", tone: "idle", main: t(on ? "paused" : "pausedIdle") };
+    if (!S.wsOpen) {
+      if (now - S.downSince > UNREACHABLE_MS) return { key: "unreachable", tone: "bad", pulse: true, main: t("unreachable"), fix: t("unreachableFix") };
+      if (!S.everOpen) return { key: "connecting", tone: "info", pulse: true, main: t("connecting") };
+      return { key: "reconnecting", tone: "warn", pulse: true, main: t("reconnecting"), fix: on ? t("reconnectingCam") : "" };
+    }
+    if (S.starting) return { key: "starting", tone: "info", pulse: true, main: t("starting"), fix: t("startingFix") };
+    if (!on) return { key: "idle", tone: "idle", main: t("idle") };
+    const fps = shownFps(now);
+    const head = fps == null ? t("stream") : t("streamFps", { fps });
+    const settled = now - S.measureFrom > 2500;
+    if (settled && fps != null && fps < 1) {
+      if (S.skip === "video") return { key: "noframes", tone: "warn", ring: "warn", main: t("noFrames"), fix: t("noFramesFix") };
+      if (S.skip === "net") return { key: "stalled", tone: "warn", ring: "warn", main: t("stalled"), fix: t("stalledFix") };
+    }
+    const st = S.st && now - S.stAt < STATE_FRESH_MS ? S.st : null;
+    if (st && st.source === "phone") {
+      if (S.seen === true) return { key: "sees", tone: "ok", ring: "ok", main: `${head} · ${t("seesYou")}` };
+      if (S.seen === false) return { key: "stepback", tone: "warn", ring: "warn", main: `${head} · ${t("stepBack")}` };
+      return { key: "looking", tone: "info", main: `${head} · ${t("looking")}` };
+    }
+    if (st && st.source === "video") return { key: "video", tone: "info", main: `${head} · ${t("videoBusy")}` };
+    const late = now - S.camOnAt > 6000;
+    return { key: "waiting", tone: late ? "warn" : "info", main: `${head} · ${t("waiting")}`, fix: late ? t("waitingFix") : "" };
+  }
+
+  function setText(n, s) { if (n.textContent !== s) n.textContent = s; }
+  function setAttr(n, a, v) { if (n.getAttribute(a) !== v) n.setAttribute(a, v); }
+  function render() {
+    const now = performance.now();
+    const m = model(now);
+    S.key = m.key;
+    setAttr(el.status, "data-tone", m.tone);
+    setAttr(el.status, "data-pulse", m.pulse ? "1" : "0");
+    setText(el.main, m.main);
+    setText(el.fix, m.fix || "");
+    el.fix.hidden = !m.fix;
+    if (m.link) { setAttr(el.link, "href", m.link); setText(el.linkText, t("openHttps")); }
+    el.link.hidden = !m.link;
+    setAttr(el.preview, "data-ring", m.ring || "");
+
+    const on = !!S.stream || S.starting;
+    const capable = S.secure && S.supported;
+    setText(el.startLabel, t(on ? "stop" : "start"));
+    setAttr(el.start, "aria-label", t(on ? "stopAria" : "startAria"));
+    el.start.classList.toggle("primary", !on);
+    el.start.classList.toggle("stop", on);
+    el.iconStart.toggleAttribute("hidden", on);   // SVG elements have no .hidden property
+    el.iconStop.toggleAttribute("hidden", !on);
+    el.start.disabled = !capable;
+
+    const flipText = t(S.facing === "user" ? "toBack" : "toFront");
+    setText(el.flipLabel, flipText);
+    el.flip.hidden = !capable || (S.cams !== null && S.cams <= 1);
+
+    el.video.classList.toggle("mirror", !!S.stream && mirrored());
+    el.placeholder.hidden = !!S.stream;
+    setText(el.placeholderText, !capable ? t("camUnavailable") : S.starting ? t("camStarting") : t("camOff"));
+    el.live.hidden = !(S.stream && S.wsOpen && !document.hidden && S.sendTimes.length > 0);
+    setText(el.liveText, t("live"));
+
+    const parts = [t("server", { host: location.host || "—" })];
+    if (S.wsOpen && S.st && S.st.robot) parts.push(t("robot", { name: S.st.robot }));
+    setText(el.meta, parts.join(" · "));
+  }
+
+  // 4x a second: parse the newest server state, watch the socket, refresh the status
+  function uiTick() {
+    const now = performance.now();
+    if (S.pendingText) { const txt = S.pendingText; S.pendingText = null; readState(txt); }
+    if (S.wsOpen && !document.hidden && now - S.lastMsgAt > WS_SILENT_MS) dropSocket();   // half-open socket
+    render();
+  }
+
+  // ------------------------------------------------------------------ controls
+  el.start.addEventListener("click", () => {
+    if (S.stream || S.starting) { camStop(); S.camErr = null; LS.set(K_ON, "0"); render(); }
+    else camStart(false);
+  });
+  el.flip.addEventListener("click", () => {
+    S.facing = S.facing === "user" ? "environment" : "user";
+    LS.set(K_FACING, S.facing);
+    if (S.stream || S.starting) camStart(false); else render();
+  });
+
+  // ------------------------------------------------------------------ page lifecycle
+  function onVisible() {
+    const now = performance.now();
+    S.lastMsgAt = now;
+    if (S.resumeCam) { S.resumeCam = false; if (!S.stream && !S.starting) camStart(true); }
+    if (!S.ws) { S.retry = 0; S.downSince = now; connect(); }
+    if (S.stream) {
+      S.measureFrom = now; S.sendTimes = []; S.fpsShown = null;
+      const tr = S.stream.getVideoTracks()[0];
+      if (!tr || tr.readyState === "ended") { camStart(true); return; }   // the OS took the camera while hidden
+      try { const p = el.video.play(); if (p && p.catch) p.catch(() => {}); } catch (e) { /* noop */ }
+      wakeOn();
+    }
+    render();
+  }
+  // hidden: sending pauses and the socket closes (nothing to read while away); visible again: reconnect and resume
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) { closeSocket(); render(); } else onVisible();
+  });
+  document.addEventListener("freeze", () => closeSocket());          // Chrome's page lifecycle: frozen in the background
+  document.addEventListener("resume", () => { if (!document.hidden) onVisible(); });
+  // leaving the page, maybe into the back/forward cache: release the camera and the socket; restore both on the way back
+  window.addEventListener("pagehide", () => {
+    closeSocket();
+    if (S.stream || S.starting) { camStop(); S.resumeCam = true; }
+  });
+  window.addEventListener("pageshow", (ev) => { if (ev.persisted) onVisible(); });
+  window.addEventListener("storage", (ev) => {
+    if (ev.key === K_THEME) applyTheme();
+    else if (ev.key === K_LANG && ev.newValue) { lang = pickLang(ev.newValue); applyStrings(); render(); }
+  });
+
+  // start on its own only when the camera permission is already granted (iOS needs a tap otherwise)
+  async function maybeAutoStart() {
+    if (!S.secure || !S.supported) return;
+    let p = null;
+    try { p = navigator.permissions && navigator.permissions.query ? await navigator.permissions.query({ name: "camera" }) : null; } catch (e) { p = null; }
+    if (!p) return;
+    S.camPerm = p.state;
+    try {
+      p.onchange = () => {
+        S.camPerm = p.state;
+        if (p.state !== "denied" && S.camErr && S.camErr.kind === "denied") { S.camErr = null; render(); }
+      };
+    } catch (e) { /* read-only in some browsers */ }
+    if (p.state === "granted" && LS.get(K_ON, "1") !== "0" && !S.stream && !S.starting) camStart(true);
+  }
+
+  // read-only snapshot for checks and debugging (no other globals)
+  Object.defineProperty(window, "PCPhone", {
+    value: Object.freeze({
+      snapshot() {
+        const now = performance.now();
+        return { status: S.key, text: el.main.textContent, fix: el.fix.hidden ? "" : el.fix.textContent,
+                 connected: S.wsOpen, streaming: !!S.stream, facing: S.facing, sent: S.sent,
+                 fps: S.stream ? measureFps(now) : null, source: S.st ? S.st.source : null,
+                 stateAgeMs: S.st ? Math.round(now - S.stAt) : null,
+                 seen: S.seen, lang, theme: document.documentElement.getAttribute("data-theme") || "system" };
+      },
+    }),
+  });
+
+  applyTheme();
+  applyStrings();
+  render();
+  if (!document.hidden) connect();     // opened in a background tab: connect once it is shown (visibilitychange)
+  setInterval(uiTick, 250);
+  maybeAutoStart();
+  loadPhoneInfo();
+})();
+</script>
+</body>
+</html>
