@@ -83,8 +83,7 @@ def trial(rt, tk, obj, target, rng, verbose=False):
         tk.tick()
     dest = getattr(tk, "bench_dest", None)
     c = tk.mug_center(name)
-    R = tk.obj_mat(name)
-    tilt = math.degrees(math.acos(max(-1.0, min(1.0, R[2, 2]))))
+    tilt = tk.tilt(name)
     held = any(v == name for v in pl.grasped().values())
     from pps import tasks as T
     on = abs((c[2] - tk.objs[name]["half_h"]) - T.TABLE_TOP) < 0.02
@@ -136,7 +135,11 @@ def bench_robot(rid, n, seed, verbose, which):
         rs = []
         if verbose:
             print(f"  {rid}: {obj} -> {target}", flush=True)
-        for _ in range(n):
+        only = os.environ.get("PC_BENCH_ONLY")         # replay one trial (debugging): its nudge, nothing else
+        for k in range(n):
+            if only is not None and k != int(only):
+                rng.uniform(-1, 1, 2), rng.uniform(-1, 1)
+                continue
             try:
                 rs.append(trial(rt, tk, obj, target, rng, verbose))
                 sim += rs[-1].get("sim", 0.0)

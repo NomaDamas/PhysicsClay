@@ -166,8 +166,9 @@ def _plan_motion(ctx, msg):
         g = ev.get("grasp")
         # each step starts at the keypoint its motion leaves from
         if g is not None:
+            lift = (kps[g + 1][2] - kps[g][2]) * 100 if g + 1 < len(kps) else 12
             steps += [(f"Reach for {what} with my {side} hand", 0), (f"Grasp it from the {'top' if top else 'side'}", g - 1),
-                      ("Lift it 12 cm", g)]
+                      (f"Lift it {lift:.0f} cm", g)]
             carry_from = g + 1
         else:
             carry_from = 0

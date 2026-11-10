@@ -334,7 +334,11 @@ def _target_pos(ctx, kind):
     rt, tasks = ctx.rt, ctx.tasks
     if kind == "running":
         rel = _release_idx(tasks)
-        return rt.path["pts"][rel if rel is not None else -1]
+        p = np.asarray(rt.path["pts"][rel if rel is not None else -1], float)
+        off = getattr(tasks, "cur_off", None)
+        if rel is not None and off is not None and (tasks.task or {}).get("action") == "pick_place":
+            p = p - np.asarray(off, float)        # where the object goes (the hand holds it at an offset)
+        return p
     if kind == "marker":
         return tasks.markers[-1]["pos"]
     if kind == "path":

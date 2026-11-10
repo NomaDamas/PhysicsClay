@@ -166,6 +166,7 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         ee_down=False, hand_cost=(4.0, 0.0), freeze=("wheel", "head", "rubber", "gripper"), prompt="pps/world/prompts/stretch3.md",
         physics={"payload": 1.5, "grasp": "side", "experimental": STRETCH,
                  "stiffer": [(("wrist",), 10.0)],         # the model's wrist servos (kp 10-50) let the fingers droop onto the table
+                 "home": {"joint_lift": 0.75},             # the model's home has the fingers 2 cm inside the table top
                  "grip": {"right": _native("gripper", 0.04, -0.02, ("rubber_tip_left", "link_gripper_finger_left"),
                  ("rubber_tip_right", "link_gripper_finger_right"), 0.15, approach=(0, 0, 1), axis=(1, 0, 0), boost=3.4,
                  up=(0, 1, 0), pad_h=0.02)}}),

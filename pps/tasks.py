@@ -20,6 +20,7 @@ REGIONS = {  # robot frame: x forward, y left
 HOVER = 0.08
 PLACE_GAP = 0.004        # physics: the object's bottom this far above the surface when the hand stops to let go
 CRIT_TOL = 0.015         # physics: the plan must bring the jaws this close to the grasp and the drop point
+LIFT = 0.08              # physics: lift this far off the surface (higher only to clear what it passes over)
 W_TURN = 1.0             # physics: rad/s, how fast the hand turns along a path (a wrist flipping at full speed jerks things)
 # physics side grasps (humanoid palms, Stretch): (heading: from the shoulder / straight ahead / in between, pitch down)
 SIDE_WAYS = ((0, 0.0), (1, 0.0), (2, 0.0), (1, 0.6), (0, 0.6), (1, 1.0))
@@ -587,12 +588,16 @@ class Tasks:
 
     def _carry_z(self, name, a, b, off, margin=0.03):
         """Physics: the hand height (TCP z) at which `name`, held with TCP offset `off` from its centre, clears the top of
-        everything it passes over on the straight way from hand point a to b (with `margin`); -inf when nothing is near."""
+        the other movable objects it passes over on the straight way from hand point a to b (with `margin`); -inf when
+        nothing is near. Fixed obstacles (the vase) are not flown over on its own: carrying into one is refused and the
+        person draws a route over it (UX 2.0), and the planner keeps the hand clear of them."""
         r, hh = self._radius(name), self.objs[name]["half_h"]
         ca, cb = (np.asarray(a, float) - off)[:2], (np.asarray(b, float) - off)[:2]
         ab = cb - ca
         need = -np.inf
-        for c, rb, hb, _ in self._bodies(skip=(name,)):
+        for c, rb, hb, n in self._bodies(skip=(name,)):
+            if n in self.obstacles:
+                continue
             t = float(np.clip(np.dot(c[:2] - ca, ab) / (float(np.dot(ab, ab)) or 1.0), 0.0, 1.0))
             if np.linalg.norm(c[:2] - (ca + t * ab)) < rb + r + 0.008:
                 need = max(need, float(c[2]) + hb + margin + hh + float(off[2]))
@@ -712,7 +717,6 @@ class Tasks:
                     self.cur = obj
                     self.ph = None
                     self._hold_path(False)
-                    rt.set_obstacles(())            # on the way back the hand keeps clear of what it just set down
                     if self.task:
                         self.task["step"] = "placed"
         for palm, h in list(self.held.items()):
@@ -859,6 +863,15 @@ class Tasks:
         self._launch(tid, "press", kps, palm, ev, "task", f"Pressing {label} with {force:.0f} N for {hold_s:.1f} s.",
                      loose=[(0, len(kps) - 3)])
 
+    def tilt(self, name):
+        """How far (deg) an object is from standing: a cube resting on any face is standing, anything else on its base."""
+        R = self.obj_mat(name)
+        m, g = self.rt.model, self.objs[name]["geom"]
+        hs = m.geom_size[g]
+        cube = m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and max(hs) < 1.25 * min(hs)
+        up = np.max(np.abs(R[2, :])) if cube else R[2, 2]
+        return float(np.degrees(np.arccos(np.clip(up, -1, 1))))
+
     def _placed_badly(self):
         """Physics: after a pick & place, is the object resting where it should, upright? -> reason it isn't, or None."""
         if self.plant is None or self.place_at is None:
@@ -869,7 +882,7 @@ class Tasks:
             return None
         c = self.mug_center(name)
         err = float(np.hypot(*(c[:2] - dest[:2])))
-        tilt = float(np.degrees(np.arccos(np.clip(self.obj_mat(name)[2, 2], -1, 1))))
+        tilt = self.tilt(name)
         self.place_err = (name, err, tilt)
         if tilt > 35:
             return f"I let go of {self.pretty(name)} but it fell over ({tilt:.0f}°)."
@@ -887,6 +900,9 @@ class Tasks:
                        **getattr(self, "press_spec", {"force": 10.0, "hold": 1.5, "label": "there"})}
             self.rt.mode = "PRESS"
             self._hold_path(True)
+            return
+        if self.plant is not None and name == "clear":
+            self.rt.set_obstacles(())
             return
         if self.plant is not None and name in ("aim", "hover"):   # stop over the spot until the arm has caught up
             self.ph = {"phase": name, "palm": palm, "obj": self.holding.get(palm) or self.cur, "t0": float(self.plant.d.time)}
@@ -1055,12 +1071,12 @@ class Tasks:
                 pre = g - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else g + np.array([0, 0, 0.09])
             kps += [pre, g]
             ev[len(kps) - 1] = "grasp"
-            kps += [g + np.array([0, 0, 0.12])]
+            kps += [g + np.array([0, 0, LIFT if n is not None else 0.12])]
         if via is not None:
             kps += [np.array(v) for v in via]
             if via_pts is None:
                 label = "the end of your route"
-        above = place_hand + np.array([0, 0, 0.12])
+        above = place_hand + np.array([0, 0, LIFT if n is not None else 0.12])
         if n is not None and via is None:         # physics: carry it high enough to clear everything it passes over
             a = kps[-1] if held is None else cur
             zc = self._carry_z(name, a, above, off)
@@ -1084,6 +1100,8 @@ class Tasks:
             if held is None:
                 self.plant.grip_cmd(self.role(palm), "open")
         kps += [retreat] + ([np.array([home[0], home[1], TABLE_TOP + 0.10])] if over else []) + [home]
+        if n is not None:                         # physics: backed off: from here the hand keeps clear of what it set down
+            ev[len(kps) - 2 - int(over)] = "clear"
         quats = None
         if n is not None:                         # the hand turns to the grasp orientation, keeps it, and turns back home
             # (back over the table's edge with the home orientation already)
