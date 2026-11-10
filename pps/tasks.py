@@ -88,42 +88,54 @@ def _seg_dist(p, a, b):
     return float(np.linalg.norm(p - (a + s * ab)))
 
 
-def path_object_hits(pts, bodies, hang, foot, hand="my hand", carry=None, margin=0.01):
+def hand_disc(hang, foot, n=8):
+    """A hand as points relative to its TCP: the TCP, and a ring of radius `foot` `hang` m below it (a gripper whose
+    shape isn't known: the kinematic point hand, the unit tests)."""
+    ring = [[foot * np.cos(a), foot * np.sin(a), -hang] for a in np.linspace(0, 2 * np.pi, n, endpoint=False)]
+    return np.array([[0.0, 0.0, 0.0], [0.0, 0.0, -hang]] + ring)
+
+
+def path_object_hits(pts, bodies, hand, label="my hand", carry=None, margin=0.01):
     """Per path point: why the hand (or what it carries) would run into an object there, or None.
 
-    The hand is its TCP point plus the gripper below it: `hang` m down, over a footprint of radius `foot`. bodies:
-    [(centre xyz, radius, half height, name)] as upright cylinders. carry: (name, radius, half height, how far its centre
-    hangs below the TCP) of what the hand holds. The wording matches the P2 trajectory checks (pps/traj.py)."""
-    out = []
-    for p in np.asarray(pts, float).reshape(-1, 3):
-        why = None
-        for c, r, h, n in bodies:
-            dh = float(np.hypot(p[0] - c[0], p[1] - c[1]))
-            top = float(c[2]) + h
-            if dh < r + foot + margin and p[2] - hang < top + margin:
-                why = f"{hand} would hit {n}"
-                break
-            if carry and dh < r + carry[1] + margin and p[2] - carry[3] - carry[2] < top + margin:
-                why = f"{carry[0]} would hit {n}"
-                break
-        out.append(why)
+    hand: points of the hand relative to its TCP (world axes; Tasks.hand_points: the corners of the gripper's collision
+    geoms as it is held, or hand_disc). bodies: [(centre xyz, radius, half height, name)] as upright cylinders. carry:
+    (name, radius, half height, how far its centre hangs below the TCP) of what the hand holds. The wording matches the
+    P2 trajectory checks (pps/traj.py): 'my hand would hit the mug'."""
+    P = np.asarray(pts, float).reshape(-1, 3)
+    H = np.asarray(hand, float).reshape(-1, 3)
+    out = [None] * len(P)
+    for c, r, h, n in bodies:
+        top = float(c[2]) + h
+        Q = P[:, None, :] + H[None, :, :]                                         # every hand point at every path point
+        inside = (np.hypot(Q[..., 0] - c[0], Q[..., 1] - c[1]) < r + margin) & (Q[..., 2] < top + margin)
+        hit = inside.any(axis=1)
+        if carry:
+            hit_c = (np.hypot(P[:, 0] - c[0], P[:, 1] - c[1]) < r + carry[1] + margin) & (P[:, 2] - carry[3] - carry[2] < top + margin)
+        for i in range(len(P)):
+            if out[i] is None and hit[i]:
+                out[i] = f"{label} would hit {n}"
+            elif out[i] is None and carry and hit_c[i]:
+                out[i] = f"{carry[0]} would hit {n}"
     return out
 
 
-def lift_path(pts, bodies, hang, foot, margin=0.025):
+def lift_path(pts, bodies, hand, margin=0.025):
     """The path raised over the bodies it would run into, with 45° ramps up and down (1 cm lower per cm further out),
-    unchanged elsewhere. bodies as in path_object_hits. -> (points, names of the bodies it now goes over)."""
+    unchanged elsewhere. hand and bodies as in path_object_hits. -> (points, names of the bodies it now goes over)."""
     P = np.array(pts, float).reshape(-1, 3)
+    H = np.asarray(hand, float).reshape(-1, 3)
     need = np.full(len(P), -np.inf)
     names = []
     for c, r, h, n in bodies:
-        dh = np.hypot(P[:, 0] - c[0], P[:, 1] - c[1])
-        z = float(c[2]) + h + hang + margin
-        reach = r + foot + 0.015
-        if not np.any((dh < reach) & (P[:, 2] < z)):
+        reach = r + 0.015
+        Q = P[:, None, :2] + H[None, :, :2]
+        out = np.maximum(np.hypot(Q[..., 0] - c[0], Q[..., 1] - c[1]) - reach, 0.0)    # how far outside its footprint
+        z = (float(c[2]) + h + margin - H[None, :, 2] - out).max(axis=1)                # TCP height each point needs
+        if not np.any(P[:, 2] < z - 1e-9):
             continue
         names.append(n)
-        need = np.maximum(need, z - np.maximum(dh - reach, 0.0))
+        need = np.maximum(need, z)
     P[:, 2] = np.maximum(P[:, 2], need)
     return P, names
 
@@ -1854,35 +1866,42 @@ class Tasks:
                      f"Reaching over {label}.")
 
     # ------------------------------------------------------------------ paths vs the objects on the table (physics)
-    def hand_extent(self, palm):
-        """(how far the hand reaches below its TCP, its footprint radius): with physics the gripper's own size (side
-        grippers: the pads below the TCP; from above: the open fingertips past it), else a 3 cm point hand."""
-        g = self.plant.grip.get(self.role(palm)) if self.plant is not None else None
-        if g is None:
-            return 0.02, 0.03
-        prof = getattr(self.rt, "profile", None)
-        side = prof is not None and (prof.physics or {}).get("grasp", prof.grasp) == "side"
-        foot = float(np.clip(max(g.get("span", 0.0), g.get("depth", 0.0)), 0.02, 0.06))
-        return self._hang(palm, side), foot
+    def hand_points(self, palm):
+        """The hand as points relative to its TCP (world axes), as it is held now: with physics the corners of the
+        gripper's collision geoms (a drawn path keeps the hand's orientation), else a 3 cm point hand."""
+        pl = self.plant
+        role = self.role(palm)
+        if pl is None or role not in pl.ee_bodies:
+            return hand_disc(0.02, 0.03)
+        m, d = pl.m, pl.d
+        tcp = d.site_xpos[self.rt.palm_sid[palm]]
+        out = [np.zeros(3)]
+        corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
+        for g in range(m.ngeom):
+            if m.geom_bodyid[g] not in pl.ee_bodies[role] or not (m.geom_contype[g] or m.geom_conaffinity[g]):
+                continue
+            c, h = m.geom_aabb[g, :3], m.geom_aabb[g, 3:]
+            out += list(d.geom_xpos[g] + (c + h * corners) @ d.geom_xmat[g].reshape(3, 3).T - tcp)
+        return np.array(out)
 
     def path_hits(self, pts, palm, skip=(), carrying=None):
         """Per point: why the hand (or what it carries) would hit an object there, or None (path_object_hits with this
-        hand's extent and the objects where they stand; `skip`: ones the path is meant to reach)."""
-        hang, foot = self.hand_extent(palm)
+        hand as it is held and the objects where they stand; `skip`: ones the path is meant to reach)."""
         held = carrying[0] if carrying else None
         bodies = [(c, r, h, self.pretty(n)) for c, r, h, n in self._bodies(skip=tuple(skip) + ((held,) if held else ()))]
         carry = (self.pretty(held), self._radius(held), self.objs[held]["half_h"], float(carrying[1])) if held else None
-        return path_object_hits(pts, bodies, hang, foot, f"my {self.limb(self.role(palm))}", carry)
+        return path_object_hits(pts, bodies, self.hand_points(palm), f"my {self.limb(self.role(palm))}", carry)
 
     def lift_over(self, pts, palm, skip=(), carrying=None):
         """The path raised over the movable objects it would run into (lift_path); fixed obstacles (the vase) are not
         flown over. -> (points, names lifted over)."""
-        hang, foot = self.hand_extent(palm)
+        hand = self.hand_points(palm)
         if carrying:                              # what it carries hangs below the hand
             held = carrying[0]
-            hang, foot = max(hang, float(carrying[1]) + self.objs[held]["half_h"]), max(foot, self._radius(held))
+            r, hh = self._radius(held), self.objs[held]["half_h"]
+            hand = np.vstack([hand, hand_disc(float(carrying[1]) + hh, r)])
             skip = tuple(skip) + (held,)
-        return lift_path(pts, self._bodies(skip=tuple(self.obstacles) + tuple(skip)), hang, foot)
+        return lift_path(pts, self._bodies(skip=tuple(self.obstacles) + tuple(skip)), hand)
 
     def carrying(self, palm):
         """(object in this hand, how far its centre hangs below the TCP) or None."""
