@@ -59,7 +59,7 @@
 .pcg-status .pcg-st { flex: 1; min-width: 0; }
 .pcg-status b { display: block; font-weight: 650; }
 .pcg-status span { color: var(--t2, rgba(29,29,31,.66)); }
-.pcg-cam-on { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; min-height: 36px; margin-top: 8px; padding: 0 14px; border-radius: 999px; border: 0;
+.pcg-cam-on { display: flex; width: fit-content; align-items: center; gap: 6px; min-height: 36px; margin-top: 8px; padding: 0 14px; border-radius: 999px; border: 0;
   background: var(--accent, #5269d6); color: var(--on-accent, #fff); font: 600 13px var(--sans, system-ui); cursor: pointer; }
 .pcg-cam-on:focus-visible { outline: none; box-shadow: var(--ring); }
 .pcg-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }

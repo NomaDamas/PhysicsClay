@@ -317,7 +317,11 @@
     const self = selfView(), s = state;
     const { ctx, W, H } = fitCanvas(el.camOv);
     // overlays use the server frame's uv: they map onto the live self-view the same way (both mirrored, same framing)
-    const c = self ? contentRect({ naturalWidth: self.videoWidth, naturalHeight: self.videoHeight }, W, H, 640, 480) : contentRect(el.camImg, W, H, 960, 540);
+    let c = self ? contentRect({ naturalWidth: self.videoWidth, naturalHeight: self.videoHeight }, W, H, 640, 480) : contentRect(el.camImg, W, H, 960, 540);
+    if (self) {   // the server's 16:9 frame holds the video with bars (camTick): place that frame around the video
+      const f = frameFit(self.videoWidth, self.videoHeight, 16, 9), sx = c.w / f.w, sy = c.h / f.h;
+      c = { x: c.x - f.x * sx, y: c.y - f.y * sy, w: 16 * sx, h: 9 * sy };
+    }
     if (!self && !el.camImg.classList.contains("live")) return;
     if (camOffState(s)) return;                       // camera off: no synthetic stand-in skeleton under the "Camera is off" card
     const P = (uv) => [c.x + uv[0] * c.w, c.y + uv[1] * c.h];
@@ -1467,9 +1471,10 @@
   function camTick() {
     const v = phoneCam.video; if (phoneCam.busy || !v || v.readyState < 2 || !v.videoWidth) return;
     if (!ws || ws.readyState !== 1 || ws.bufferedAmount > 300000) return;
-    const w = Math.min(640, v.videoWidth), h = Math.round(w * v.videoHeight / v.videoWidth), cv = phoneCam.canvas;
-    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-    cv.getContext("2d").drawImage(v, 0, 0, w, h);
+    // the server works on 16:9 frames (it stretches whatever arrives): fit the picture inside 640×360, black bars
+    const cv = phoneCam.canvas, W = 640, H = 360, f = frameFit(v.videoWidth, v.videoHeight, W, H);
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const g = cv.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.drawImage(v, f.x, f.y, f.w, f.h);
     phoneCam.busy = true;
     cv.toBlob(async (blob) => {
       try {
@@ -1480,6 +1485,8 @@
       } catch (e) { /* noop */ } finally { phoneCam.busy = false; }
     }, "image/jpeg", 0.6);
   }
+  // where a vw×vh picture sits when fitted inside a W×H box (contain)
+  function frameFit(vw, vh, W, H) { const k = Math.min(W / vw, H / vh), w = vw * k, h = vh * k; return { x: (W - w) / 2, y: (H - h) / 2, w, h }; }
   // the live self-view: this device's camera while it streams
   function selfView() { const v = $("camSelf"); return v && phoneCam.stream && !v.hidden && v.videoWidth ? v : null; }
   const realCam = (s) => s.source === "phone" || s.source === "webcam" || s.source === "video";

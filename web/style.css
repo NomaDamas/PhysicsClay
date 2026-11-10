@@ -86,7 +86,7 @@ kbd { font-family: var(--sans); font-size: 11px; padding: 0 5px; border-radius: 
 
 /* ---------------------------------------------------------------- top bar */
 .topbar {
-  height: var(--topbar); flex: none; display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 16px;
+  height: var(--topbar); flex: none; display: grid; grid-template-columns: auto minmax(0, 1fr) auto;   /* the robot pill gives way (ellipsis) instead of overlapping */ align-items: center; gap: 16px;
   padding: 0 20px; background: var(--bar); border-bottom: 1px solid var(--line-soft); position: relative; z-index: 20;
   -webkit-backdrop-filter: saturate(1.6) blur(18px); backdrop-filter: saturate(1.6) blur(18px);
 }
@@ -751,3 +751,4 @@ dialog[open] { animation: rise var(--med) var(--ease); }
 /* conversation header: the brain chip (web/ui/agent.js) needs the room more than the intent count */
 .feed .panel-head:has(.pca-brain) #feedCount { display: none; }
 .feed .panel-head .pca-brain { flex: 0 1 auto; min-width: 0; max-width: 170px; }
+.status-pill .sp-sub { min-width: 0; }

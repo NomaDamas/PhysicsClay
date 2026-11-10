@@ -105,6 +105,11 @@ async def ws_handler(request):
     return ws
 
 
+async def _send_frame(ws, msgs):
+    for m in msgs:
+        await (ws.send_str(m) if isinstance(m, str) else ws.send_bytes(m))
+
+
 async def broadcaster(shared):
     last = -1
     while True:
@@ -113,15 +118,18 @@ async def broadcaster(shared):
         if fid == last or cam is None:
             continue
         last = fid
-        for ws in list(shared.clients):
-            try:
-                await ws.send_str(state)
-                await ws.send_bytes(b"\x01" + cam)
-                await ws.send_bytes(b"\x02" + sim)
-                if shared.pip is not None:
-                    await ws.send_bytes(b"\x03" + shared.pip)
-            except Exception:
+        msgs = (state, b"\x01" + cam, b"\x02" + sim) + (() if shared.pip is None else (b"\x03" + shared.pip,))
+
+        # A client that stops reading (a suspended phone tab, a page in the back/forward cache) must not freeze the
+        # others: every client is sent to concurrently and one that can't take a frame within 2 s is dropped (its
+        # page reconnects when it wakes up).
+        clients = list(shared.clients)
+        done = await asyncio.gather(*(asyncio.wait_for(_send_frame(ws, msgs), 2.0) for ws in clients), return_exceptions=True)
+        for ws, r in zip(clients, done):
+            if isinstance(r, BaseException):
                 shared.clients.discard(ws)
+                if not ws.closed:
+                    asyncio.ensure_future(ws.close())
 
 
 async def upload(request):
