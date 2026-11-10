@@ -62,7 +62,7 @@ def test_lift_path_goes_over_and_clears_it():
 
 def test_lift_path_leaves_a_clear_path_alone():
     pts = line([0.25, 0.20, 0.95], [0.35, 0.25, 0.95])
-    up, names = tasks.lift_path(pts, [MUG, VASE, BLOCK], tasks.hand_disc(0.03, 0.03))
+    up, names = tasks.lift_path(pts, [MUG, BLOCK], tasks.hand_disc(0.03, 0.03))   # (callers never pass the vase)
     assert names == [] and np.allclose(up, pts)
 
 

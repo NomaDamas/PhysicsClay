@@ -120,15 +120,16 @@ def path_object_hits(pts, bodies, hand, label="my hand", carry=None, margin=0.01
     return out
 
 
-def lift_path(pts, bodies, hand, margin=0.025):
-    """The path raised over the bodies it would run into, with 45° ramps up and down (1 cm lower per cm further out),
-    unchanged elsewhere. hand and bodies as in path_object_hits. -> (points, names of the bodies it now goes over)."""
+def lift_path(pts, bodies, hand, margin=0.05, room=0.03):
+    """The path raised over the bodies it would run into, `margin` over their tops within `room` of their outlines, with
+    45° ramps up and down (1 cm lower per cm further out), unchanged elsewhere (the hand turns a little along a path, so
+    both are generous). hand and bodies as in path_object_hits. -> (points, names of the bodies it now goes over)."""
     P = np.array(pts, float).reshape(-1, 3)
     H = np.asarray(hand, float).reshape(-1, 3)
     need = np.full(len(P), -np.inf)
     names = []
     for c, r, h, n in bodies:
-        reach = r + 0.015
+        reach = r + room
         Q = P[:, None, :2] + H[None, :, :2]
         out = np.maximum(np.hypot(Q[..., 0] - c[0], Q[..., 1] - c[1]) - reach, 0.0)    # how far outside its footprint
         z = (float(c[2]) + h + margin - H[None, :, 2] - out).max(axis=1)                # TCP height each point needs
@@ -1388,8 +1389,10 @@ class Tasks:
                 pre = g + (np.array([0, 0, 0.09]) if np.array_equal(off[:2], [0, 0]) else np.array([-0.08, 0, 0.07]))
             else:                                 # physics: come in along the approach axis with the jaws open
                 pre = g - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else g + np.array([0, 0, self._pre_dz(name, palm, g)])
-                a0 = kps[-1]                      # ... over the other objects on the way there, not skimming past them (the
-                zl = self._clear_z(a0, pre, palm, sidegrasp, skip=(name,)) if lifts else -np.inf   # arm trails the plan)
+                a0 = kps[-1]                      # ... over the other objects on the way there for a body whose arm trails
+                # its plan by several cm in transit (profile physics.transit_over: TidyBot), not skimming past them (the
+                over_in = lifts and bool((getattr(getattr(self.rt, "profile", None), "physics", None) or {}).get("transit_over"))
+                zl = self._clear_z(a0, pre, palm, sidegrasp, skip=(name,)) if over_in else -np.inf   # arm trails the plan)
                 if zl > min(a0[2], pre[2]) + 0.005:
                     kps += [np.array([a0[0], a0[1], zl])] if a0[2] < zl else []
                     kps += [np.array([pre[0], pre[1], zl])] if pre[2] < zl else []
@@ -1877,23 +1880,28 @@ class Tasks:
         tcp = d.site_xpos[self.rt.palm_sid[palm]]
         out = [np.zeros(3)]
         corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
+        hand, b = set(pl.ee_bodies[role]), m.site_bodyid[self.rt.palm_sid[palm]]
+        for _ in range(2):                        # and the wrist links it hangs from (the G1's rubber hand)
+            b = m.body_parentid[b]
+            if b in pl.robot_bodies:
+                hand.add(b)
         for g in range(m.ngeom):
-            if m.geom_bodyid[g] not in pl.ee_bodies[role] or not (m.geom_contype[g] or m.geom_conaffinity[g]):
+            if m.geom_bodyid[g] not in hand or not (m.geom_contype[g] or m.geom_conaffinity[g]):
                 continue
             c, h = m.geom_aabb[g, :3], m.geom_aabb[g, 3:]
             out += list(d.geom_xpos[g] + (c + h * corners) @ d.geom_xmat[g].reshape(3, 3).T - tcp)
         return np.array(out)
 
     def grip_reach(self, palm):
-        """The gripper as points relative to its TCP the way the pick planner sees it (its open fingertips or pads
-        reaching below the TCP over the jaws' footprint, hand_disc), whatever the hand's orientation now: for paths
-        whose orientation isn't the current one (P2 trajectories)."""
+        """The gripper's reach straight below its TCP the way the pick planner sees it (its open fingertips from above,
+        the pads of a side gripper; hand_disc with no footprint), whatever the hand's orientation now: for paths whose
+        orientation isn't the current one (P2 trajectories)."""
         g = self.plant.grip.get(self.role(palm)) if self.plant is not None else None
         if g is None:
             return hand_disc(0.0, 0.0)
         prof = getattr(self.rt, "profile", None)
         side = prof is not None and (prof.physics or {}).get("grasp", prof.grasp) == "side"
-        return hand_disc(self._hang(palm, side), float(np.clip(max(g.get("span", 0.0), g.get("depth", 0.0)), 0.02, 0.06)))
+        return hand_disc(self._hang(palm, side), 0.0, n=1)
 
     def path_hits(self, pts, palm, skip=(), carrying=None, hand=None):
         """Per point: why the hand (or what it carries) would hit an object there, or None (path_object_hits with this
@@ -1990,12 +1998,8 @@ class Tasks:
             pts = np.asarray(rt.path["pts"], float)
             if np.linalg.norm(pts[0] - cur) > 0.03:
                 lead = [cur] + ([np.array([cur[0], cur[1], TABLE_TOP + 0.10])] if cur[2] < TABLE_TOP + 0.06 and cur[0] < TABLE_X[0] + 0.05 else [])
-                side = (getattr(rt, "profile", None) is not None and (rt.profile.physics or {}).get("grasp", rt.profile.grasp) == "side")
-                zl = self._clear_z(lead[-1], pts[0], palm, side)
-                if zl > min(lead[-1][2], pts[0][2]) + 0.005:
-                    lead += [np.array([lead[-1][0], lead[-1][1], zl])] if lead[-1][2] < zl else []
-                    lead += [np.array([pts[0][0], pts[0][1], zl])] if pts[0][2] < zl else []
-                head = densify(lead + [pts[0]])[:-1]
+                head = densify(lead + [pts[0]])
+                head = self.lift_over(head, palm, carrying=self.carrying(palm))[0][:-1]
                 pts = np.vstack([head, pts])
                 rt.path["pts"], rt.path["ok"] = pts, [True] * len(head) + list(rt.path["ok"])
                 rt.path["cum"] = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts, axis=0), axis=1))])

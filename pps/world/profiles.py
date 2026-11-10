@@ -186,7 +186,10 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         {"x": -0.30, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "pinch_site"}, "home", "mobile",
         ("pick_place", "reach", "follow_path", "drive_base"), base_joints=("joint_x", "joint_y", "joint_th"), base_cost=1.0,
         freeze=("driver", "coupler", "spring", "follower"), prompt="pps/world/prompts/tidybot.md",
-        physics={"payload": 4.0, "grip": {"right": _native("fingers_actuator", 0, 255, ("left_pad", "left_follower"), ("right_pad", "right_follower"), 0.085, axis=(1, 0, 0), boost=0.115)}}),
+        # transit_over: on the way in the hand goes over the other objects (the Kinova trails its plan by 3-5 cm in transit
+        # and cut the corner into the mug next to a block)
+        physics={"payload": 4.0, "transit_over": True,
+                 "grip": {"right": _native("fingers_actuator", 0, 255, ("left_pad", "left_follower"), ("right_pad", "right_follower"), 0.085, axis=(1, 0, 0), boost=0.115)}}),
     RobotProfile(
         "spot", "Boston Dynamics Spot with arm", "quadruped_arm", EX + "boston_dynamics_spot/spot_arm.xml",
         {"x": -0.35, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "EE"}, "home", "legged",
