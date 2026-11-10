@@ -22,7 +22,7 @@ async def run(t):
         return                                      # contact grasps need the plant
     env = dict(os.environ, PC_PHYSICS="1")
     proc = await asyncio.create_subprocess_exec(sys.executable, str(ROOT / "scripts" / "bench_grasp.py"), *ROBOTS, "-n", str(TRIALS),
-                                                "-j", "2", "--json", cwd=str(ROOT), env=env, stdout=asyncio.subprocess.PIPE,
+                                                "-j", "2", "--json", "-v", cwd=str(ROOT), env=env, stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.STDOUT)
     out = []
 
@@ -43,5 +43,10 @@ async def run(t):
         r = res.get(rid) or {}
         cells = [f"{k} {v['ok']}/{v['n']}" + (f" ({v['err']:.1f} cm)" if v.get("err") is not None else "") + (f": {v['why'][:60]}" if v.get("why") else "")
                  for k, v in r.items()]
+        ok = len(r) == 2 and all(v["ok"] >= v["n"] - 1 for v in r.values())
         t.check(f"grasp bench: {rid} picks and places the mug and the red block by contact (>= {TRIALS - 1} of {TRIALS} each)",
-                len(r) == 2 and all(v["ok"] >= v["n"] - 1 for v in r.values()), "; ".join(cells) or "".join(out[-3:])[:160])
+                ok, "; ".join(cells) or "".join(out[-3:])[:160])
+        if not ok:                                  # every trial of that body, for the log (scripts/bench_grasp.py -v)
+            for ln in out:
+                if ln.startswith(f"    {rid} "):
+                    print("INFO  " + ln.strip()[:300], flush=True)
