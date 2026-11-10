@@ -49,8 +49,11 @@ def repair(mesh):
     m.update_faces(m.unique_faces())
     m.remove_unreferenced_vertices()
     if not m.is_watertight:
-        trimesh.repair.fill_holes(m)
-        notes.append("filled holes")
+        try:
+            trimesh.repair.fill_holes(m)
+            notes.append("filled holes")
+        except Exception as e:                    # (e.g. networkx missing): the convex hull fallback still works
+            notes.append(f"couldn't fill holes ({type(e).__name__})")
     trimesh.repair.fix_normals(m)
     if m.is_watertight and m.volume < 0:
         m.invert()

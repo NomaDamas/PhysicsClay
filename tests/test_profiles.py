@@ -3,6 +3,7 @@
 import json
 
 import pytest
+from conftest import models_missing
 
 from pps.world import profiles
 
@@ -106,7 +107,7 @@ def test_model_files_exist(rid):
     p = profiles.PROFILES[rid]
     path = ROOT / p.model_xml
     if "vendor/" in p.model_xml and not (ROOT / "vendor" / "mink").exists():
-        pytest.skip("vendor/mink not fetched (run scripts/setup.sh)")
+        models_missing("vendor/mink not fetched")
     assert path.is_file(), p.model_xml
     if p.home_xml:
         assert (ROOT / p.home_xml).is_file()

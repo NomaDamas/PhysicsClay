@@ -7,6 +7,7 @@ import math
 import cv2
 import numpy as np
 import pytest
+from conftest import models_missing
 
 trimesh = pytest.importorskip("trimesh")
 
@@ -287,7 +288,7 @@ def test_imported_object_rests_on_the_table_under_gravity(lib):
     try:
         w = scene.build("panda", spec, physics=True)
     except ValueError as e:
-        pytest.skip(f"robot model not on disk: {e}")
+        models_missing(f"robot model not on disk: {e}")
     m, d = w.model, mujoco.MjData(w.model)
     nq, nv = w.ik_model.nq, w.ik_model.nv
     b = m.body("obj_my_bottle").id
