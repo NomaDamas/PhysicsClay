@@ -29,7 +29,7 @@ import cv2
 import mujoco
 import numpy as np
 
-from .. import ext
+from .. import ext, slicing
 from ..spatial import API, ER_MODEL, gemini_key
 from ..tasks import TABLE_TOP, TABLE_X, TABLE_Y
 
@@ -201,7 +201,7 @@ def _describe(tasks, seq, skipped, notes):
     return msg
 
 
-def _set_goal(ctx, targets, source, run):
+def _set_goal(ctx, targets, source, run, prefix=""):
     g, tasks = _g(ctx), ctx.tasks
     if g["status"] == "running":
         g["message"] = "I'm still arranging the last goal. Press Cancel first."
@@ -218,7 +218,40 @@ def _set_goal(ctx, targets, source, run):
         g.update(targets={}, sequence=[], i=0, source=source, rev=g["rev"] + 1)
         _set(g, "failed", "I didn't get a goal spot for any object I can move.")
         return
-    seq, notes, fixed, skipped = plan(tasks, clean)
+    # with physics a set-aside spot is tested with the planner (a reach per candidate, 0.1-0.7 s each): the plan is a job
+    # that pauses between IK waypoints, so the loop keeps streaming frames (pps/slicing.py); status "planning" meanwhile
+    _drop_job(g)
+    g["job"] = slicing.Job(lambda: plan(tasks, clean), tasks._swap(task=False), name="goal")
+    g["job_args"] = (source, run, prefix)
+    g.update(sequence=[], i=0)                    # (the last plan's moves are no longer what will happen)
+    _set(g, "planning", (prefix + " " if prefix else "") + "Working out the moves.")
+    _job_tick(ctx, g)
+
+
+def _drop_job(g):
+    job = g.pop("job", None)
+    if job is not None:
+        job.cancel()
+
+
+def _job_tick(ctx, g):
+    """A slice of the goal's planning job; when it is done, the plan becomes the goal (ready / running / done)."""
+    job = g.get("job")
+    if job is None or not job.step():
+        return
+    g["job"] = None
+    source, run, prefix = g.pop("job_args", (g.get("source"), False, ""))
+    if job.error is not None:
+        _set(g, "failed", f"I couldn't work out the moves ({job.error}).")
+        return
+    _planned(ctx, g, job.result, source, run)
+    if prefix:
+        g["message"] = prefix + " " + g["message"]
+
+
+def _planned(ctx, g, result, source, run):
+    tasks = ctx.tasks
+    seq, notes, fixed, skipped = result
     if not str(source).startswith("photo"):
         g["photo"] = None
     g.update(targets={n: [round(float(q[0]), 3), round(float(q[1]), 3)] for n, q in fixed.items()},
@@ -285,10 +318,11 @@ def goal_tick(ctx):
         res, g["pending_photo"] = g["pending_photo"], None
         g["photo"] = {k: v for k, v in res.items() if k != "targets"}
         if res.get("targets"):
-            _set_goal(ctx, res["targets"], "photo:" + res["source"], g.pop("run_after_photo", False))
-            g["message"] = res["summary"] + " " + g["message"]
+            _set_goal(ctx, res["targets"], "photo:" + res["source"], g.pop("run_after_photo", False), prefix=res["summary"])
         else:
             _set(g, "failed", res["summary"])
+    if g["status"] == "planning":
+        _job_tick(ctx, g)
     if g["status"] != "running":
         return
     tasks, seq = ctx.tasks, g["sequence"]
@@ -502,11 +536,17 @@ def on_goal(ctx, msg):
     elif op == "run":
         if g["status"] == "running":
             return
+        if g["status"] == "planning" and g.get("job_args"):    # run it as soon as the plan is made
+            g["job_args"] = (g["job_args"][0], True) + tuple(g["job_args"][2:])
+            return
         if g["targets"]:
             _set_goal(ctx, g["targets"], g["source"], True)    # re-plan from where things are now
         else:
             _set(g, "failed", "There is no goal yet. Arrange the ghosts or send a photo first.")
     elif op in ("cancel", "clear"):
+        if g["status"] == "planning":
+            _drop_job(g)
+            _set(g, "stopped", "Cancelled. Objects stay where they are now.")
         if g["status"] == "running":
             if g["dispatched"] and (ctx.tasks.task or {}).get("id") == g["tid"] and ctx.tasks.task.get("status") in ("planning", "running"):
                 ctx.tasks.stop(f"goal-cancel-{time.time():.0f}")

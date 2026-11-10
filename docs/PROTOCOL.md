@@ -216,10 +216,12 @@ the layout you want. The server orders the moves and runs them one by one.
   (robot at the top of the photo); `"robot"` means from the robot's side. Positions are taken relative to the table
   (Gemini's table box, else the whole photo) and mapped onto the reachable front strip of the table, x 0.25..0.47, y -0.36..0.36.
 
-`state.goal = {status: idle|locating|ready|running|done|failed|stopped, message, targets:{name:[x,y]}, source,
+`state.goal = {status: idle|locating|planning|ready|running|done|failed|stopped, message, targets:{name:[x,y]}, source,
 sequence:[{i, object, label, kind:"place"|"aside", to:[x,y], status: pending|running|done|failed, err_cm}], i, rev,
 photo:{source:"gemini"|"offline", view, summary, found:[{name,u,v}], box, ms, error}|null,
 objects:[{name, label, pos:[x,y,z], r, h, shape:"box"|"cyl"}], obstacles:[{name, pos:[x,y], r}], tolerance_cm, work_area}`.
+`planning`: the moves are being worked out over several frames (with physics every set-aside spot is reach-tested);
+`op:"run"` meanwhile runs them once they are ready, `cancel` / `clear` / a new `set` drop it.
 
 Features plug in through `pps/features/<name>.py`, `web/ui/<name>.js` and `scripts/checks/<name>.py` (see docs/UX2.md).
 
@@ -615,7 +617,14 @@ below reports `mode: "kinematic"` and the `physics` message is refused. Details 
   `force` along the approach axis with an admittance loop for `hold_s` seconds, retreat. The task message reports the
   mean and peak force (and "capped by the ... impedance limit" when the limit was lower than asked). Physics only.
 - `pick_place` with physics first works out how (`state.task.status: "planning"`, "Working out how to pick up …", a
-  slice per frame) and then runs or is refused; clients wait past `planning` for the verdict.
+  slice per frame) and then runs or is refused; clients wait past `planning` for the verdict. The same holds for
+  `pick_from` / `place_in` and for plan cards (`preview: true`: "planning" until the card is made): planning runs as a job
+  that pauses between IK waypoints (`pps/slicing.py`), so the server keeps streaming frames; a new command drops it.
+- `state.perf = {last_ms, max_ms, plan_ms, plan_max_ms, plan_frame_max_ms, plan_stalls, rest_ms, stretch_ms, budget_ms,
+  frames, since}`: the server loop's frame times (the last and longest frame, time spent planning in the last / any
+  frame, the longest frame planning ran in, how many frames planning pushed past 0.5 s, the rest of a frame, how far a
+  planning slice may run past its budget, the planning budget per frame; maxima since `since` seconds ago).
+  `{type:"perf", op:"reset"}` restarts the maxima.
 - `pick_place` with physics: the jaws open on the way in, close at the grasp (the path waits), and the object is held
   only by friction. The task fails honestly with "It slipped: ..." (the object didn't come up / fell out), "Too heavy:
   ... I can lift X kg" (weight sensed once it hangs free), "I let go of ... but it fell over / ended up N cm from the

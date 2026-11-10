@@ -54,7 +54,7 @@
 .goal-status { padding: 10px 12px; border-radius: 14px; background: var(--field); color: var(--t1); min-height: 20px; }
 .goal-status[data-s="failed"], .goal-status[data-s="stopped"] { background: var(--bad-tint); color: var(--bad-ink); }
 .goal-status[data-s="done"] { background: var(--ok-tint); color: var(--ok-ink); }
-.goal-status[data-s="running"], .goal-status[data-s="locating"] { background: var(--accent-tint); }
+.goal-status[data-s="running"], .goal-status[data-s="locating"], .goal-status[data-s="planning"] { background: var(--accent-tint); }
 .goal-status:empty { display: none; }
 .goal-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
 .goal-steps li { display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 0 10px; border-radius: 12px; }
@@ -143,7 +143,7 @@
     if (open) { setMode(mode); }
     draw();
   }
-  const running = () => goal.status === "running" || goal.status === "locating";
+  const running = () => goal.status === "running" || goal.status === "locating" || goal.status === "planning";
 
   PCUI.tool({ id: "goal", label: "Goal", icon: "goal", title: "Show the end state: arrange ghosts in 3D or use a photo",
     onSelect: () => setOpen(true), onDeselect: () => setOpen(false) });
@@ -388,7 +388,7 @@
       }
     }
     if (g.status === "done" && prevStatus !== "done") for (const gh of ghosts.values()) gh.touched = false;   // follow the objects again
-    if (!open) card.hidden = !(g.status === "running" || g.status === "locating");
+    if (!open) card.hidden = !(g.status === "running" || g.status === "locating" || g.status === "planning");
     const sayKey = `${g.rev}|${g.status}`;
     if (["ready", "done", "failed", "stopped"].includes(g.status) && sayKey !== lastSaid && prevStatus !== undefined && g.message) {
       lastSaid = sayKey; PCUI.say("robot", g.message);

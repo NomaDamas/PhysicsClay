@@ -101,7 +101,8 @@ def _dry_run(ctx, msg):
             setattr(rt, k, v)
         for k, v in snap_t.items():
             setattr(tasks, k, v)
-        rt.data.mocap_quat[:] = snap_q
+        for mid in rt.hands_mid.values():          # (only the hand targets: a dry run moves nothing else)
+            rt.data.mocap_quat[mid] = snap_q[mid]
         for r, c in grips.items():
             tasks.plant.grip_cmd(r, c)
     if caps:                                      # the attempt that launched, else the first (the one the verdict names)
@@ -344,14 +345,21 @@ def preview_first(ctx, msg):
     if a not in MOTION or (a == "play_skill" and _is_taught_task(msg)) or (a == "handover" and not (msg.get("to") or msg.get("between_arms"))):
         return False   # stop/home/speed/... and taught multi-step tasks (they run their own practice card) are not previewed
     tid = str(msg.get("id", f"plan-{time.time():.3f}"))
-    try:
-        plan = {"follow_path": _plan_path, "play_skill": _plan_skill, "handover": _plan_handover}.get(a, _plan_motion)(ctx, msg)
-    except Exception as e:    # never fall through to running an unconfirmed task
-        import traceback
-        traceback.print_exc()
-        ctx.tasks.set_task(tid, a, "failed", f"I couldn't work out a plan for that ({e}).")
-        _set(ctx, None)
-        return True
+    build = {"follow_path": _plan_path, "play_skill": _plan_skill, "handover": _plan_handover}.get(a, _plan_motion)
+
+    def made(job):                                # the plan is made (on a later frame when it took a while)
+        if job.error is not None:                 # never fall through to running an unconfirmed task
+            ctx.tasks.set_task(tid, a, "failed", f"I couldn't work out a plan for that ({job.error}).")
+            _set(ctx, None)
+        elif not job.cancelled:
+            _propose(ctx, tid, a, job.result)
+    # the dry run plans the way the real run would (a dozen IK traces when it is refused): a job that pauses between IK
+    # waypoints and hands the loop its frames (pps/slicing.py); the task shows "planning" meanwhile, a new command drops it
+    ctx.tasks.run_sliced(tid, a, lambda: build(ctx, msg), "Checking reach for every waypoint.", keep=False, then=made)
+    return True
+
+
+def _propose(ctx, tid, a, plan):
     plan["id"], plan["anchor"], plan["t"] = tid, tid, time.time()
     plan["run"]["id"] = tid
     if plan["ok"]:
@@ -364,7 +372,6 @@ def preview_first(ctx, msg):
         ctx.tasks.set_task(tid, a, "failed", say)
     plan["say"] = say
     _set(ctx, plan)
-    return True
 
 
 @ext.handler("plan")

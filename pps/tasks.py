@@ -9,6 +9,7 @@ import time
 import mujoco
 import numpy as np
 
+from . import slicing
 from .manip import FixtureTasks
 from .robot_runtime import HANDS, ROOT, slerp
 from .world import objects as wobj
@@ -75,12 +76,24 @@ def densify(pts, step=0.035):
 
 
 def _drain(gen):
-    """Run a resumable step (a generator that yields between slices of work) to the end -> its return value."""
+    """Run a resumable step (a generator that yields between slices of work) to the end -> its return value. Inside a
+    planning job (pps/slicing.py) each yield is a place to pause."""
     while True:
         try:
             next(gen)
         except StopIteration as e:
             return e.value
+        try:
+            slicing.point()
+        except BaseException:                     # dropped while paused here: unwind the step now, in the planner's state
+            gen.close()
+            raise
+
+
+def _gen(fn):
+    """A plain call as a resumable step (it pauses inside, at slicing.point(): between IK waypoints)."""
+    yield from ()
+    return fn()
 
 
 def _seg_dist(p, a, b):
@@ -203,7 +216,7 @@ class Tasks(FixtureTasks):
         self.held = {}           # physics: palm -> what the slip monitor knows about the object in that hand
         self.place_at = None     # physics: where the current pick & place should leave the object (checked at the end)
         self.seq, self.seq_tid = [], None   # the rest of a multi-step task (two-arm handover): run as each path ends
-        self.search = None       # a time-sliced pick search in progress: (task id, generator); search_tick() advances it
+        self.search = None       # a planning job in progress (a pick search, a dry run): search_tick() advances it
         self.task = None         # {"id","action","status","message","step"}
         self.events = {}         # waypoint index -> event name
         self.fired = set()
@@ -815,9 +828,8 @@ class Tasks(FixtureTasks):
     def tick(self):
         """Call after every rt.step: fire waypoint events, carry the mug, finish tasks."""
         rt, d = self.rt, self.rt.data
-        if self.search is not None and time.time() - getattr(self, "_search_t", 0.0) > 0.05:
-            self.search_tick()                    # (a slice of a pick search, about once a frame)
-            self._search_t = time.time()
+        if self.search is not None:
+            self.search_tick()                    # (a slice of a planning job, within this frame's planning time)
         if rt.path is not None and self.kind in ("task", "path") and (rt.mode == "FOLLOW" or self.plant is not None):
             i = rt.path["i"]                      # (physics: also an event on the last waypoint, fired as the path ends)
             for idx, name in sorted(self.events.items()):
@@ -1335,41 +1347,100 @@ class Tasks(FixtureTasks):
             held = next((h for h, o in self.holding.items() if o == name), None)
             c = self.mug_center()
             palm = held or self.hand_for(c)
-            self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, None, self.rt.data.mocap_quat[self.rt.hands_mid[palm]].copy())
-            return
-        search = self._pick_all(tid, name, dest, label, via, via_pts, grasp, fixed)
+            q_now = self.rt.data.mocap_quat[self.rt.hands_mid[palm]].copy()
+            search = _gen(lambda: self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, None, q_now))
+        else:
+            search = self._pick_all(tid, name, dest, label, via, via_pts, grasp, fixed)
         if not sliced:
             _drain(search)
             return
-        self.search = (tid, search)               # the server loop: one way in per tick, so a long search (a refusal tries
+        self.search = (tid, search)               # the server loop: a slice per frame, so a long search (a refusal tries
         self.set_task(tid, "pick_place", "planning", f"Working out how to pick up {self.pretty(name)}.")   # them all)
         self.search_tick()
-        self._search_t = time.time()
 
-    def search_tick(self, budget=0.25):
-        """Advance a time-sliced pick search (pick_place(..., sliced=True)): ways in until about `budget` s of wall time
-        is used, so the loop never stalls for a whole search. Dropped if another command took over."""
+    # ------------------------------------------------------------------ planning across server ticks (pps/slicing.py)
+    @property
+    def search(self):
+        """The planning job in progress: (task id, generator) as a task registers it, or (task id, slicing.Job, then)."""
+        return self.__dict__.get("_search")
+
+    @search.setter
+    def search(self, v):                          # a new one drops the one before (its stack unwinds, its thread ends)
+        old = self.__dict__.get("_search")
+        if old is not None and (v is None or v[1] is not old[1]) and not slicing.in_job():
+            if isinstance(old[1], slicing.Job):
+                old[1].cancel()
+            else:
+                old[1].close()
+        self.__dict__["_search"] = v
+
+    def run_sliced(self, tid, action, fn, message, keep=True, then=None):
+        """Plan across server ticks: fn() runs as a job that pauses between IK waypoints when this frame's planning time is
+        used up, while the task shows "planning" (message). keep: what it leaves (a task that starts, or its failure)
+        stands; else the loop's own state is put back and then(job) builds on job.result (a plan card's dry run).
+        A new command drops it."""
+        self.search = None
+        self.set_task(tid, action, "planning", message)
+        self.search = (tid, slicing.Job(fn, self._swap(), keep=keep, name=action), then)
+        self.search_tick()
+
+    def search_tick(self, budget=None):
+        """Advance the planning job (a registered generator runs as a job too): until about `budget` s of wall time (by
+        default what is left of this frame's planning time) is used, pausing between IK waypoints, so the loop never
+        stalls for a whole search. Dropped if another command took over (the task is no longer this one, planning)."""
         if self.search is None:
             return
-        tid, gen = self.search
+        tid, job, then = (tuple(self.search) + (None,))[:3]
+        if not isinstance(job, slicing.Job):      # (tid, generator): pick_place, operate, ...
+            gen = job
+            job = slicing.Job(lambda: _drain(gen), self._swap(), keep=True, name=(self.task or {}).get("action") or "plan")
+            self.__dict__["_search"] = (tid, job, None)
         if not self.task or self.task.get("id") != tid or self.task.get("status") != "planning":
-            gen.close()
             self.search = None
             return
-        t0 = time.time()
-        while True:
-            try:
-                next(gen)
-            except StopIteration:
-                self.search = None
-                return
-            if time.time() - t0 > budget:
-                act = self.task.get("action") or "pick_place"
-                self.set_task(tid, act, "planning", self.task.get("message") if self.task.get("status") == "planning"
-                              else f"Working out how to pick up {self.pretty(self.cur)}." if act == "pick_place"
-                              else "Checking reach for every waypoint.")
+        if not job.step(budget):                  # (by default: what is left of this frame's planning time)
+            if job.keep:                          # a new task: the old motion doesn't go on while it is worked out
                 self.rt.path = None
-                return
+            return
+        self.__dict__["_search"] = None
+        action = (self.task or {}).get("action") or "plan"
+        try:
+            if then is not None:
+                then(job)
+            elif job.error is not None:           # (as the server loop reports an exception in a command)
+                self.set_task(tid, action, "failed", f"Internal error: {job.error}")
+        except Exception as e:                    # (never let a plan's follow-up kill the loop)
+            import traceback
+            traceback.print_exc()
+            self.set_task(tid, action, "failed", f"Internal error: {e}")
+
+    def _swap(self, task=True):
+        """What a planning job and the server loop each keep their own copy of while the job is paused: the hand targets
+        and how firmly they hold orientation, the IK obstacles, the gripper commands, and (task) the task and its path and
+        a dry run's stand-ins (pps/features/plan.py)."""
+        rt, d = self.rt, self.rt.data
+        mids = [rt.hands_mid[h] for h in self.hands]
+        sw = slicing.Swap()
+        sw.attrs(rt, ("_obstacle_limit", "_arm_obstacle_limit"))
+        if task:
+            sw.attrs(rt, ("path", "path_msg", "mode", "engaged", "follow_s", "follow_hold"))
+            sw.attrs(self, ("task", "kind", "events", "fired", "done_msg", "cur", "cur_off", "fail_reason", "hit_obstacle",
+                            "stopped_task", "place_at", "fxop", "place_z", "transit_z", "place_check", "place_drop", "cur_action",
+                            "release_z", "approach_z", "ph", "_launch", "carry_hits_vase"))
+            sw.attrs(rt.recorder, ("start",))
+
+        def put_hands(v):
+            d.mocap_pos[mids], d.mocap_quat[mids] = v
+        sw.add(lambda: (d.mocap_pos[mids].copy(), d.mocap_quat[mids].copy()), put_hands)
+        tasks_ = list(getattr(rt, "hand_tasks", ()))
+        sw.add(lambda: [np.copy(t.cost) for t in tasks_], lambda v: [t.cost.__setitem__(slice(None), c) for t, c in zip(tasks_, v)])   # (orient)
+        limits = getattr(rt, "limits", None)
+        if limits is not None:
+            sw.add(lambda: list(limits), lambda v: limits.__setitem__(slice(None), v))
+        grip = self.plant.grip if self.plant is not None else {}
+        sw.add(lambda: {r: (g.get("cmd"), g.get("open_to")) for r, g in grip.items()},
+               lambda v: [grip[r].update(cmd=c, open_to=o) for r, (c, o) in v.items()])
+        return sw
 
     def _reach_bound(self, palm):
         """A hand's reach can't exceed its arm stretched out: the sum of the link lengths from the shoulder to the hand
