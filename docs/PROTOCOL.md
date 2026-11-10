@@ -341,3 +341,18 @@ below reports `mode: "kinematic"` and the `physics` message is refused. Details 
   only by friction. The task fails honestly with "It slipped: ..." (the object didn't come up / fell out), "Too heavy:
   ... I can lift X kg" (weight sensed once it hangs free), "I let go of ... but it fell over / ended up N cm from the
   spot" (checked after the release) or "... is N cm wide and my gripper opens M cm".
+
+## v7 (v1 · P6 calibration, `pps/calib/`, `pps/features/calib.py`, `web/ui/calib.js`)
+Method, math and results: `docs/calibration.md`.
+- `{type:"physics", op:"set"}` also takes `armature_scale` and `frictionloss_scale` (the robot joints' rotor inertia and
+  Coulomb friction); `latency_ms` now delays the servo setpoint per 2 ms substep (interpolated), not per server tick.
+- `{type:"calib", op:"probe", probes?: ["swing","press","lift","slide"]}` runs the probe routine on the robot (a task,
+  action `calib`, `step` = the probe running; other tasks are refused until it ends, `stop` ends it). `op:"fit",
+  budget?: "quick"|"normal"|"thorough"` fits the simulator to the last probe logs in worker processes; `op:"apply"` puts
+  the fit into the plant (as `physics set`); `op:"reset"` restores the default physics and drops the fit; `op:"run"`
+  does probe + fit + apply; `op:"stop"` stops probing or fitting.
+- `state.calib = {status: idle|probing|probed|fitting|fitted|applied|failed, message, summary, probes: [{name, label,
+  status: waiting|running|done|skipped}], progress: {stage, stage_index, stages, gen, gens} | null, logs: [{probe,
+  seconds}], params: {name: value} | null, per_param: [{name, value, default, lo, hi, unit, what, spread}], fit:
+  {err_before, err_after, seconds, evals, budget, stages, logs: [{probe, before, after}]} | null, applied, defaults}`.
+- Agent tool `calibrate_here {budget?}` (physics only): probe + fit + apply, answers with `state.calib.summary`.
