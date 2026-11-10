@@ -1,5 +1,6 @@
 """P2b teleop (pps/features/teleop.py) without a server: clamping, rate limiting, P5 safety hooks, the gripper.
 The runtime and task layer are small stand-ins with the attributes teleop touches."""
+
 import time
 from types import SimpleNamespace
 
@@ -16,8 +17,11 @@ class FakeRT:
         self.hands = ["right_palm"]
         self.hands_mid = {"right_palm": 0}
         self.palm_sid = {"right_palm": 0}
-        self.data = SimpleNamespace(mocap_pos=np.array([[0.40, -0.20, 0.95]]), mocap_quat=np.array([[1.0, 0.0, 0.0, 0.0]]),
-                                    site_xpos=np.array([[0.40, -0.20, 0.95]]))
+        self.data = SimpleNamespace(
+            mocap_pos=np.array([[0.40, -0.20, 0.95]]),
+            mocap_quat=np.array([[1.0, 0.0, 0.0, 0.0]]),
+            site_xpos=np.array([[0.40, -0.20, 0.95]]),
+        )
         self.retargeter = SimpleNamespace(robot_shoulders={"right_palm": np.array([0.0, -0.15, 1.10])})
         self.mode = "MIRROR"
         self.engaged = False
@@ -83,8 +87,8 @@ def test_rate_limited_and_converges():
     target = p0 + np.array([0.0, 0.3, 0.0])
     send(ctx, p=target.tolist())
     moved = float(np.linalg.norm(ctx.rt.data.mocap_pos[0] - p0))
-    assert 0 < moved <= TP.MAX_SPEED * 0.1 + 1e-9          # one command can't jump 30 cm
-    for _ in range(40):                                       # a stream of commands gets there
+    assert 0 < moved <= TP.MAX_SPEED * 0.1 + 1e-9  # one command can't jump 30 cm
+    for _ in range(40):  # a stream of commands gets there
         age(ctx, 1 / 30)
         send(ctx, p=target.tolist())
     assert np.allclose(ctx.rt.data.mocap_pos[0], target, atol=1e-6)
@@ -101,7 +105,7 @@ def test_clamped_to_reach_and_surface():
     assert ctx.store[TP.KEY]["clamped"]
     for _ in range(40):
         age(ctx, 0.1)
-        send(ctx, p=[0.5, -0.2, 0.30])                       # below the table top
+        send(ctx, p=[0.5, -0.2, 0.30])  # below the table top
     assert ctx.rt.data.mocap_pos[0][2] >= tasks_mod.TABLE_TOP + TP.SURFACE_MARGIN - 1e-9
 
 
@@ -109,10 +113,10 @@ def test_safety_stop_holds_and_scale_slows():
     ctx = make_ctx()
     send(ctx, op="start")
     p0 = ctx.rt.data.mocap_pos[0].copy()
-    ctx.rt.safety_scale = 0.0                                 # P5 protective stop
+    ctx.rt.safety_scale = 0.0  # P5 protective stop
     send(ctx, p=(p0 + [0, 0.1, 0]).tolist())
     assert np.allclose(ctx.rt.data.mocap_pos[0], p0) and "safety" in ctx.store[TP.KEY]["held"]
-    ctx.rt.safety_scale = 0.5                                 # P5 slowing: half the speed
+    ctx.rt.safety_scale = 0.5  # P5 slowing: half the speed
     ctx.store[TP.KEY]["applied"]["right_palm"] = time.time() - 0.1
     send(ctx, p=(p0 + [0, 0.3, 0]).tolist())
     moved = float(np.linalg.norm(ctx.rt.data.mocap_pos[0] - p0))
@@ -122,7 +126,9 @@ def test_safety_stop_holds_and_scale_slows():
 
 def test_safety_hook_refuses_target_inside_person():
     ctx = make_ctx()
-    ctx.tasks.safety = SimpleNamespace(stopped=False, check_point=lambda p, role: {"ok": p[1] < 0.0, "why": "your torso"})
+    ctx.tasks.safety = SimpleNamespace(
+        stopped=False, check_point=lambda p, role: {"ok": p[1] < 0.0, "why": "your torso"}
+    )
     send(ctx, op="start")
     p0 = ctx.rt.data.mocap_pos[0].copy()
     send(ctx, p=[0.4, 0.2, 0.95])
@@ -136,18 +142,18 @@ def test_busy_runtime_is_left_alone():
     ctx = make_ctx()
     ctx.rt.mode = "FOLLOW"
     p0 = ctx.rt.data.mocap_pos[0].copy()
-    send(ctx, p=[0.4, 0.0, 0.95])                             # a bare command while a path runs
+    send(ctx, p=[0.4, 0.0, 0.95])  # a bare command while a path runs
     assert np.allclose(ctx.rt.data.mocap_pos[0], p0) and ctx.store[TP.KEY]["held"].startswith("busy")
 
 
 def test_kinematic_grip_grasps_and_releases():
     ctx = make_ctx()
     send(ctx, op="start")
-    ctx.rt.data.site_xpos[0] = ctx.rt.data.mocap_pos[0] = [0.40, -0.20, 0.86]     # the gripper at the mug
+    ctx.rt.data.site_xpos[0] = ctx.rt.data.mocap_pos[0] = [0.40, -0.20, 0.86]  # the gripper at the mug
     p = ctx.rt.data.mocap_pos[0].tolist()
     send(ctx, p=p, grip=1.0)
     assert ctx.tasks.holding["right_palm"] == "mug" and ctx.tasks.events == ["grasp"]
-    send(ctx, p=p, grip=1.0)                                  # held closed: no second grasp
+    send(ctx, p=p, grip=1.0)  # held closed: no second grasp
     assert ctx.tasks.events == ["grasp"]
     send(ctx, p=p, grip=0.0)
     assert ctx.tasks.holding["right_palm"] is None and ctx.tasks.events == ["grasp", "release"]
@@ -165,9 +171,10 @@ def test_physical_gripper_when_runtime_has_one():
 def test_orientation_rate_limited():
     ctx = make_ctx()
     send(ctx, op="start")
-    q = [0.0, 0.0, 0.0, 1.0]                                  # 180 degrees about z
+    q = [0.0, 0.0, 0.0, 1.0]  # 180 degrees about z
     send(ctx, p=ctx.rt.data.mocap_pos[0].tolist(), q=q)
     from pps import traj as T
+
     ang = T.qangle([1, 0, 0, 0], ctx.rt.data.mocap_quat[0])
     assert 0 < ang <= TP.MAX_TURN * 0.1 + 1e-6
 
