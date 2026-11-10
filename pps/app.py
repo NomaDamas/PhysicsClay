@@ -1074,7 +1074,7 @@ def dispatch(tasks, rt, c, cam):
     elif a == "press":
         tasks.press(tid, c.get("target"), c.get("target_uv"), cam, ASPECT, c.get("force", 10.0), c.get("hold_s", 1.5))
     elif a in ("open", "close"):                  # issue #48: drawers, doors, lids (pps/manip.py)
-        tasks.operate(tid, a, c.get("fixture") or c.get("target") or c.get("object") or "", c.get("amount"))
+        tasks.operate(tid, a, c.get("fixture") or c.get("target") or c.get("object") or "", c.get("amount"), sliced=True)
     elif a == "pick_from":
         tasks.pick_from(tid, c.get("container") or c.get("target") or "", c.get("object"))
     elif a == "place_in":

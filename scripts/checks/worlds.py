@@ -79,9 +79,12 @@ async def run(t):
     t.check("worlds: the drawer really opened (>= 60 %) and the 3D view saw it move", best >= 0.6 and moved, f"max {best:.2f}, streamed {moved}")
     t.check("worlds: the spoon is in the sink and the drawer is shut", where("spoon") == "sink" and float(fixture("drawer_1").get("open") or 1) < 0.1,
             f"spoon in {where('spoon')}, drawer_1 {fixture('drawer_1').get('open')}")
-    res = await task("open", 30, fixture="the second drawer")
-    t.check("worlds: a knob under another one is refused with the reason (grasps come from above)",
-            res.get("status") == "failed" and "right above it" in res.get("message", ""), res.get("message", "")[:100])
+    res = await task("open", 120, fixture="the second drawer", amount=0.8)
+    opened = float(fixture("drawer_2").get("open") or 0.0)
+    res2 = await task("close", 120, fixture="drawer_2") if res.get("status") == "done" else {}
+    t.check("worlds: the second drawer (its knob right under the top drawer's) opens from the front and closes again",
+            res.get("status") == "done" and opened >= 0.6 and res2.get("status") == "done" and float(fixture("drawer_2").get("open") or 1) < 0.1,
+            f"{res.get('message', '')[:60]} ({opened:.2f}); {res2.get('message', '')[:50]}")
     await t.send(type="fixture", op="lock", name="drawer_1", id="lock-1")
     await t.pump(0.5)
     res = await task("open", 60, fixture="drawer_1", amount=0.8)

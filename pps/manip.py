@@ -28,6 +28,9 @@ SYN = {"fridge": ("fridge", "refrigerator"), "microwave": ("microwave",), "dishw
        "carton": ("carton", "box"), "vise": ("vise", "vice"), "conveyor": ("conveyor", "belt", "line")}
 
 
+HANDLE_PITCHES = (90, 50, 0)     # ways in to a handle: from above, from the front and above (50 deg), straight from the front
+
+
 def _words(s):
     return [w for w in re.findall(r"[a-z0-9]+", str(s or "").lower().replace("_", " ")) if w not in STOP]
 
@@ -233,8 +236,9 @@ class FixtureTasks:
         return best
 
     # ------------------------------------------------------------------ actions
-    def operate(self, tid, action, what, amount=None):
-        """open / close a drawer, door or lid by its handle (see the module docstring)."""
+    def operate(self, tid, action, what, amount=None, sliced=False):
+        """open / close a drawer, door or lid by its handle (see the module docstring). sliced: the ways in are tried one
+        per server tick (Tasks.search_tick), so trying them all doesn't stall the loop."""
         act = "close" if action == "close" else "open"
         caps = getattr(self.rt, "capabilities", None)
         if caps is not None and "pick_place" not in caps:
@@ -249,7 +253,7 @@ class FixtureTasks:
         if held:
             self.set_task(tid, act, "failed", f"I'm holding {self.pretty(held)}. Put it down first, then I'll {act} {p['label']}.")
             return
-        fx, rt = self.fx, self.rt
+        fx = self.fx
         lo, hi = p["range"]
         if act == "open":
             try:
@@ -265,91 +269,162 @@ class FixtureTasks:
                           + (f" ({fx.frac(p) * 100:.0f}%)." if act == "open" else "."))
             return
         h0, out0 = fx.handle_now(p) if self.plant is not None else fx.handle_at(p, q0)
-        above = self._over_knob(p, h0)
-        if above:                                 # the hand comes from above: a knob right under another one is out
-            self.set_task(tid, act, "failed", f"I can't get my fingers around the handle of {p['label']}: {above} is right above it "
-                          "and my gripper only grasps handles from above (a robot that reaches in from the front could).")
-            return
         palm = self.hand_for(h0)
         role = self.role(palm)
         g = self.plant.grip.get(role) if self.plant is not None else None
         if self.plant is not None and g is None:
             self.set_task(tid, act, "failed", f"I have no gripper on my {self.limb(role)} to hold {p['label']}'s handle.")
             return
+        gen = self._operate_ways(tid, act, p, amt, q0, goal, h0, out0, palm, role, g)
+        if not sliced or self.plant is None:
+            from .tasks import _drain
+            _drain(gen)
+            return
+        self.search = (tid, gen)                  # the server loop: one way in per tick (pps/tasks.py search_tick)
+        self.set_task(tid, act, "planning", "Checking reach for every waypoint.")
+        self.search_tick()
+
+    def _operate_ways(self, tid, act, p, amt, q0, goal, h0, out0, palm, role, g):
+        """The ways in to a handle, one by one (a generator: it yields after each one the arm can't trace): from above
+        (the jaws close across the knob from over it), from the front and above, and straight from the front (along the
+        knob's outward direction). A way whose fingers or palm would run into something on the way in (the knob of the
+        drawer above, a shelf) is skipped; the planner keeps the gripper and wrist off the furniture nearby (a counter's
+        edge), so a way the arm can't trace for real is refused by its reach check. The first that works runs: the hand
+        moves rigidly with the handle (a drawer's slide, a door's arc); a door with a horizontal hinge held from above
+        pivots between the jaws (they close along its hinge axis), the hand staying upright."""
+        from . import tasks as T
+        from .world.fixtures import KNOB_OUT
+        fx, rt = self.fx, self.rt
         tip = g["tip"] if g else 0.0
         axis = g["axis"] if g else np.array([0, 1.0, 0])
         appr = g["approach"] if g else np.array([0, 0, 1.0])
+        depth = float(g.get("depth") or 0.018) if g else 0.018
         L = np.column_stack([axis, appr, np.cross(axis, appr)])
         R0 = self._part_R(p, q0)
-
-        def hand(qv):                             # the TCP and the hand orientation with the knob at joint value qv
-            hp, out = fx.handle_at(p, qv)
-            dR = self._part_R(p, qv) @ R0.T
-            o = dR @ out0
-            a = np.cross([0.0, 0.0, 1.0], [o[0], o[1], 0.0])
-            if np.linalg.norm(a) < 1e-6:          # a knob pointing up / down (a lid turned over): keep the start's jaw axis
-                a = dR @ np.cross([0.0, 0.0, 1.0], [out0[0], out0[1], 0.0])
-            a = a / (np.linalg.norm(a) or 1.0)
-            n = np.array([0.0, 0.0, -1.0])
-            W = np.column_stack([a, n, np.cross(a, n)])
-            qq = np.zeros(4)
-            mujoco.mju_mat2Quat(qq, (W @ L.T).flatten())
-            return hp + np.array([0, 0, tip - 0.010]), qq
-
+        zu = np.array([0.0, 0.0, 1.0])
+        o0 = np.array([out0[0], out0[1], 0.0])
+        if np.linalg.norm(o0) < 0.3:              # a knob pointing up / down (a lid turned over): from above only
+            o0 = np.array([-1.0, 0.0, 0.0])
+        o0 = o0 / np.linalg.norm(o0)
+        a0 = np.cross(zu, o0)
+        a0 = a0 / (np.linalg.norm(a0) or 1.0)     # the jaws close across the knob, horizontally
+        hinge = None
+        if p["type"] == "hinge":
+            Rh = np.zeros(9)
+            mujoco.mju_quat2Mat(Rh, p["home_quat"])
+            hinge = Rh.reshape(3, 3) @ np.asarray(p["axis"], float)
         n_s = max(2, int(abs(goal - q0) / (0.02 if p["type"] == "slide" else math.radians(5))) + 1)
-        samples = [hand(q0 + (goal - q0) * k / n_s) for k in range(n_s + 1)]
-        g0, qg = samples[0]
+        qvs = [q0 + (goal - q0) * k / n_s for k in range(n_s + 1)]
         cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()
         q_now = rt.data.mocap_quat[rt.hands_mid[palm]].copy()
         home = self.home_palm[palm]
-        kps, quats = [cur], [q_now]
-        from . import tasks as T
-        if home[2] < T.TABLE_TOP + 0.06 and home[0] < T.TABLE_X[0] + 0.05 and cur[2] < T.TABLE_TOP + 0.06 and g0[2] > T.TABLE_TOP:
-            kps.append(np.array([cur[0], cur[1], T.TABLE_TOP + 0.10]))
-            quats.append(q_now)
-        o0 = np.array([out0[0], out0[1], 0.0]) / (np.hypot(out0[0], out0[1]) or 1.0)
-        tall = g0[2] > T.TABLE_TOP + 0.05            # a machine / appliance on the surface: come from the side it faces
-        far0 = g0 + o0 * 0.18 + np.array([0, 0, 0.10])
-        if tall:
-            kps.append(far0)
-            quats.append(qg)
-        kps += [g0 + np.array([0, 0, 0.10]), g0]
-        quats += [qg, qg]
-        ev = {len(kps) - 1: "grasp_fx"}
-        for hp, qq in samples[1:]:
-            kps.append(hp)
-            quats.append(qq)
-        ev[len(kps) - 1] = "release_fx"
-        ge, qe = samples[-1]
-        kps.append(ge + np.array([0, 0, 0.10]))
-        quats.append(qe)
-        if tall:                                    # back out the way it came, not across the machine
-            kps += [ge + o0 * 0.18 + np.array([0, 0, 0.10]), far0]
-            quats += [qe, qe]
-        kps.append(home)
-        quats.append(self.home_quat[palm])
-        if self.plant is not None:
-            rt.set_obstacles((p["name"],), near=[h0, samples[-1][0]], radius=0.25, fixtures=True)
-            self.plant.grip_cmd(role, "open")
-        self.fxop = {"part": p, "goal": goal, "amount": amt, "palm": palm, "action": act, "q0": q0, "attached": False}
+        head = KNOB_OUT - 0.008                   # the knob's head centre (the handle point) stands this far off the front
+        first, blocked = None, None
         lab = p["label"]
         verb = "Opening" if act == "open" else "Closing"
-        self.done_msg = f"{'Opened' if act == 'open' else 'Closed'} {lab}."
-        gk = [k for k, e in ev.items() if e == "grasp_fx"][0]
-        ok = self._launch(tid, act, kps, palm, ev, "task", f"{verb} {lab}" + (f" to {amt * 100:.0f}%." if act == "open" else "."),
-                          quats=quats, loose=[(0, gk - 1)] if gk > 1 else None)
-        if not ok:
-            self.fxop = None
-            if self.task and self.task.get("status") == "failed" and "reach" in self.task.get("message", ""):
-                self.task["message"] = self.task["message"].rstrip(".") + f" ({lab} is out of reach for this robot)."
+        upright = abs(float(out0[2])) > 0.7
+        for pitch in HANDLE_PITCHES:
+            if upright and pitch != 90:
+                continue
+            P = math.radians(pitch)
+            n0 = -zu if pitch == 90 else -math.cos(P) * o0 - math.sin(P) * zu      # the approach (palm -> fingertips)
+            why = self._handle_blocked(p, h0, n0, a0)
+            if why:
+                blocked = blocked or why
+                continue
+            # the fingertips go past the head's centre along the approach (1 cm from above; from the front, to 1 cm off
+            # the front panel), never closer to the panel than 6 mm with the pads' width
+            dpast = 0.010 + 0.022 * math.cos(P)
+            if math.cos(P) > 1e-3:
+                dpast = min(dpast, (head - 0.006 - depth * math.sin(P)) / math.cos(P))
+            r0 = (dpast - tip) * n0                   # the TCP from the knob's head centre
+            W0 = np.column_stack([a0, n0, np.cross(a0, n0)])
+            pivot = pitch == 90 and hinge is not None and abs(float(np.dot(hinge, a0))) > 0.9
 
-    def _over_knob(self, p, h):
-        """What sits right above a knob (another drawer's knob, a shelf) within a hand's height: its label, or None."""
+            def hand(qv, W0=W0, r0=r0, n0=n0, pivot=pivot):
+                hp, _ = fx.handle_at(p, qv)
+                dR = np.eye(3) if pivot else self._part_R(p, qv) @ R0.T
+                qq = np.zeros(4)
+                mujoco.mju_mat2Quat(qq, (dR @ W0 @ L.T).flatten())
+                return hp + dR @ r0, qq, dR @ n0
+            samples = [hand(qv) for qv in qvs]
+            g0, qg, _ = samples[0]
+            kps, quats = [cur], [q_now]
+            if home[2] < T.TABLE_TOP + 0.06 and home[0] < T.TABLE_X[0] + 0.05 and cur[2] < T.TABLE_TOP + 0.06 and g0[2] > T.TABLE_TOP:
+                kps.append(np.array([cur[0], cur[1], T.TABLE_TOP + 0.10]))
+                quats.append(q_now)
+            tall = g0[2] > T.TABLE_TOP + 0.05         # a machine / appliance on the surface: come from the side it faces
+            front = pitch < 90
+            far0 = g0 + o0 * 0.18 + np.array([0, 0, 0.10])
+            pre = g0 - n0 * 0.10
+            if tall and not front:
+                kps.append(far0)
+                quats.append(qg)
+            if front:                                 # out in front of the furniture first, then in along the approach
+                lead = pre + o0 * 0.08
+                if lead[2] < T.TABLE_TOP + 0.10 and cur[2] > T.TABLE_TOP:   # (under a counter: down in front of its edge)
+                    kps.append(np.array([lead[0], lead[1], T.TABLE_TOP + 0.10]))
+                    quats.append(qg)
+                kps.append(lead)
+                quats.append(qg)
+            k_in = len(kps)
+            kps += [pre, g0]
+            quats += [qg, qg]
+            ev = {len(kps) - 1: "grasp_fx"}
+            for hp, qq, _ in samples[1:]:
+                kps.append(hp)
+                quats.append(qq)
+            ev[len(kps) - 1] = "release_fx"
+            k_out = len(kps) - 1
+            ge, qe, ne = samples[-1]
+            back = ge - ne * 0.10
+            kps.append(back)
+            quats.append(qe)
+            if tall and not front:                    # back out the way it came, not across the machine
+                kps += [ge + o0 * 0.18 + np.array([0, 0, 0.10]), far0]
+                quats += [qe, qe]
+            if front and back[2] < T.TABLE_TOP + 0.10:   # up in front of the furniture before going home over it
+                kps.append(np.array([back[0], back[1], T.TABLE_TOP + 0.10]))
+                quats.append(qe)
+            kps.append(home)
+            quats.append(self.home_quat[palm])
+            if self.plant is not None:
+                rt.set_obstacles((p["name"],), near=[h0, samples[-1][0], pre], radius=0.25, fixtures=True, static=True)
+                self.plant.grip_cmd(role, "open")
+            self.fxop = {"part": p, "goal": goal, "amount": amt, "palm": palm, "action": act, "q0": q0, "attached": False, "pitch": pitch}
+            self.done_msg = f"{'Opened' if act == 'open' else 'Closed'} {lab}."
+            loose = [(0, k_in - 1)] if k_in > 1 else []
+            loose.append((k_out + 1, len(kps) - 1))
+            ok = self._launch(tid, act, kps, palm, ev, "task", f"{verb} {lab}" + (f" to {amt * 100:.0f}%." if act == "open" else "."),
+                              quats=quats, loose=loose)
+            if ok:
+                return
+            self.fxop = None
+            if first is None:                         # all failing: the first way's verdict stands
+                first = (dict(self.task), rt.path)
+            if getattr(self, "fail_reason", "reach") != "reach":
+                break
+            yield
+        if first is None:                             # every way in is blocked
+            self.set_task(tid, act, "failed", f"I can't get my fingers around the handle of {lab}: {blocked} is right above it "
+                          "and in front of it, so my gripper can't get in from above or from the front.")
+            return
+        self.task, rt.path = first
+        if self.task.get("status") == "failed" and "reach" in self.task.get("message", ""):
+            self.task["message"] = self.task["message"].rstrip(".") + f" ({lab} is out of reach for this robot)."
+
+    def _handle_blocked(self, p, h, n, a):
+        """What is in the way of a hand coming in along `n` (unit, palm -> fingertips) to the knob at h: the fingers and
+        the palm behind them sweep back along -n (rays from beside the knob, 16 cm): another drawer's knob, a shelf, a
+        counter -> its label, or None. Robots and objects don't count (the planner keeps clear of those)."""
         m, d = self.rt.model, self.rt.data
         gid = np.zeros(1, np.int32)
-        for dx, dy in ((0.0, 0.0), (0.012, 0.0), (-0.012, 0.0)):
-            start = np.array([h[0] + dx, h[1] + dy, h[2] + 0.025])
-            dist = mujoco.mj_ray(m, d, start, np.array([0.0, 0.0, 1.0]), np.array([1, 0, 0, 0, 0, 0], np.uint8), 1, p["bid"], gid)
+        t = np.cross(n, a)
+        t = t / (np.linalg.norm(t) or 1.0)
+        back = -np.asarray(n, float)
+        for off in (0.0, 0.012, -0.012):
+            start = np.asarray(h, float) + back * 0.025 + t * off
+            dist = mujoco.mj_ray(m, d, start, back, np.array([1, 0, 0, 0, 0, 0], np.uint8), 1, p["bid"], gid)
             if 0 <= dist < 0.16:
                 b = m.geom_bodyid[gid[0]]
                 q = next((x for x in self.fx.by_name.values() if x["bid"] == b), None)
@@ -555,7 +630,7 @@ class FixtureTasks:
         g = pl.grip.get(role)
         if g is None:
             return False, False
-        geoms = set(self.fx.geoms(p))
+        geoms = self._knob_geoms(p)
         a, b = set(g["pads"][0]), set(g["pads"][1])
         ta = tb = False
         d = pl.d
@@ -566,6 +641,17 @@ class FixtureTasks:
                 ta |= o in a
                 tb |= o in b
         return ta, tb
+
+    def _knob_geoms(self, p):
+        """The handle's own geoms (the knob's stem and head), not the panel it stands on: a pad pressed on a drawer's
+        front isn't holding its handle."""
+        if "knob_geoms" not in p:
+            m = self.rt.model
+            loc = np.asarray(p["handle"]["local"], float) if p.get("handle") else None
+            knob = {k for k in self.fx.geoms(p) if loc is not None and m.geom_type[k] == mujoco.mjtGeom.mjGEOM_CYLINDER
+                    and float(np.linalg.norm(m.geom_pos[k] - loc)) < 0.05}
+            p["knob_geoms"] = knob or set(self.fx.geoms(p))
+        return p["knob_geoms"]
 
     def _fx_impedance(self, on):
         """Compliance while a drawer / door is in hand: the plant's impedance mode (restored after)."""

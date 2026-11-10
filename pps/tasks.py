@@ -22,6 +22,7 @@ REGIONS = {  # robot frame: x forward, y left
 }
 HOVER = 0.08
 PLACE_GAP = 0.004        # physics: the object's bottom this far above the surface when the hand stops to let go
+FX_TOL = 0.03                   # m: how far the planned hand may be off a handle's path while it holds it (open / close)
 CRIT_TOL = 0.015         # physics: the plan must bring the jaws this close to the grasp and the drop point
 RELEASE_OPEN = 0.35      # physics: letting go, the jaws open this fraction of their travel past where they came free
 LIFT = 0.08              # physics: lift this far off the surface (higher only to clear what it passes over)
@@ -590,7 +591,12 @@ class Tasks(FixtureTasks):
                 ok[j] = dists[j] < 2 * rt.validator.reach_tol
             if self.plant is not None and k1 == len(keypoints) - 1 and k0 > 0:
                 ok[-1] = True                     # physics: going home after the work: wherever it ends up near home is fine
-        crit = [idx_map[k] for k, nm in events.items() if nm in ("grasp", "release")] if self.plant is not None else []
+        crit = [idx_map[k] for k, nm in events.items() if nm in ("grasp", "release", "grasp_fx")] if self.plant is not None else []
+        fx_g = next((idx_map[k] for k, nm in events.items() if nm == "grasp_fx"), None)
+        fx_r = next((idx_map[k] for k, nm in events.items() if nm == "release_fx"), None)
+        if self.plant is not None and fx_g is not None and fx_r is not None:
+            for j in range(fx_g + 1, fx_r + 1):   # holding a handle: the hand has to follow the joint's path closely (a
+                ok[j] = ok[j] and dists[j] < FX_TOL   # hand that falls behind it pulls the knob out of its jaws)
         # dropping into a container (place_in) needs the object inside it, not exactly on a spot: the release may be a few cm
         # off (the container's walls keep the hand back); the check after the release says whether it ended up inside
         tol = {idx_map[k]: (0.05 if nm == "release" and action == "place_in" else CRIT_TOL) for k, nm in events.items()}
@@ -603,7 +609,7 @@ class Tasks(FixtureTasks):
             rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
             rt.path_msg = None
             self.kind = None
-            where = "the grasp" if events.get(next(k for k in events if idx_map[k] == j)) == "grasp" else "the spot"
+            where = "the grasp" if events.get(next(k for k in events if idx_map[k] == j)) in ("grasp", "grasp_fx") else "the spot"
             self.set_task(tid, action, "failed", f"I can't: my {self.limb(side, 'arm')} can't get my {self.limb(side)} exactly to "
                                                  f"{where} ({dists[j] * 100:.1f} cm off: it is at the edge of my reach or something is in the way).")
             return False
@@ -1332,8 +1338,10 @@ class Tasks(FixtureTasks):
                 self.search = None
                 return
             if time.time() - t0 > budget:
-                self.set_task(tid, "pick_place", "planning", self.task.get("message") if self.task.get("status") == "planning"
-                              else f"Working out how to pick up {self.pretty(self.cur)}.")
+                act = self.task.get("action") or "pick_place"
+                self.set_task(tid, act, "planning", self.task.get("message") if self.task.get("status") == "planning"
+                              else f"Working out how to pick up {self.pretty(self.cur)}." if act == "pick_place"
+                              else "Checking reach for every waypoint.")
                 self.rt.path = None
                 return
 

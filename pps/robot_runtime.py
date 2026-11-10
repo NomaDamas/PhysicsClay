@@ -255,12 +255,16 @@ class Runtime:
                 di.mocap_pos[mid] = d.xpos[p["bid"]]
                 di.mocap_quat[mid] = d.xquat[p["bid"]]
 
-    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False):
+    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False, static=False):
         """Physics: the planner keeps the hand clear of the objects on the table (synced from the plant), except `exclude`
         (the one being picked). Objects are mocap bodies in the planner's model, so their poses are copied over.
         Generated worlds (issue #48): `fixtures` adds the walls of drawers / doors / bins nearby (their floors and the
         conveyor never count; a fixture part named in `exclude` is the one being operated); `near` (points) keeps only
-        what is within `radius` of them, so a cluttered room doesn't cost the IK a thousand distance checks."""
+        what is within `radius` of them, so a cluttered room doesn't cost the IK a thousand distance checks. `static`
+        (with `near`) also adds the static furniture there (a counter's edge, a cabinet's sides: world geoms `fx_*` and
+        the work surface), and the whole arm keeps off the furniture there too: a hand reaching under a counter for a
+        drawer's knob must not put its wrist through the counter's edge or its forearm on the knob of the drawer above
+        (the plant would stop it there)."""
         if self.plant is None:
             return
         mi, pl = self.configuration.model, self.plant
@@ -291,6 +295,10 @@ class Runtime:
             return True
         geoms = [g for g in range(mi.ngeom) if mi.geom_contype[g] and mi.geom_bodyid[g] not in pl.robot_bodies
                  and mi.geom_bodyid[g] not in skip and mi.geom_bodyid[g] not in targets and mi.geom_bodyid[g] != 0 and keep(g)]
+        if static and pts is not None:
+            named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            geoms += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] == 0 and mi.geom_contype[g]
+                      and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and (named(g).startswith("fx_") or named(g) == "table") and keep(g)]
         for lim in (getattr(self, "_obstacle_limit", None), getattr(self, "_arm_obstacle_limit", None)):
             if lim in self.limits:
                 self.limits.remove(lim)
@@ -304,7 +312,7 @@ class Runtime:
         # generated world's furniture (fx_ bodies: counters, cabinets, drawer walls), which the arm reaches in front of and
         # into (opening a drawer, a shelf): the gripper's own limit keeps the hand clear of those
         fxb = {b for b in range(mi.nbody) if (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_BODY, b) or "").startswith("fx_")}
-        arm_geoms = [g for g in geoms if mi.geom_bodyid[g] not in fxb]
+        arm_geoms = geoms if static else [g for g in geoms if mi.geom_bodyid[g] not in fxb and mi.geom_bodyid[g] != 0]
         if arm_geoms and arm:
             self._arm_obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(arm, arm_geoms)], minimum_distance_from_collisions=0.008,
                                                                     collision_detection_distance=0.06)
