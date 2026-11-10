@@ -591,7 +591,9 @@ class Tasks(FixtureTasks):
                 ok[j] = dists[j] < 2 * rt.validator.reach_tol
             if self.plant is not None and k1 == len(keypoints) - 1 and k0 > 0:
                 ok[-1] = True                     # physics: going home after the work: wherever it ends up near home is fine
-        crit = [idx_map[k] for k, nm in events.items() if nm in ("grasp", "release", "grasp_fx")] if self.plant is not None else []
+        # (closing a drawer / door, the hand has to get all the way to where it is shut: else it stays ajar)
+        crit = [idx_map[k] for k, nm in events.items() if nm in ("grasp", "release", "grasp_fx") or (nm == "release_fx" and action == "close")
+                ] if self.plant is not None else []
         fx_g = next((idx_map[k] for k, nm in events.items() if nm == "grasp_fx"), None)
         fx_r = next((idx_map[k] for k, nm in events.items() if nm == "release_fx"), None)
         if self.plant is not None and fx_g is not None and fx_r is not None:

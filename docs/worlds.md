@@ -100,11 +100,17 @@ or got wedged is left out. Results are cached per `(template, seed)`.
 
 Task actions (`docs/PROTOCOL.md` "v15 · Worlds"):
 
-* `open {fixture, amount 0..1 (default 0.8)}` / `close {fixture}`: the gripper comes down on the knob, closes, and
-  moves it along the drawer's slide or the door's arc (planned on the real joint geometry, every point reach-checked)
-  in the plant's impedance mode (compliance), then lets go and backs off. Honest failures: out of reach (with how far),
-  the knob is right under another one (grasps come from above), the jaws couldn't close on it, they slipped off, or it's
-  stuck (the hand falls behind the plan: "it's stuck at 5 % open").
+* `open {fixture, amount 0..1 (default 0.8)}` / `close {fixture}`: the gripper comes to the knob one of three ways
+  (from above, from the front and above at 50°, or straight from the front along the knob's outward direction, with
+  the jaws across the knob), closes on it, and moves it along the drawer's slide or the door's arc (planned on the
+  real joint geometry, the hand moving rigidly with the handle; every point reach-checked, the jaws within 1.5 cm of
+  the knob and within 3 cm of the handle's path, a close all the way to shut) in the plant's impedance mode
+  (compliance), then lets go and backs off. A way whose fingers would sweep into something (the knob of the drawer
+  above, a shelf) is skipped; while it works the gripper, the wrist, the arm and a mobile base keep off the furniture
+  nearby (a counter's edge, the other drawers), so a way the arm can't really trace is refused by its reach check; the
+  first way that works runs, one tried per server tick. A close pushes 1 cm (2°) past shut, so a compliant hand presses
+  it closed. Honest failures: out of reach (the way that came closest says how far), the jaws couldn't close on the
+  knob, they slipped off, or it's stuck (the hand falls behind the plan: "it's stuck at 5 % open").
 * `pick_from {container, object?}`: take it out and hold it, lifted clear (the drawer / door in front of it must be
   open at least 50–60 %, else it says so); things in the same bin aren't kept away from (the fingers go in among them).
 * `place_in {object?, container}`: a free spot inside (a rack picks a free slot), let go just above what is there,

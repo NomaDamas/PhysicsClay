@@ -1,7 +1,8 @@
 """Working with fixtures and containers (issue #48), mixed into pps.tasks.Tasks.
 
 Task actions (a `{"type": "task", "action": ...}` message, docs/PROTOCOL.md "v15 · Worlds"):
-  * `open {fixture, amount (0..1, default 0.8)}` / `close {fixture}`: grasp the handle (a knob) from above, then move it
+  * `open {fixture, amount (0..1, default 0.8)}` / `close {fixture}`: grasp the handle (a knob) from above, from the front
+    and above, or from the front (the first way in the arm can trace: HANDLE_PITCHES, _operate_ways), then move it
     along the joint (a drawer's slide, a door's arc) slowly and compliantly (the plant's impedance mode), let go and back
     off. Honest failures: no such part, out of reach (the whole motion is pre-checked), the jaws can't close on the knob,
     they slip off it, or it doesn't move (blocked: the hand falls behind the plan) -> it says how far it got.
@@ -315,6 +316,9 @@ class FixtureTasks:
             hinge = Rh.reshape(3, 3) @ np.asarray(p["axis"], float)
         n_s = max(2, int(abs(goal - q0) / (0.02 if p["type"] == "slide" else math.radians(5))) + 1)
         qvs = [q0 + (goal - q0) * k / n_s for k in range(n_s + 1)]
+        if act == "close":                        # push it shut: the plan goes a little past closed (1 cm, 2 deg), the
+            lo = p["range"][0]                    # part stops at its limit and the compliant hand presses on it
+            qvs.append(lo - (0.01 if p["type"] == "slide" else math.radians(2)))
         cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()
         q_now = rt.data.mocap_quat[rt.hands_mid[palm]].copy()
         home = self.home_palm[palm]
@@ -400,8 +404,9 @@ class FixtureTasks:
             if ok:
                 return
             self.fxop = None
-            if first is None:                         # all failing: the first way's verdict stands
-                first = (dict(self.task), rt.path)
+            worst = max(getattr(rt, "last_precheck_dists", None) or [1e9])
+            if first is None or worst < first[2]:     # all failing: the verdict of the way that came closest stands
+                first = (dict(self.task), rt.path, worst)
             if getattr(self, "fail_reason", "reach") != "reach":
                 break
             yield
@@ -409,7 +414,7 @@ class FixtureTasks:
             self.set_task(tid, act, "failed", f"I can't get my fingers around the handle of {lab}: {blocked} is right above it "
                           "and in front of it, so my gripper can't get in from above or from the front.")
             return
-        self.task, rt.path = first
+        self.task, rt.path = first[0], first[1]
         if self.task.get("status") == "failed" and "reach" in self.task.get("message", ""):
             self.task["message"] = self.task["message"].rstrip(".") + f" ({lab} is out of reach for this robot)."
 
@@ -712,6 +717,9 @@ class FixtureTasks:
                 self._fx_done_msg()
                 self.ph = None
                 self._hold_path(False)
+                # let go: on the way home the arm keeps off the part it just moved, where it is now (an open drawer
+                # sticks out toward the robot; the planner had it where it was, and an elbow swept it open again)
+                rt.set_obstacles((), near=[tcp.copy(), self.home_palm[palm]], radius=0.30, fixtures=True, static=True)
 
     def _fx_done_msg(self):
         op = self.fxop

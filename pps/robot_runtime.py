@@ -303,7 +303,7 @@ class Runtime:
             if lim in self.limits:
                 self.limits.remove(lim)
         self._obstacle_limit = self._arm_obstacle_limit = None
-        hand, arm = self._obstacle_links()
+        hand, arm, base = self._obstacle_links()
         if geoms and hand:
             self._obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(hand, geoms)], minimum_distance_from_collisions=0.012,
                                                                 collision_detection_distance=0.08)
@@ -313,14 +313,26 @@ class Runtime:
         # into (opening a drawer, a shelf): the gripper's own limit keeps the hand clear of those
         fxb = {b for b in range(mi.nbody) if (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_BODY, b) or "").startswith("fx_")}
         arm_geoms = geoms if static else [g for g in geoms if mi.geom_bodyid[g] not in fxb and mi.geom_bodyid[g] != 0]
-        if arm_geoms and arm:
-            self._arm_obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(arm, arm_geoms)], minimum_distance_from_collisions=0.008,
+        pairs = [(arm, arm_geoms)] if arm_geoms and arm else []
+        if base and (fixtures or static) and fx is not None:
+            # a mobile base keeps off the furniture around it (the IK drives it to reach: it drove into the cabinets
+            # going home after opening a drawer, and pushed the drawer shut again)
+            bp = np.array([self.ik_data.xpos[mi.geom_bodyid[g]] for g in base]).mean(axis=0)
+            named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            furn = [g for g in range(mi.ngeom) if mi.geom_contype[g] and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
+                    and ((mi.geom_bodyid[g] == 0 and named(g).startswith("fx_")) or (mi.geom_bodyid[g] in fx_bodies and "_floor" not in named(g)))
+                    and float(np.linalg.norm(self.ik_data.geom_xpos[g][:2] - bp[:2])) - mi.geom_rbound[g] < 0.6]
+            if furn:
+                pairs.append((base, furn))
+        if pairs:
+            self._arm_obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=pairs, minimum_distance_from_collisions=0.008,
                                                                     collision_detection_distance=0.06)
             self.limits.append(self._arm_obstacle_limit)
 
     def _obstacle_links(self):
         """Physics: collision geoms that keep clear of the objects: (the gripper and the last links of each arm, the rest
-        of each arm up to where it joins the body: the torso, the legged body, a mobile base). Cached per model."""
+        of each arm up to where it joins the body: the torso, the legged body, a mobile base; a mobile base's chassis,
+        which keeps off the furniture). Cached per model."""
         cache = getattr(self, "_obstacle_links_cache", None)
         if cache is not None:
             return cache
@@ -351,8 +363,12 @@ class Runtime:
         col = lambda g: bool(mi.geom_contype[g] or mi.geom_conaffinity[g])
         hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and col(g) and g not in hand]
         arm = [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in upper - near and col(g)]
-        self._obstacle_links_cache = (hand, arm)
-        return hand, arm
+        base = []                                 # a mobile base: the rest of the robot (its chassis)
+        if prof is not None and getattr(prof, "base", "") == "mobile":
+            base = [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in pl.robot_bodies and mi.geom_bodyid[g] not in near | upper
+                    and col(g) and g not in hand]
+        self._obstacle_links_cache = (hand, arm, base)
+        return hand, arm, base
 
     def hold_here(self):
         """Stop where the robot is: the planner takes the measured pose so q_des doesn't keep pulling the arm."""

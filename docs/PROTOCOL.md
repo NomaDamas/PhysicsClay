@@ -677,8 +677,8 @@ Guide, templates, fixtures, per-robot results and how to add your own: `docs/wor
 - Task actions: `{type:"task", action:"open", fixture, amount?: 0..1 (0.8)}`, `{action:"close", fixture}`,
   `{action:"pick_from", container, object?}`, `{action:"place_in", object?, container}`. `fixture` / `container` are a
   name or what people say ("the top drawer", "the fridge door", "the empty tote", "the tube rack" = its first free
-  slot). Answers in `state.task` like any task (`running` → `done` | `failed` with the reason: out of reach, a knob
-  under another one, no grip, slipped off the handle, stuck at N % open, "open the top drawer first", didn't end up in
+  slot). Answers in `state.task` like any task (`planning` while the ways in to a handle are tried, one per tick →
+  `running` → `done` | `failed` with the reason: out of reach, a knob blocked from above and from the front, no grip, slipped off the handle, stuck at N % open, "open the top drawer first", didn't end up in
   the container). With `preview: true` each becomes a one-step plan card.
 - `{type:"task", action:"sequence", id, steps: [task, ...], text?, preview?}`: several steps in a row. With `preview`, a
   plan card (`state.plan` with `seq: true`, `steps` = one per task, the first step checked for real, `phase`
