@@ -222,6 +222,10 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
                  # 30 N m): 3x stiffer for its heavier arms (the hand trailed the plan by 1.5 cm setting the mug down; the
                  # effort caps stay, well inside the model's 60-130 N m shoulder / elbow limits)
                  "stiffer": [(("shoulder", "elbow", "waist"), 3.0), (("wrist",), 3.0)],
+                 # arms down beside the body, grippers 9 cm out from the hips (the model's own ready pose holds them 20 cm
+                 # over the work surface at chest height: into a bench-top machine's enclosure)
+                 "home": {"right_shoulder_pitch_joint": 0.3, "right_shoulder_roll_joint": -0.3, "right_elbow_joint": 0.8,
+                          "left_shoulder_pitch_joint": 0.3, "left_shoulder_roll_joint": 0.3, "left_elbow_joint": 0.8},
                  # the Sharpa hands' 22 joints aren't driven: a two-pad gripper on each palm, jaws across the palm (thumb
                  # up), the fingers neither collide nor are drawn
                  "grip": {r: dict(_built(0.15, approach=(0, 0, 1), axis=(1, 0, 0), length=0.09, base=0.06), hide_hand=True,

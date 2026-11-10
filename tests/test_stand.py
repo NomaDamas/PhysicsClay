@@ -57,7 +57,10 @@ def test_h2_world_starts_standing_with_palm_grippers_and_link_hulls(h2_world):
         assert q[mi.jnt_qposadr[mi.joint(f"{side}_knee_joint").id]] > 0.4
         assert abs(d.site_xpos[mi.site(f"{side}_forefoot").id][2]) < 0.003     # feet on the floor
         for k in ("pad_a", "pad_b", "palm_col"):
-            assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, f"{side}_{k}") >= 0
+            g = mujoco.mj_name2id(mi, mujoco.mjtObj.mjOBJ_GEOM, f"{side}_{k}")
+            assert g >= 0
+            front = d.geom_xpos[g][0] + (np.abs(d.geom_xmat[g].reshape(3, 3)) @ mi.geom_size[g])[0]
+            assert front < 0.20                                    # home: arms down, the grippers short of the work surface
         assert mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, f"{side}_tcp") >= 0
     hulls = [g for g in range(m.ngeom) if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "").startswith("pc_hull_")]
     assert len(hulls) >= 10
@@ -81,9 +84,23 @@ def test_h2_hulls_dont_touch_the_robot_or_table_at_home(h2_world):
         b1, b2 = m.geom_bodyid[c.geom1], m.geom_bodyid[c.geom2]
         assert not (b1 in robot and b2 in robot), "self contact at home"
         if b1 in robot or b2 in robot:      # only the feet stand on something
-            g = c.geom1 if b1 in robot else c.geom2
-            assert m.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and "foot" in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or "") \
-                or "heel" in (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or ""), mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g)
+            n = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, c.geom1 if b1 in robot else c.geom2) or ""
+            assert "forefoot" in n or "heel" in n, n
+
+
+def test_h2_stands_clear_of_a_bench_top_machine():
+    """machine_tending: the CNC's enclosure starts 10 cm past the surface's near edge; the H2's grippers at home (arms
+    down) stay out of it (the model's ready pose, forearms forward, put a palm 3 cm into its side wall)."""
+    w = scene.build("h2", {"template": "machine_tending", "seed": 1}, physics=True)
+    m = w.model
+    d = mujoco.MjData(m)
+    d.qpos[:len(w.home_q)] = w.home_q
+    mujoco.mj_forward(m, d)
+    name = lambda g: mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or f"geom {g}"
+    clash = [f"{name(c.geom1)} / {name(c.geom2)}" for c in (d.contact[i] for i in range(d.ncon))
+             if (m.geom_bodyid[c.geom1] in w.robot_bodies) != (m.geom_bodyid[c.geom2] in w.robot_bodies) and c.dist < -0.003
+             and "floor" not in name(c.geom1) + name(c.geom2)]
+    assert not clash, clash
 
 
 def test_other_bodies_get_no_hulls():
