@@ -484,13 +484,16 @@
     if (atBottom) f.scrollTop = f.scrollHeight;
   }
   let lastLine = { k: "", t: "", at: 0 };
+  let lastSaid = { t: "", at: 0 }; // P1 datasets: the words that asked for a task become the episode's language
   function addLine(kind, text) {
     // the same robot sentence can arrive twice (task result + a feature's own echo): show it once
     if (kind === lastLine.k && text === lastLine.t && Date.now() - lastLine.at < 4000) return lastLine.el;
     const d = document.createElement("div"); d.className = "line " + kind;
     const who = document.createElement("span"); who.className = "who"; who.textContent = kind === "user" ? "YOU" : kind === "robot" ? "ROBOT" : "·";
     const t = document.createElement("span"); t.className = "txt"; t.textContent = text;
-    d.append(who, t); feedAppend(d); lastLine = { k: kind, t: text, at: Date.now(), el: d }; return d;
+    d.append(who, t); feedAppend(d); lastLine = { k: kind, t: text, at: Date.now(), el: d };
+    if (kind === "user") lastSaid = { t: String(text || "").slice(0, 300), at: Date.now() };
+    return d;
   }
   function makeCard(id, action, args, source) {
     const card = document.createElement("article"); card.className = "card"; card.dataset.status = "planning"; card.dataset.id = id;
@@ -517,7 +520,8 @@
     const p = new Promise((res) => { rec.resolve = res; });
     const finish = (r) => { if (rec.settled) return; rec.settled = true; clearTimeout(rec.timer); rec.resolve(r); };
     rec.finish = finish;
-    if (!send(Object.assign({ type: "task", id, action }, args))) {
+    const said = lastSaid.t && Date.now() - lastSaid.at < 30000 && !args.utterance ? { utterance: lastSaid.t } : {};
+    if (!send(Object.assign({ type: "task", id, action }, args, said))) {
       rec.status = "failed"; rec.message = "Not connected to the robot."; updateCard(rec);
       finish({ ok: false, status: "failed", message: rec.message });
       return p;
