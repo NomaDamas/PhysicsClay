@@ -225,7 +225,8 @@ def _parallel_pads(spec, role, g, body, tcp, Rs):
 def _native_pads(spec, role, g):
     """A model's own fingers, made to grasp: flat pads where the fingers really touch things (g["pads"]: boxes in the finger
     bodies' frames, from the finger meshes) when the model's collision hulls don't match the finger's inner face, those
-    hulls switched off for contact (g["nocollide"]: geom names), and the pad contact (friction, stiff, torsional) on every
+    hulls switched off for contact (g["nocollide"]: geom names; g["nocollide_mesh"]: every mesh hull on the pad bodies),
+    and the pad contact (friction, stiff, torsional) on every
     geom the fingers grasp with. Planner and plant both get them (geom ids stay aligned)."""
     off = set(g.get("nocollide", ()))
     for side in ("a", "b"):
@@ -236,7 +237,7 @@ def _native_pads(spec, role, g):
     for side in ("a", "b"):
         for bn in g[side]:
             for geom in spec.body(bn).geoms:
-                if geom.name in off:
+                if geom.name in off or (g.get("nocollide_mesh") and geom.type == mujoco.mjtGeom.mjGEOM_MESH):
                     geom.contype, geom.conaffinity = 0, 0
                 elif (geom.contype or geom.conaffinity) and not geom.name.startswith(f"{role}_pad_"):
                     geom.friction = list(PAD_FRICTION)

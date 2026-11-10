@@ -120,6 +120,17 @@ def _sg3_grip():
                 room=0.04)   # pad (0.8 cm) + the finger strip outside it (~1.5 cm) + 1.5 cm to open: a spot needs that beside it
 
 
+def _xarm_grip():
+    """uFactory xArm gripper: the model collides with each finger's convex hull, a single contact point on a thin handle
+    (a spoon lying in a drawer), about which a held long thing pivots and creeps out of the jaws. The real finger has a
+    flat rubber tip (3.2 x 0.8 cm, from the finger mesh: its inner face at 2.6 cm from the finger's axis, the last 8 mm);
+    that tip is the pad (box: a line contact across a handle, which holds it square), the hulls don't touch things."""
+    pads = {"a": [{"body": "left_finger", "pos": (0.0, -0.0235, 0.057), "size": (0.015, 0.0025, 0.0045)}],
+            "b": [{"body": "right_finger", "pos": (0.0, 0.0235, 0.057), "size": (0.015, 0.0025, 0.0045)}]}
+    return dict(_native("gripper", 0, 255, ("left_finger",), ("right_finger",), 0.085, tcp=(0, 0, -0.03), boost=0.62, pads=pads),
+                nocollide_mesh=True)
+
+
 def _aloha_grip(r):
     """ViperX 300 fingers (ALOHA): the model's finger capsule sits ~1 cm inside the finger mesh near the tips, so a flat
     3.6 x 1.4 cm pad on each fingertip's inner face (from the mesh) does the grasping; open = 0.041 (6.8 cm at the pads)."""
@@ -153,7 +164,7 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         "xarm7", "uFactory xArm7", "arm", EX + "ufactory_xarm7/xarm7.xml",
         {"x": 0.02, "y": 0.0, "yaw": 0, "on": "surface", "pedestal": True}, {"right": "link_tcp"}, "home", "fixed",
         ARM_CAPS, freeze=("driver", "finger", "knuckle"), prompt="pps/world/prompts/xarm7.md",
-        physics={"payload": 3.5, "grip": {"right": _native("gripper", 0, 255, ("left_finger",), ("right_finger",), 0.085, tcp=(0, 0, -0.03), boost=0.62)}}),
+        physics={"payload": 3.5, "grip": {"right": _xarm_grip()}}),
     RobotProfile(
         "iiwa14", "KUKA LBR iiwa 14", "arm", EX + "kuka_iiwa_14/iiwa14.xml",
         {"x": -0.10, "y": 0.0, "yaw": 0, "on": "surface", "pedestal": True}, {"right": "attachment_site"}, "home", "fixed",
