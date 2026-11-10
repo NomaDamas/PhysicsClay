@@ -158,6 +158,32 @@ async def run(t):
     ok = await wait_for(t, lambda c: c.get("given") == "mug", 3.0)
     t.check("copresence: lets go when your hand is close -> you hold the mug", ok and "mug" not in (t.state().get("holding") or {}).values(),
             f"given={_cp(t).get('given')} phase={(_cp(t).get('handover') or {}).get('phase')}")
+    if ok:   # 5b. the person draws their hand back with it: the jaws open first, the mug comes along, it isn't thrown or dropped
+        away = [tgt[0] + 0.15, tgt[1], tgt[2]]
+        start = objpos(t, "mug")
+        await feed(t, [synth_pose(offer=away)] * 20)
+        track, sim, last, t0 = [start] if start else [], 0.0, None, time.time()
+        while sim < 4.0 and time.time() - t0 < 40:            # 4 s of the robot's time: open, clear, out, to your hand
+            await t.pump(0.2)
+            m = objpos(t, "mug")
+            if m:
+                track.append(m)
+            ph = t.state().get("physics") or {}
+            if ph.get("mode") != "dynamic":
+                sim = time.time() - t0
+                continue
+            now = float(ph.get("time") or 0.0)
+            sim += max(0.0, now - last) if last is not None and now >= last else 0.0
+            last = now
+        j = _cp(t).get("joints") or {}
+        sd = c0.get("offer") or "l"
+        hand = [(a + b) / 2 for a, b in zip(j[f"{sd}_wrist"], j[f"{sd}_index"])] if f"{sd}_wrist" in j and f"{sd}_index" in j else away
+        end = track[-1] if track else None
+        t.check("copresence: you take the mug away: it comes with your hand (not thrown, not dropped)",
+                _cp(t).get("given") == "mug" and start and end and math.dist(end, hand) < 0.09 and math.dist(end, away) < math.dist(start, away) - 0.05
+                and min(p[2] for p in track) > TABLE_TOP + 0.05 and "mug" not in (t.state().get("holding") or {}).values(),
+                f"mug {start} -> {end}, your hand {[round(x, 3) for x in hand]}, lowest z {min((p[2] for p in track), default=0):.3f}, "
+                f"given={_cp(t).get('given')}")
 
     # 6. hand paths in robot-world coordinates
     paths = _cp(t).get("hand_paths") or {}
