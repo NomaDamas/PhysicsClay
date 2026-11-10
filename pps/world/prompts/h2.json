@@ -1,15 +1,18 @@
 {
   "label": "Unitree H2",
   "kind": "humanoid",
-  "tagline": "Full-size humanoid, experimental: whole-body motion and imitation; grasping not yet.",
+  "tagline": "Full-size humanoid: picks with palm grippers, whole-body motion and imitation.",
   "examples": [
+    "Put the mug on the right",
     "Copy my arms",
-    "Learn this wave from my video",
     "Point at the mug",
     "Make the second half of the dance slower"
   ],
   "tools": [
     "point",
-    "show"
+    "zone",
+    "goal",
+    "show",
+    "path"
   ]
 }

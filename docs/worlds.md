@@ -136,7 +136,7 @@ follows the hand and what is inside rides along.
 
 Other bodies build in every world they fit (`tests/test_worlds.py` checks one of each kind: arm, humanoid, two-arm rig,
 mobile base, quadruped) and stand clear of the furniture; their grasps are as reliable as on the table
-(`docs/V1.md` P0 table: the G1 picks, the experimental bodies don't yet).
+(`docs/V1.md` P0 table: every body picks, the H2 too since v1's final pass).
 
 ## Limitations
 

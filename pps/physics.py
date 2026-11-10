@@ -11,6 +11,7 @@ with the legs held by their actuators: dynamic walking needs a learned policy an
 object rides the hand (mocap). Robot joints come first in qpos (objects are attached after the robot), so the
 planner's q is a prefix of the plant's qpos.
 """
+import functools
 import math
 import os
 import time
@@ -41,6 +42,7 @@ ADDED_GAINS = [(("hip", "knee", "ankle"), (400.0, 20.0, 120.0)), (("waist", "tor
                (("wrist",), (40.0, 2.0, 8.0)), (("base",), (4000.0, 600.0, 400.0)), ((), (150.0, 8.0, 30.0))]
 IMPEDANCE = {"kp": 0.2, "effort": 0.4}          # arm stiffness and effort cap in impedance mode (fractions)
 ARMATURE_MIN = 0.02                             # kg m^2: least reflected rotor inertia of a servoed robot hinge
+HULL_SHRINK = 0.85                              # added link collision boxes: this much of a mesh's bounding box (add_hulls)
 V_MAX = 2.0                                     # rad/s (m/s for slides): q_des is rate-limited, as in a real controller
 A_MAX = 10.0                                    # rad/s^2 (m/s^2 for slides): ... and acceleration-limited
 SETPOINT_TAU = 0.03                             # s: how fast the setpoint closes a gap to the plan (on top of its velocity)
@@ -178,6 +180,68 @@ def add_grippers(spec, profile):
         for side in ("a", "b"):
             spec.add_exclude(bodyname1=f"pc_{role}_finger_{side}", bodyname2=body.name)
         spec.add_exclude(bodyname1=f"pc_{role}_finger_a", bodyname2=f"pc_{role}_finger_b")
+        pats = tuple(g.get("hide_fingers") or ())  # a dexterous hand that isn't driven (H2): its fingers would stick out
+        for fb in body.find_all(mujoco.mjtObj.mjOBJ_BODY) if pats else ():   # between the pads, through what they hold
+            if any(k in (fb.name or "") for k in pats):
+                for geom in fb.geoms:
+                    if not (geom.contype or geom.conaffinity):
+                        geom.group = 4            # not drawn (the 3D view, cameras): the gripper is what grasps
+    add_hulls(spec, profile)
+
+
+@functools.lru_cache(maxsize=8)
+def _mesh_boxes(xml, pats):
+    """(body, centre, quat, half size) of every visual mesh on the bodies whose names contain one of `pats`: the mesh's
+    bounding box in its own (inertial) frame, from the robot's model file compiled on its own."""
+    m = mujoco.MjModel.from_xml_path(xml)
+    out = []
+    for g in range(m.ngeom):
+        if m.geom_type[g] != mujoco.mjtGeom.mjGEOM_MESH:
+            continue
+        n = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, m.geom_bodyid[g]) or ""
+        if not any(p in n for p in pats):
+            continue
+        R = np.zeros(9)
+        mujoco.mju_quat2Mat(R, m.geom_quat[g])
+        c = m.geom_pos[g] + R.reshape(3, 3) @ m.geom_aabb[g][:3]
+        out.append((n, tuple(c.tolist()), tuple(m.geom_quat[g].tolist()), tuple(m.geom_aabb[g][3:].tolist())))
+    return tuple(out)
+
+
+def add_hulls(spec, profile):
+    """Collision boxes for robot links whose model has visual meshes only (physics.hulls: body-name patterns; the H2's
+    model collides with its hands and feet only, so its arms would pass through the table and the objects): each mesh's
+    bounding box in its own frame, a little inside it (HULL_SHRINK). They touch the world, objects and fixtures (planner
+    and plant), never the robot itself (contype 0: no self contact between overlapping boxes) nor the gripper on the
+    same hand (excluded)."""
+    pats = tuple((profile.physics or {}).get("hulls") or ())
+    if not pats:
+        return
+    from .world.profiles import ROOT
+    hulled = set()
+    for i, (n, c, q, h) in enumerate(_mesh_boxes(str(ROOT / profile.model_xml), pats)):
+        try:
+            b = spec.body(n)
+        except Exception:
+            b = None
+        if b is None:
+            continue
+        b.add_geom(name=f"pc_hull_{n}_{i}", type=mujoco.mjtGeom.mjGEOM_BOX, size=[x * HULL_SHRINK for x in h], pos=list(c),
+                   quat=list(q), group=3, rgba=[0, 0, 0, 0], density=0, contype=0, conaffinity=1)
+        hulled.add(n)
+    for role in ((profile.physics or {}).get("grip") or {}):
+        b = spec.site(profile.ee[role]).parent
+        for _ in range(4):                        # the last links above a gripper: its pads and palm reach into their boxes
+            if b is None or b is spec.worldbody:
+                break
+            if b.name in hulled:
+                for k in ("gripper", "finger_a", "finger_b"):
+                    try:
+                        if spec.body(f"pc_{role}_{k}") is not None:
+                            spec.add_exclude(bodyname1=f"pc_{role}_{k}", bodyname2=b.name)
+                    except Exception:
+                        pass
+            b = b.parent
 
 
 def _parallel_pads(spec, role, g, body, tcp, Rs):

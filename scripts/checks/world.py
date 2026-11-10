@@ -54,10 +54,12 @@ async def run(t):
             t.check(f"world: {r['id']} drives its base", res.get("status") == "done" and "Drove" in res.get("message", ""),
                     res.get("message", "")[:70])
 
-    w = await world(op="set", robot="h2")
-    res = await t.task("pick_place", 3, object="mug", target="center")
-    t.check("world: experimental body loads and says what it can't do", bool(w) and w["robot"].get("experimental") is True
-            and res.get("status") == "failed", res.get("message", "")[:80])
+    exp = [r for r in w0.get("robots") or [] if r.get("experimental") and "pick_place" not in r.get("capabilities", [])]
+    if exp:                                       # (none since the H2 got its grippers: every body picks)
+        w = await world(op="set", robot=exp[0]["id"])
+        res = await t.task("pick_place", 3, object="mug", target="center")
+        t.check("world: experimental body loads and says what it can't do", bool(w) and w["robot"].get("experimental") is True
+                and res.get("status") == "failed", res.get("message", "")[:80])
 
     w = await world(op="set", robot="panda", scene=KITCHEN)
     names = sorted(o["name"] for o in st().get("scene_objects") or [])
