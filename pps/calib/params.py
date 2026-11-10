@@ -86,17 +86,15 @@ def defaults(names=None):
 
 
 def active(plant):
-    """Parameters that change something on this plant (a scale of zeros does nothing)."""
-    m, nv = plant.m, plant.nv_r
+    """Parameters that change something on this plant (a scale of zeros does nothing). Joint terms count only on the
+    servoed joints (the arms, legs, base), not on gripper fingers."""
+    dofs = [d for _, _, d in plant.track]
     out = ["kp_scale", "latency_ms"] if plant.track else ["latency_ms"]
     if plant.objects:
         out += ["friction_scale", "mass_scale"]
-    if np.any(m.dof_damping[:nv] > 0) or np.any(plant.base["damp"][:nv] > 0):
-        out.append("damping_scale")
-    if np.any(plant.base["arm"][:nv] > 0):
-        out.append("armature_scale")
-    if np.any(plant.base["floss"][:nv] > 0):
-        out.append("frictionloss_scale")
+    for name, key in (("damping_scale", "damp"), ("armature_scale", "arm"), ("frictionloss_scale", "floss")):
+        if dofs and np.any(plant.base[key][dofs] > 0):
+            out.append(name)
     return [n for n in PARAMS if n in out]
 
 

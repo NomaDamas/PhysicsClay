@@ -47,7 +47,8 @@ rebuilding it, exactly like `{type: "physics", op: "set", params}`.
 | `frictionloss_scale` (optional) | Coulomb friction of the robot's joints | 1 | 0.2 – 3.0 | log |
 
 A scale parameter only exists on a robot whose model has something to scale (`params.active(plant)`): the Panda's
-joints have damping and armature but no Coulomb friction, the UR5e's have no damping, a scene without movable objects
+joints have damping and armature but no Coulomb friction, the UR5e's arm joints have neither damping nor armature in
+this model, a scene without movable objects
 has no mass or object friction to fit. The default fit set is the five core parameters that act on the plant.
 
 **Latency** is now a real delay buffer in the plant: the servo setpoint is stored every 2 ms substep and read back
