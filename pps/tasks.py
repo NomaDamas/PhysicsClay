@@ -799,7 +799,9 @@ class Tasks(FixtureTasks):
             self.grasp_off = None
             p = self.obj_pos(self.cur)
             c = p + self.mug_center_off
-            p[2] = (TABLE_TOP if self.on_table(c) else 0.0) + self.mug_half_h - self.mug_center_off[2]
+            rz = getattr(self, "release_z", None)          # place_in (kinematic): the container's floor, not the table
+            p[2] = (rz if rz is not None else TABLE_TOP if self.on_table(c) else 0.0) + self.mug_half_h - self.mug_center_off[2]
+            self.release_z = None
             self.set_obj_pose(self.cur, p)
             if self.task:
                 self.task["step"] = "placed"
@@ -921,6 +923,7 @@ class Tasks(FixtureTasks):
         tz = getattr(self, "transit_z", None)      # generated worlds: carry over the counter / out of the drawer
         up = (lambda p, dz: np.array([p[0], p[1], max(p[2] + dz, tz)])) if tz is not None else (lambda p, dz: p + np.array([0, 0, dz]))
         pz = TABLE_TOP if getattr(self, "place_z", None) is None else self.place_z
+        self.release_z = getattr(self, "place_z", None)    # kinematic mode sets the object down there at the release
         place_c = None if hold else np.array([dest[0], dest[1], pz + self.mug_half_h])
         drop = getattr(self, "place_drop", 0.0) or 0.0
         place_hand = None if hold else place_c + off + (np.array([0, 0, 0.008 + drop]) if n is not None else 0.0)   # let go just above

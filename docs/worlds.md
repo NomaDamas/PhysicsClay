@@ -20,6 +20,10 @@ in, and every step is physically simulated (and can be recorded as a LeRobot dat
 The same `(template, seed)` always gives the same world (the clutter's physics drop is deterministic); a different seed
 changes sizes, heights, colours, which side the sink is on, what is in which drawer and how the clutter fell.
 
+* **Datasets**: `scripts/generate.py --scenes kitchen_full,warehouse ...` gives every episode a new layout (a fresh world
+  seed, stored in the episode metadata as `variation.world_seed`), with the seed task's objects added on the work
+  surface: one intent, many different rooms (`docs/datasets.md`).
+
 ## Templates
 
 | Group | Template | What's in it | Bodies |
