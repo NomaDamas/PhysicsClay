@@ -234,6 +234,12 @@ def plant_spec(spec, profile, kinds):
     for b in robot:
         b.gravcomp = 1.0                                  # the robot's controller compensates its own weight
     acted = {a.target for a in spec.actuators if a.trntype == mujoco.mjtTrn.mjTRN_JOINT}
+    tendons = {t.name: t for t in spec.tendons}
+    for a in spec.actuators:                              # joints a tendon servo drives (Stretch's telescoping arm) need no
+        if a.trntype == mujoco.mjtTrn.mjTRN_TENDON and a.target in tendons:   # servo of their own
+            for w in tendons[a.target].path:
+                if w.type == mujoco.mjtWrap.mjWRAP_JOINT:
+                    acted.add(getattr(w.target, "name", w.target))
     for j in spec.joints:
         if j.parent.name not in robot_names or j.type == mujoco.mjtJoint.mjJNT_FREE:
             continue
@@ -247,11 +253,20 @@ def plant_spec(spec, profile, kinds):
             continue                                      # finger linkages, rubber tips: passive (driven by the gripper)
         if j.armature < (ARMATURE_MIN if hinge else 0.01):
             j.armature = ARMATURE_MIN if hinge else 0.01  # reflected rotor inertia (models without it are too light)
-        kp, kv, eff = next(v for pats, v in ADDED_GAINS if not pats or any(k in j.name for k in pats))
+        gains = list((profile.physics or {}).get("gains", ())) + ADDED_GAINS     # a profile's own servo gains first
+        kp, kv, eff = next(v for pats, v in gains if not pats or any(k in j.name for k in pats))
         a = spec.add_actuator(name=f"pc_servo_{j.name}", target=j.name, trntype=mujoco.mjtTrn.mjTRN_JOINT)
         a.set_to_position(kp=kp, kv=kv)
         a.forcelimited, a.forcerange = True, [-eff, eff]
         j.actgravcomp = True
+    for pats, f in (profile.physics or {}).get("stiffer", ()):  # the model's own servos, stiffer (its gains were tuned for
+        for a in spec.actuators:                                 # kinematic demos; the torque limits stay the model's)
+            if a.trntype == mujoco.mjtTrn.mjTRN_JOINT and any(k in a.target for k in pats) and a.biasprm[1] < 0:
+                g, b = np.array(a.gainprm, float), np.array(a.biasprm, float)
+                g[0], b[1], b[2] = g[0] * f, b[1] * f, b[2] * math.sqrt(f)
+                a.gainprm, a.biasprm = g, b
+    for b1, b2 in (profile.physics or {}).get("exclude", ()):   # hulls of links that are chained through massless joints
+        spec.add_exclude(bodyname1=b1, bodyname2=b2)           # (Apollo's torso and pelvis overlap whenever it bends)
     for role, g in ((profile.physics or {}).get("grip") or {}).items():
         if g.get("hide_hand"):                            # a rigid dexterous hand (Apollo): the pads do the grasping
             for geom in spec.site(profile.ee[role]).parent.find_all(mujoco.mjtObj.mjOBJ_GEOM):
@@ -348,10 +363,14 @@ class Plant:
                                # in the TCP site's frame: the closing axis, the approach axis, TCP -> fingertip distance
                                "axis": np.array((0, 1, 0) if built else g.get("axis", (0, 1, 0)), float),
                                "approach": np.array((0, 0, 1) if built else g.get("approach", (0, 0, 1)), float),
-                               "tip": 0.022 if built else float(g.get("tip", 0.015))}
+                               "tip": 0.022 if built else float(g.get("tip", 0.015)),
+                               # one fixed jaw (side b): where its face is along the closing axis from the TCP (m)
+                               "jaw": None if g.get("jaw") is None else float(g["jaw"]),
+                               # side grasps: the hand's top side (TCP frame) and how far it hangs below the TCP (m)
+                               "up": None if g.get("up") is None else np.array(g["up"], float), "pad_h": float(g.get("pad_h", 0.018))}
             if g.get("build"):
                 self.grip[role]["close"] = float(g["width"]) / 2 + 0.03
-        self.track, self.hold0 = [], []
+        self.track, self.hold0, self.track_tendon = [], [], []
         for a in range(m.nu):
             if a in grip_acts:
                 continue
@@ -364,6 +383,15 @@ class Plant:
                     self.track.append((a, int(m.jnt_qposadr[j]), int(m.jnt_dofadr[j])))
                 else:
                     self.hold0.append(a)
+            elif m.actuator_trntype[a] == mujoco.mjtTrn.mjTRN_TENDON and m.actuator_biasprm[a, 1] < 0:
+                t = m.actuator_trnid[a, 0]               # a position servo on a fixed tendon of robot joints (Stretch's
+                parts = []                               # telescoping arm): it tracks the tendon length of the plan
+                for k in range(m.tendon_adr[t], m.tendon_adr[t] + m.tendon_num[t]):
+                    if m.wrap_type[k] == mujoco.mjtWrap.mjWRAP_JOINT:
+                        j = m.wrap_objid[k]
+                        parts.append((int(m.jnt_qposadr[j]), int(m.jnt_dofadr[j]), float(m.wrap_prm[k])))
+                if parts and all(qa < self.nq_r for qa, _, _ in parts):
+                    self.track_tendon.append((a, parts))
         self.arm_acts = self._arm_acts()
         self.harness = None
         try:
@@ -563,6 +591,13 @@ class Plant:
             d.ctrl[a] = min(max(v, lo), hi)
         for a in self.hold0:
             d.ctrl[a] = 0.0
+        for a, parts in self.track_tendon:
+            kp, kv = m.actuator_gainprm[a, 0], -m.actuator_biasprm[a, 2] + sum(m.dof_damping[da] * c * c for _, da, c in parts)
+            L = sum(c * q[qa] for qa, _, c in parts)
+            Ld = sum(c * qd[qa] for qa, _, c in parts)
+            v = L + (kv / kp * Ld if kp > 0 else 0.0)
+            lo, hi = m.actuator_ctrlrange[a] if m.actuator_ctrllimited[a] else (-1e9, 1e9)
+            d.ctrl[a] = min(max(v, lo), hi)
         for g in self.grip.values():                      # fingers take ~0.8 s to travel: no slamming into things
             v = g["open"] if g["cmd"] == "open" else g["close"]
             rate = abs(g["close"] - g["open"]) / 0.8 * DT

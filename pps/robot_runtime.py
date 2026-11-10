@@ -36,7 +36,8 @@ COLLISION_PAIRS = [
     (["left_hand_collision", "right_hand_collision", "left_wrist_collision", "right_wrist_collision",
       "left_elbow_yaw_collision", "right_elbow_yaw_collision"], ["table"]),
 ]
-BODY_GEOMS = ["torso_collision", "pelvis_collision", "head_collision", "left_hip_collision", "right_hip_collision",
+FOLLOW_LAG, FOLLOW_WAIT = 0.03, 2.0      # physics: m the hand may trail the moving target, s it waits for it to catch up
+BODY_GEOMS = ["torso_collision","pelvis_collision", "head_collision", "left_hip_collision", "right_hip_collision",
               "left_thigh_collision", "right_thigh_collision"]
 FEET = ["right_foot", "left_foot"]
 
@@ -444,7 +445,12 @@ class Runtime:
             # else: leave mocap where it is -> user may drag the ghosts in the viewer.
         elif self.mode == "FOLLOW" and self.path is not None:
             pts, cum = self.path["pts"], self.path["cum"]
-            if not getattr(self, "follow_hold", False):  # physics: the path waits while the gripper closes / opens
+            lag = 0.0
+            if self.plant is not None:                    # physics: the plan doesn't run away from the arm (it waits while
+                mid = self.hands_mid[self.path["palm"]]   # the hand is more than FOLLOW_LAG behind, up to FOLLOW_WAIT s)
+                lag = float(np.linalg.norm(d.site_xpos[self.palm_sid[self.path["palm"]]] - d.mocap_pos[mid]))
+                self.lag_t = (getattr(self, "lag_t", 0.0) + dt) if lag > FOLLOW_LAG else 0.0
+            if not getattr(self, "follow_hold", False) and (lag <= FOLLOW_LAG or self.lag_t > FOLLOW_WAIT):
                 slow = any(a <= self.path["i"] < b for a, b in self.path.get("slow", ()))   # the last few cm into a grasp
                 sf = self.path.get("sf")                  # physics: segments where the hand turns a lot go slower
                 k = 1.0 if sf is None else float(sf[min(self.path["i"], len(sf) - 1)])

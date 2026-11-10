@@ -92,13 +92,14 @@ def _built(width, approach=(0, 0, 1), axis=(0, 1, 0), length=0.06, base=0.0):
 
 
 def _native(act, open_, close, a, b, width, tcp=(0, 0, 0), approach=(0, 0, 1), axis=(0, 1, 0), boost=1.0, pads=None,
-            nocollide=(), nocollide_bodies=()):
+            nocollide=(), nocollide_bodies=(), jaw=None, up=None, pad_h=None):
     """The model's own gripper: actuator, open/closed commands, the bodies of each side's pads, TCP (site frame).
     pads: {"a": [{"body", "pos", "size", "quat"}], "b": [...]} flat pads added to the finger bodies (their frames);
     nocollide: geom names on the pad bodies whose contact is replaced by those pads; nocollide_bodies: bodies whose geoms
     don't touch things (hulls that don't match the real finger)."""
     return {"act": act, "open": open_, "close": close, "a": a, "b": b, "width": width, "tcp": tcp, "approach": approach,
-            "axis": axis, "boost": boost, "pads": pads or {}, "nocollide": tuple(nocollide), "nocollide_bodies": tuple(nocollide_bodies)}
+            "axis": axis, "boost": boost, "pads": pads or {}, "nocollide": tuple(nocollide), "nocollide_bodies": tuple(nocollide_bodies),
+            "jaw": jaw, **({"up": up} if up is not None else {}), **({"pad_h": pad_h} if pad_h is not None else {})}
 
 
 def _aloha_grip(r):
@@ -151,15 +152,23 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         ("pick_place", "reach", "follow_path", "balance"), feet=(("right_foot", "site"), ("left_foot", "site")),
         root="base_link", grasp="side", ee_down=False, hand_cost=(5.0, 0.05), freeze=("neck",), camera={"pos": [0.24, 0.0, 1.80]},
         note="Whole-body IK with balance. Following you, video imitation and teach-by-showing are tuned for the G1 only.",
-        physics={"payload": 10.0, "grasp": "side", "experimental": APOLLO, "grip": {r: dict(_built(0.15, approach=(0, 0, -1), length=0.09, base=0.04), hide_hand=True) for r in ("right", "left")}},
+        physics={"payload": 10.0, "grasp": "side", "experimental": APOLLO,
+                 "exclude": [("base_link", "torso_link"), ("torso_link", "r_shoulder_fe_link"), ("torso_link", "l_shoulder_fe_link")],
+                 "home": {"r_shoulder_aa": -0.35, "l_shoulder_aa": 0.35},      # grippers clear of the hips
+                 # stiffer arm / torso servos than the model's (its hand lagged 6-9 cm behind the plan and swept into things)
+                 "stiffer": [(("torso", "shoulder", "elbow"), 3.0), (("wrist",), 5.0)],
+                 "grip": {r: dict(_built(0.15, approach=(0, 0, -1), length=0.09, base=0.04), hide_hand=True) for r in ("right", "left")}},
         prompt="pps/world/prompts/apollo.md"),
     RobotProfile(
         "stretch3", "Hello Robot Stretch 3", "mobile_manipulator", EX + "hello_robot_stretch_3/stretch_33.xml",
         {"x": -0.22, "y": 0.0, "yaw": 90, "on": "floor"}, {"right": "link_grasp_center"}, "home", "mobile",
         ("pick_place", "reach", "follow_path", "drive_base"), planar_base=("x",), base_joints=("base_x",), base_cost=0.5,
         ee_down=False, hand_cost=(4.0, 0.0), freeze=("wheel", "head", "rubber", "gripper"), prompt="pps/world/prompts/stretch3.md",
-        physics={"payload": 1.5, "grasp": "side", "experimental": STRETCH, "grip": {"right": _native("gripper", 0.04, -0.02, ("rubber_tip_left", "link_gripper_finger_left"),
-                 ("rubber_tip_right", "link_gripper_finger_right"), 0.15, tcp=(0, 0.04, 0), approach=(0, -1, 0), axis=(0, 0, 1), boost=3.4)}}),
+        physics={"payload": 1.5, "grasp": "side", "experimental": STRETCH,
+                 "stiffer": [(("wrist",), 10.0)],         # the model's wrist servos (kp 10-50) let the fingers droop onto the table
+                 "grip": {"right": _native("gripper", 0.04, -0.02, ("rubber_tip_left", "link_gripper_finger_left"),
+                 ("rubber_tip_right", "link_gripper_finger_right"), 0.15, approach=(0, 0, 1), axis=(1, 0, 0), boost=3.4,
+                 up=(0, 1, 0), pad_h=0.02)}}),
     RobotProfile(
         "tidybot", "Stanford TidyBot (Kinova on a mobile base)", "mobile_manipulator", EX + "stanford_tidybot/tidybot.xml",
         {"x": -0.30, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "pinch_site"}, "home", "mobile",
@@ -173,7 +182,7 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         feet=(("FL", "site"), ("FR", "site"), ("HL", "site"), ("HR", "site")), root="body", ee_axis=(1, 0, 0),
         freeze=("f1x",), prompt="pps/world/prompts/spot.md",
         physics={"payload": 5.0, "experimental": SPOT, "grip": {"right": _native("arm_f1x", -0.9, 0.0, ("arm_link_fngr",), ("arm_link_wr1",), 0.10, tcp=(0.03, 0, -0.02),
-                                                         approach=(1, 0, 0), axis=(0, 0, 1), boost=0.06)}}),
+                                                         approach=(1, 0, 0), axis=(0, 0, 1), boost=0.06, jaw=-0.013)}}),
     RobotProfile(
         "h2", "Unitree H2 humanoid (experimental)", "humanoid", EX + "unitree_h2/h2_sharpa.xml",
         {"x": -0.05, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "right_wrist_site", "left": "left_wrist_site"}, None,

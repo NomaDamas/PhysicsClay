@@ -1238,6 +1238,9 @@ class Tasks:
             n = np.cos(pitch) * n + np.array([0, 0, -np.sin(pitch)])     # pitched down about the (level) jaw axis
             L = np.column_stack([g["axis"], g["approach"], np.cross(g["axis"], g["approach"])])
             W = np.column_stack([a, n, np.cross(a, n)])
+            if g.get("up") is not None and (W @ L.T @ g["up"])[2] < 0:   # a hand with a top side (Stretch: the camera)
+                a = -a                                                    # keeps it up: the jaws are symmetric
+                W = np.column_stack([a, n, np.cross(a, n)])
             mujoco.mju_mat2Quat(rt.data.mocap_quat[mid], (W @ L.T).flatten())
             z = max(c[2], TABLE_TOP + g["tip"] * np.sin(pitch) + g.get("pad_h", 0.018) * np.cos(pitch) + 0.006)
         else:
@@ -1286,6 +1289,8 @@ class Tasks:
         if ext > w - 0.006:
             return None, None, (f"{what.capitalize()} is {ext * 100:.0f} cm wide and my gripper opens {w * 100:.0f} cm, "
                                 "so I can't get a grip on it.")
+        if g.get("jaw") is not None:              # one fixed jaw (Spot): its face goes just beside the object, the finger
+            p = p - a * (ext / 2 + g["jaw"] + 0.004)   # closes from the other side and presses it against the jaw
         return p - c, n, None
 
     def suggest(self, tid, dest, palm, off):
