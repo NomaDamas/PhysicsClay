@@ -760,9 +760,16 @@ def static_box(b, fx):
 
 
 def floor_patch(b, fx):
-    """A coloured floor area (rug, tiles, safety lines): no contact."""
+    """A coloured floor area (rug, tiles) or, with `lines`, a rectangle of floor marking (safety lines): no contact."""
     w, d = fx["size"][:2]
-    b.box("floor", (0, 0, 0.0015), (d / 2, w / 2, 0.0015), fx.get("color", "beige"), collide=False)
+    c = fx.get("color", "beige")
+    if fx.get("lines"):
+        t = 0.05
+        for s in (-1, 1):
+            b.box("line", (s * (d / 2 - t / 2), 0, 0.0025), (t / 2, w / 2, 0.0005), c, collide=False)
+            b.box("line", (0, s * (w / 2 - t / 2), 0.0025), (d / 2, t / 2, 0.0005), c, collide=False)
+        return
+    b.box("floor", (0, 0, 0.001), (d / 2, w / 2, 0.001), c, collide=False)
 
 
 BUILDERS = {"base_cabinet": base_cabinet, "countertop": countertop, "sink": sink, "stove": stove, "upper_cabinet": upper_cabinet,

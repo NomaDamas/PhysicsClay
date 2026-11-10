@@ -427,7 +427,7 @@ def assembly_line(g):
     g.fixture("parts_tray", "bench_tray", (x0 + 0.40, -s * 1.15, 0.9), (0.30, 0.20, 0.04), nx=2, ny=3)
     g.fixture("box", "guard", (x0 + 0.95, 0.0, 0.0), (2.4, 0.04, 1.2), color="0.95 0.80 0.10 0.45", part="fence", collide=False)
     g.fixture("box", "control_box", (x0 + 0.02 + W + 0.12, s * 0.95, top - 0.2), (0.25, 0.15, 0.35), color="0.85 0.86 0.88 1", part="panel")
-    g.fixture("floor", "floor_lines", (0.4, 0.0, 0.0), (2.8, 1.1, 0), color="0.98 0.82 0.12 1")
+    g.fixture("floor", "floor_lines", (0.4, 0.0, 0.0), (2.8, 1.1, 0), color="0.98 0.82 0.12 1", lines=True)
     g.fixture("floor", "floor_grey", (0.4, 0.0, 0.0), (4.4, 3.6, 0), color="0.55 0.57 0.58 1")
     g.surface = {"top": top, "x": [x0, round(x0 + 0.02 + W + 0.02, 3)], "y": [-0.55, 0.55], "label": "Conveyor station"}
     # parts upstream on the belt: they ride to the photo-eye one at a time
@@ -457,7 +457,7 @@ def warehouse(g):
     for k, (cx, cy, yaw) in enumerate(((x0 + d + 0.75, 0.0, 0), (0.6, 1.55, -90), (0.6, -1.55, 90))):
         g.fixture("rack", f"rack_{k + 1}", (cx, cy, 0.0), (2.2, 0.80, 2.0), yaw=yaw, levels=[0.12, 0.75, 1.40], bays=2)
     g.fixture("pallet", "pallet", (0.35, s * 0.95, 0.0), (1.0, 0.8, 0))
-    g.fixture("floor", "aisle_lines", (0.4, 0.0, 0.0), (2.6, 1.6, 0), color="0.98 0.82 0.12 1")
+    g.fixture("floor", "aisle_lines", (0.4, 0.0, 0.0), (2.6, 1.6, 0), color="0.98 0.82 0.12 1", lines=True)
     g.fixture("floor", "concrete", (0.6, 0.0, 0.0), (4.4, 4.4, 0), color="0.62 0.62 0.60 1")
     g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-0.6, 0.6], "label": "Pick table"}
     small = [0.07, 0.055, 0.05]
@@ -489,7 +489,7 @@ def machine_tending(g):
     g.fixture("bin", "done_tray", (x0 + 0.20, -s * 0.44, top), (0.26, 0.20, 0.05), color="green", label="the finished parts tray", ckind="tray")
     g.fixture("box", "chip_bin", (x0 + 0.45, s * 1.0, 0.0), (0.4, 0.4, 0.5), color="0.35 0.38 0.42 1", part="bin")
     g.fixture("box", "tool_cabinet", (x0 + 0.5, -s * 1.15, 0.0), (0.6, 0.45, 1.2), color="0.75 0.15 0.15 1", part="cabinet")
-    g.fixture("floor", "floor_lines", (0.4, 0.0, 0.0), (2.4, 1.6, 0), color="0.98 0.82 0.12 1")
+    g.fixture("floor", "floor_lines", (0.4, 0.0, 0.0), (2.4, 1.6, 0), color="0.98 0.82 0.12 1", lines=True)
     g.fixture("floor", "concrete", (0.5, 0.0, 0.0), (4.4, 4.0, 0), color="0.58 0.60 0.60 1")
     g.surface = {"top": top, "x": [x0, round(x0 + d, 3)], "y": [-0.6, 0.6], "label": "Machine-tending station"}
     vise_c = np.array([x0 + 0.36 + 0.04, s * 0.45, top + 0.10 + 0.03 + 0.02])
