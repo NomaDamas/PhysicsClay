@@ -44,6 +44,11 @@ WEB = ROOT / "web"
 IK_ITERS, IK_DT = 4, 1 / 120
 SIM_W, SIM_H = 640, 480
 ASPECT = SIM_W / SIM_H
+# The pictures the server streams, by first byte: your camera (0x01), the robot view (0x02), picture-in-picture (0x03).
+# A client says which it shows ({type: "hello" | "streams", streams: [...]}, default: all of them). The worker renders
+# and encodes only what some connected client shows: offscreen rendering is most of a frame on a machine without a GPU
+# (OSMesa: ~150 ms a frame on a 2-core CI runner), and nobody watching means nothing to draw.
+STREAMS = {"cam": b"\x01", "robot": b"\x02", "pip": b"\x03"}
 
 
 class Shared:
@@ -58,18 +63,33 @@ class Shared:
         self.fid = 0
         self.cmds = []
         self.clients = set()
+        self.wants = {}            # ws -> the streams that client shows (STREAMS keys)
         self.running = True
         self.scene = None          # (model, /scene.json payload, mesh key) of the current world, set by the worker
         self.caps = ()             # current robot's capabilities (the upload endpoint checks imitate_video)
 
-    def put(self, cam, sim, state):
+    def put(self, cam, sim, state, pip=None):
+        """One frame: the state and the pictures rendered for it (None: nobody shows that stream)."""
         with self.lock:
-            self.cam, self.sim, self.state = cam, sim, state
+            self.cam, self.sim, self.pip, self.state = cam, sim, pip, state
             self.fid += 1
 
     def get(self):
         with self.lock:
-            return self.cam, self.sim, self.state, self.fid
+            return {"cam": self.cam, "robot": self.sim, "pip": self.pip}, self.state, self.fid
+
+    def want(self, ws, streams):
+        """{type: "hello" | "streams", streams: [...]}: what one client shows (unknown names are ignored)."""
+        with self.lock:
+            self.wants[ws] = {x for x in streams if x in STREAMS} if isinstance(streams, (list, tuple)) else set(STREAMS)
+
+    def wanted(self):
+        """The streams any connected client shows (a client that never said: all of them)."""
+        with self.lock:
+            out = set()
+            for ws in self.clients:
+                out |= self.wants.get(ws, set(STREAMS))
+            return out
 
     def push_cmd(self, c):
         with self.lock:
@@ -92,9 +112,14 @@ async def ws_handler(request):
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
                 try:
-                    shared.push_cmd(json.loads(msg.data))
+                    c = json.loads(msg.data)
                 except ValueError:
-                    pass
+                    continue
+                if isinstance(c, dict) and c.get("type") in ("hello", "streams") and "streams" in c:
+                    shared.want(ws, c["streams"])      # per connection, so not a worker command
+                    if c["type"] == "streams":
+                        continue
+                shared.push_cmd(c)
             elif msg.type == WSMsgType.BINARY and msg.data[:1] == b"\x10":
                 shared.phone = (time.time(), msg.data[1:])
                 shared.phone_ts.append(shared.phone[0])
@@ -103,6 +128,8 @@ async def ws_handler(request):
                 break
     finally:
         shared.clients.discard(ws)
+        with shared.lock:
+            shared.wants.pop(ws, None)
     return ws
 
 
@@ -119,17 +146,19 @@ async def broadcaster(shared):
     sending = {}   # ws -> the task still sending it a frame
     while True:
         await asyncio.sleep(1 / 30)
-        cam, sim, state, fid = shared.get()
-        if fid == last or cam is None:
+        pics, state, fid = shared.get()
+        if fid == last:
             continue
         last = fid
-        msgs = (state, b"\x01" + cam, b"\x02" + sim) + (() if shared.pip is None else (b"\x03" + shared.pip,))
+        pics = {k: STREAMS[k] + v for k, v in pics.items() if v is not None}
         # Every client gets its own send task. A client that stops reading (a suspended phone tab, a page in the
         # back/forward cache, a busy script) only skips frames until it reads again; it never holds up the others.
         # (The websocket heartbeat closes the ones that never come back.)
         for ws in list(shared.clients):
             t = sending.get(ws)
             if t is None or t.done():
+                want = shared.wants.get(ws, STREAMS)
+                msgs = (state,) + tuple(pics[k] for k in STREAMS if k in want and k in pics)
                 sending[ws] = asyncio.ensure_future(_send_frame(shared, ws, msgs))
         for ws in [w for w, t in sending.items() if w not in shared.clients and t.done()]:
             del sending[ws]
@@ -684,6 +713,16 @@ def worker(args, shared):
         source = "webcam"
 
     sim_jpg_last = [None]
+
+    def render_view():
+        """The robot view (robot eye / orbit / stage, with overlays) as a JPEG, from the scene update_scene() made."""
+        renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+        renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+        rt.paint_overlays(renderer.scene, reset=False)
+        ext.paint_overlays(ctx, renderer.scene)
+        jpg = cv2.imencode(".jpg", cv2.cvtColor(renderer.render(), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82])[1].tobytes()
+        sim_jpg_last[0] = jpg
+        return jpg
     video_job = None   # {"name", "frames", "i", "prev_cap", "prev_dt", "prev_source", "prev_view"}
     grip_hist = {"l": [], "r": []}
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
@@ -849,6 +888,8 @@ def worker(args, shared):
                     spatial.set_model(c.get("name"))
                 elif t == "spatial":
                     if c.get("target") == "robot":
+                        if "robot" not in shared.wanted():    # nobody watches it, so it isn't rendered every frame
+                            render_view()
                         spatial.ask_er(cv2.imdecode(np.frombuffer(sim_jpg_last[0], np.uint8), cv2.IMREAD_COLOR) if sim_jpg_last[0] else frame,
                                        "robot", c.get("query"), key=c.get("key"))
                     else:
@@ -930,7 +971,9 @@ def worker(args, shared):
         if not demo.steps and not ctx.store.get("llm_brain"):   # the real agent speaks for itself
             brain.narrate(tasks.task)
 
-        # ---------------- robot view
+        # ---------------- robot view (the camera always: taps and strokes are raycast through it; the pictures only for
+        # the streams some client shows, see STREAMS)
+        want = shared.wanted()
         rt.paint_model()
         if view == "robot":
             renderer.update_scene(d, camera=robot_cam)
@@ -941,25 +984,21 @@ def worker(args, shared):
         gl = renderer.scene.camera[0]
         fwd, up = np.array(gl.forward, float), np.array(gl.up, float)
         cam_params = (np.array(gl.pos, float), fwd / np.linalg.norm(fwd), up / np.linalg.norm(up), fovy)
-        renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
-        renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
-        rt.paint_overlays(renderer.scene, reset=False)
-        ext.paint_overlays(ctx, renderer.scene)
-        sim = renderer.render()
-        sim_jpg = cv2.imencode(".jpg", cv2.cvtColor(sim, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82])[1].tobytes()
-        sim_jpg_last[0] = sim_jpg
-        # picture-in-picture: the whole robot when the main view is its eye, otherwise the robot's eye
-        if view == "robot":
-            pip_renderer.update_scene(d, full)
-        else:
-            pip_renderer.update_scene(d, camera=robot_cam)
-        pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
-        pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
-        rt.paint_overlays(pip_renderer.scene, reset=False)
-        ext.paint_overlays(ctx, pip_renderer.scene)
-        shared.pip = cv2.imencode(".jpg", cv2.cvtColor(pip_renderer.render(), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 78])[1].tobytes()
-        shown = cv2.resize(cv2.flip(frame, 1), (960, 540))
-        cam_jpg = cv2.imencode(".jpg", shown, [cv2.IMWRITE_JPEG_QUALITY, 72])[1].tobytes()
+        sim_jpg = render_view() if "robot" in want else None
+        pip_jpg = cam_jpg = None
+        if "pip" in want:   # picture-in-picture: the whole robot when the main view is its eye, otherwise the robot's eye
+            if view == "robot":
+                pip_renderer.update_scene(d, full)
+            else:
+                pip_renderer.update_scene(d, camera=robot_cam)
+            pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+            pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+            rt.paint_overlays(pip_renderer.scene, reset=False)
+            ext.paint_overlays(ctx, pip_renderer.scene)
+            pip_jpg = cv2.imencode(".jpg", cv2.cvtColor(pip_renderer.render(), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 78])[1].tobytes()
+        if "cam" in want:
+            shown = cv2.resize(cv2.flip(frame, 1), (960, 540))
+            cam_jpg = cv2.imencode(".jpg", shown, [cv2.IMWRITE_JPEG_QUALITY, 72])[1].tobytes()
 
         n += 1
         if n % 10 == 0:
@@ -994,7 +1033,7 @@ def worker(args, shared):
         shared.state_en = raw
         if i18n.get_lang() != "en":                      # messages in the person's language (copy on write)
             raw = json.dumps(i18n.localize(st))
-        shared.put(cam_jpg, sim_jpg, raw)
+        shared.put(cam_jpg, sim_jpg, raw, pip_jpg)
         if args.frames and n >= args.frames:
             shared.running = False
     if cap is not None:

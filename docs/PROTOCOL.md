@@ -11,10 +11,17 @@ Gemini (Live + Robotics-ER) understands intent; the server's physics (MuJoCo + I
 - **Intent feed**: transcript of the live conversation + intent cards (each tool call = one card with status planning/running/done/failed and the physics verdict).
 
 ## Server -> browser
-Per frame (~20-30 Hz), three messages:
+Per frame (~20-30 Hz), up to four messages:
 1. TEXT JSON state (below)
-2. BINARY: first byte `0x01` + JPEG of your camera (960x540, already mirrored)
-3. BINARY: first byte `0x02` + JPEG of the robot view (640x480)
+2. BINARY: first byte `0x01` + JPEG of your camera (960x540, already mirrored)            stream `cam`
+3. BINARY: first byte `0x02` + JPEG of the robot view (640x480)                          stream `robot`
+4. BINARY: first byte `0x03` + JPEG of the picture-in-picture (400x300: the whole robot, or its eye)   stream `pip`
+
+A client says which pictures it shows: `{type: "hello", ..., streams: ["cam", "robot", "pip"]}` when it connects, or
+`{type: "streams", streams: [...]}` later (a client that never says gets all three). The server renders and encodes a
+stream only while some connected client shows it, and sends each client only its own; with nobody watching (or only
+clients that show none, like the self test) nothing is rendered. Offscreen rendering is most of a frame on a machine
+without a GPU (OSMesa on a 2-core CI runner: ~150 ms), so this keeps the robot's loop real time there.
 
 State JSON keys (all always present):
 ```
@@ -756,7 +763,8 @@ writes, not one per connection: the last browser that says which language it wan
   already answer in the language you use). The UI's own labels are translated in the browser, not here:
   `web/ui/i18n-ko.js` swaps the fixed English chrome (buttons, headings, placeholders, tooltips) for Korean while
   Settings → Language is 한국어 and puts the English back when it isn't; the help sheet has its own Korean.
-* The self test sends `{type: "hello", lang: "en"}`, so checks that match English sentences keep working.
+* The self test sends `{type: "hello", lang: "en", streams: []}`, so checks that match English sentences keep working
+  (and no pictures are rendered for it, see "Server -> browser").
 * The catalog: `pps/locale/ko_<area>.py`, `MESSAGES = {key: (English template, Korean template)}`. `{obj|을}` adds
   the Korean particle that fits the value (을/를, 이/가, 은/는, 와/과, 으로/로); `{_s}`-style placeholders are
   English-only. Text a placeholder captures is translated when it is a known phrase ("the red cup" → "빨간 컵").
