@@ -46,6 +46,8 @@ MESSAGES = {
     "core.robot_two_arms": ("{name} two arms", "{name} 양팔 로봇"),
     "core.robot_mobile": ("{name} mobile manipulator", "{name} 모바일 매니퓰레이터"),
     "core.robot_quadruped": ("{name} quadruped with an arm", "{name} 팔 달린 사족 보행 로봇"),
+    # plan.py: a spot that was taken, moved beside what is there
+    "core.label_beside": ("{label}, beside {who}", "{label} ({who} 바로 옆)"),
     # shared short lines
     "core.done": ("Done.", "완료했어요."),
     "core.stopped": ("Stopped.", "멈췄어요."),

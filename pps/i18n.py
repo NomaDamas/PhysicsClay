@@ -163,6 +163,10 @@ def word(value, lang="ko"):
         return PHRASES_KO[low]
     if v.strip() in _EXACT:                             # a catalog phrase ("door left" -> "왼쪽 문")
         return _render(_EXACT[v.strip()], lang, {})
+    if " " in core:                                     # a catalog phrase or sub-sentence ("my gripper would hit the vase")
+        out = _translate_sentence(v.strip(), lang, fragment=True)
+        if out is not None:
+            return out
     if _LIST.search(core):                              # "the mug, the red block or the vase": item by item
         items = _LIST.split(core)
         if len(items) > 1 and all(len(x.split()) <= 4 for x in items):     # names, not clauses
@@ -171,15 +175,11 @@ def word(value, lang="ko"):
     toks = low.split()
     if toks and all(t in WORDS_KO or t.isdigit() for t in toks):
         return " ".join(WORDS_KO.get(t, t) for t in toks)
-    if " " in core:                                     # a sub-sentence ("my gripper would hit the vase")
-        out = _translate_sentence(v.strip(), lang, fragment=True)
-        if out is None and _SPLIT.search(v.strip()):    # several sentences: each on its own
-            parts = _SPLIT.split(v.strip())
-            outs = [_translate_sentence(x, lang, fragment=True) for x in parts]
-            if any(o is not None for o in outs):
-                out = " ".join(o if o is not None else x for o, x in zip(outs, parts))
-        if out is not None:
-            return out
+    if _SPLIT.search(v.strip()):                        # several sentences: each on its own
+        parts = _SPLIT.split(v.strip())
+        outs = [_translate_sentence(x, lang, fragment=True) for x in parts]
+        if any(o is not None for o in outs):
+            return " ".join(o if o is not None else x for o, x in zip(outs, parts))
     return core if core != v.strip() and re.search(r"[A-Za-z]", core) else v
 
 
@@ -187,7 +187,9 @@ _LIST = re.compile(r",\s+(?:or\s+|and\s+)?|\s+or\s+|\s+and\s+")
 
 
 # ------------------------------------------------------------------ templates -> patterns
-_NOSTOP = r"(?:(?![.!?]\s)[\s\S])"         # a placeholder never runs over a sentence end (". " ends a sentence)
+# A placeholder never runs over a sentence end (". "), and holds parentheses only in pairs, so "on {label}, {cm} cm"
+# reads "next to the bowl (beside the bowl, which is there), 1.7 cm" as label + 1.7, not label = "…bowl (beside".
+_NOSTOP = r"(?:(?![.!?]\s)(?:[^()]|\([^()]*\)))"
 
 
 class _Tpl:
