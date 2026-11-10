@@ -21,6 +21,7 @@ from .ir import IntentRecorder
 from .protocol import PERCEIVE_TO_ROBOT, ROBOT_TO_PERCEIVE, make_receiver, make_sender
 from .body import BodyRetargeter
 from .retarget import Retargeter
+from .traj import follow_step
 from .validate import ARM_JOINTS, Validator
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -171,8 +172,9 @@ class Runtime:
         self.path_msg = (f"{side} hand path: {len(pts)} waypoints, all reachable. Press F to follow."
                          if bad == 0 else f"{side} hand path: {bad}/{len(pts)} waypoints out of reach (red). Redraw or press F.")
 
-    def precheck(self, pts, palm, iters=10, dt=0.03):
-        """Trace the path with IK on a scratch configuration; a waypoint is ok if the hand gets within reach_tol."""
+    def precheck(self, pts, palm, iters=10, dt=0.03, quats=None):
+        """Trace the path with IK on a scratch configuration; a waypoint is ok if the hand gets within reach_tol.
+        quats: optional per-waypoint hand orientation (wxyz, P2 trajectories); default: the hand target's current one."""
         cfg = mink.Configuration(self.model)
         cfg.update(self.configuration.q.copy())
         task = self.hand_tasks[self.hands.index(palm)]
@@ -180,8 +182,9 @@ class Runtime:
         mid = self.hands_mid[palm]
         quat = self.data.mocap_quat[mid].copy()
         ok, dists = [], []
-        for p in pts:
-            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat), p))
+        for k, p in enumerate(pts):
+            q = quat if quats is None else np.asarray(quats[k], float)
+            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(q), p))
             for _ in range(iters):
                 v = mink.solve_ik(cfg, self.tasks, dt, "daqp", damping=1e-1, limits=self.limits)
                 cfg.integrate_inplace(v, dt)
@@ -299,6 +302,8 @@ class Runtime:
             elif self.body_now is not None:
                 self.apply_body(None)
             # else: leave mocap where it is -> user may drag the ghosts in the viewer.
+        elif self.mode == "FOLLOW" and self.path is not None and self.path.get("timed"):
+            follow_step(self, dt)       # P2 trajectory: timed samples with orientation and gripper (pps/traj.py)
         elif self.mode == "FOLLOW" and self.path is not None:
             pts, cum = self.path["pts"], self.path["cum"]
             self.follow_s += dt * self.follow_speed * self.speed_scale
