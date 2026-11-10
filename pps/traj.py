@@ -660,10 +660,29 @@ def approach_time(dist, speed):
     return 0.0 if dist < 1e-4 else max(0.4, 1.875 * dist / max(speed, 1e-3))
 
 
-def approach_points(p_from, p_to, step=CHECK_STEP):
-    a, b = np.asarray(p_from, float), np.asarray(p_to, float)
-    n = int(math.ceil(np.linalg.norm(b - a) / step))
-    return np.array([a + (b - a) * j / n for j in range(1, n)]) if n > 1 else np.zeros((0, 3))
+def approach_points(p_from, p_to, step=CHECK_STEP, via=()):
+    """Samples of the move from the hand to the start (neither end), every `step` m along p_from -> via... -> p_to."""
+    P = [np.asarray(p, float) for p in [p_from, *via, p_to]]
+    out = []
+    for k, (a, b) in enumerate(zip(P[:-1], P[1:])):
+        n = int(math.ceil(np.linalg.norm(b - a) / step))
+        out += [a + (b - a) * j / n for j in range(1, n)] if n > 1 else []
+        if k < len(P) - 2:
+            out.append(b)                           # the corners of a lifted approach
+    return np.array(out) if out else np.zeros((0, 3))
+
+
+def _along(P, s):
+    """The point at fraction s (0..1) of the length of polyline P (an (N, 3) array)."""
+    seg = np.linalg.norm(np.diff(P, axis=0), axis=1)
+    L = float(seg.sum())
+    if L < 1e-9:
+        return P[-1].copy()
+    d = float(np.clip(s, 0.0, 1.0)) * L
+    k = int(min(np.searchsorted(np.cumsum(seg), d, side="left"), len(seg) - 1))
+    d0 = float(seg[:k].sum())
+    u = 0.0 if seg[k] < 1e-12 else (d - d0) / float(seg[k])
+    return P[k] + (P[k + 1] - P[k]) * u
 
 
 # ---------------------------------------------------------------------------- runtime glue
@@ -686,7 +705,9 @@ def _nudged(path, D, j, k, u):
 def follow_step(rt, dt):
     """One runtime step of a timed trajectory path (rt.path["dense"]). Duck-typed: rt.data.mocap_pos/quat,
     rt.hands_mid, rt.speed_scale, rt.follow_s (reset to 0 by follow_path = a fresh start), rt.mode.
-    Gripper / force changes call path["on_event"](kind, value, point) when set, else rt.set_gripper / rt.set_force."""
+    Gripper / force changes call path["on_event"](kind, value, point) when set, else rt.set_gripper / rt.set_force.
+    path["lead_in"](p0) -> via points (optional, physics: lead_in with the hand's real extent): the move to the start
+    goes through them (one min-jerk move along that polyline) instead of straight."""
     path = rt.path
     D = path["dense"]
     d = rt.data
@@ -694,18 +715,25 @@ def follow_step(rt, dt):
     run = path.get("_run")
     if run is None or rt.follow_s <= 0.0:
         p0, q0 = d.mocap_pos[mid].copy(), qnorm(d.mocap_quat[mid].copy())
-        dist = float(np.linalg.norm(D["p"][0] - p0))
+        via = []
+        if callable(path.get("lead_in")):
+            try:
+                via = [np.asarray(v, float) for v in (path["lead_in"](p0.copy()) or [])]
+            except Exception:           # a broken lead-in must not stop the path: go straight, as before
+                via = []
+        P = np.array([p0, *via, D["p"][0]]) if via else None
+        dist = float(np.linalg.norm(np.diff(P, axis=0), axis=1).sum()) if via else float(np.linalg.norm(D["p"][0] - p0))
         ta = approach_time(dist, path.get("approach_speed", FALLBACK_SPEED))
         if dist < 0.003:
             ta = 0.25 if qangle(q0, D["q"][0]) > 0.05 else 0.0
-        run = path["_run"] = {"p0": p0, "q0": q0, "Ta": ta, "ev": 0}
+        run = path["_run"] = {"p0": p0, "q0": q0, "Ta": ta, "ev": 0, "lead": P}
         rt.follow_s = 0.0
     rt.follow_s += dt * float(getattr(rt, "speed_scale", 1.0))
     t = rt.follow_s - run["Ta"]
     T = float(D["t"][-1])
     if t < 0:
         s = float(smoothstep5(rt.follow_s / run["Ta"]))
-        p = run["p0"] + s * (D["p"][0] - run["p0"])
+        p = _along(run["lead"], s) if run.get("lead") is not None else run["p0"] + s * (D["p"][0] - run["p0"])
         q = slerp(run["q0"], D["q"][0], s)
         i = 0
     else:
@@ -809,6 +837,21 @@ def _top(o):
     return float(o["pos"][2]) + float(o.get("h", 0.0))
 
 
+def hand_extent(world):
+    """The hand's real size for lifts: (how far it reaches below its TCP, the radius around the TCP of what hangs at or
+    below it), from world["hand_shape"] (points relative to the TCP, world axes: a gripper's collision corners, open
+    fingertips, a side gripper's pads; set by the server with physics). Without one the hand is a sphere of
+    world["hand_r"] around the TCP, as before: (0, hand_r)."""
+    hand_r = float(world.get("hand_r", HAND_R))
+    shape = world.get("hand_shape")
+    H = np.asarray(shape if shape is not None else [], float).reshape(-1, 3)
+    if not len(H):
+        return 0.0, hand_r
+    low = H[H[:, 2] <= 1e-6]
+    foot = float(np.hypot(low[:, 0], low[:, 1]).max()) if len(low) else 0.0
+    return max(0.0, -float(H[:, 2].min())), max(hand_r, foot)
+
+
 def _resolve_kp(kp, i, world, prev, notes):
     """One language keypoint -> list of (position, attrs)."""
     objs = world.get("objects") or {}
@@ -870,13 +913,14 @@ def _resolve_kp(kp, i, world, prev, notes):
         if via not in VIA:
             raise TrajError(f"via must be one of {', '.join(VIA)}")
         clr = float(kp["clearance"]) if kp.get("clearance") is not None else float(world.get("clearance", CLEARANCE))
+        below, foot = hand_extent(world)
         if via == "over":
-            z = top + clr + float(world.get("carry_drop", 0.0))
+            z = top + clr + max(float(world.get("carry_drop", 0.0)), below)     # what hangs lowest clears it by clr
             notes.append(f"over the {name.replace('_', ' ')} with {clr * 100:.0f} cm to spare")
             return [(finish([c[0], c[1], z]), attrs)]
         side = 1.0 if via == "around_left" else -1.0
         z = prev[2] if prev is not None else surface + HOVER
-        gap = r + float(world.get("hand_r", HAND_R)) + clr
+        gap = r + foot + clr
         notes.append(f"around the {name.replace('_', ' ')} on its {'left' if side > 0 else 'right'}")
         return [(finish([c[0], c[1] + side * gap, z]), attrs)]
     rel = str(kp.get("rel") or "above").strip().lower().replace(" ", "_").replace("-", "_")
@@ -967,18 +1011,20 @@ def _bridge(a, b, o, R, need, need_at=lambda p: 0.0):
 
 def lift_over_obstacles(pts, attrs, world, start=None, passes=16):
     """Automatic clearance: a segment that would pass through or too low over an object is raised where it enters and
-    leaves the object's footprint (inflated by the hand), to top + clearance. A segment that ends on the object itself
-    (going down to touch, grasp or place) is left alone for that object. One object per segment per pass, nearest
-    first, so overlapping footprints still give a clean bridge.
+    leaves the object's footprint (inflated by the hand), so that the lowest part of the hand (or what it carries) is
+    clearance over the top: with world["hand_shape"] the gripper's real reach below the TCP and its footprint
+    (hand_extent), else the TCP itself with a hand_r sphere. A segment that ends on the object itself (going down to
+    touch, grasp or place) is left alone for that object. One object per segment per pass, nearest first, so overlapping
+    footprints still give a clean bridge.
     -> (pts, attrs, lifted names, n_prefix) where n_prefix points were added before the first one (from `start`)."""
     objs = world.get("objects") or {}
     clr = float(world.get("clearance", CLEARANCE))
-    hand_r = float(world.get("hand_r", HAND_R))
-    drop = float(world.get("carry_drop", 0.0))
+    below, foot = hand_extent(world)
+    drop = max(float(world.get("carry_drop", 0.0)), below)
     seq = ([np.asarray(start, float)] if start is not None else []) + [np.asarray(p, float) for p in pts]
     att = ([{"_start": True}] if start is not None else []) + list(attrs)
     lifted = []
-    R = {n: float(o.get("r", 0.03)) + hand_r + 0.02 for n, o in objs.items()}
+    R = {n: float(o.get("r", 0.03)) + foot + 0.02 for n, o in objs.items()}
 
     def need_at(p):
         return max([_top(o) + clr + drop for n, o in objs.items()
@@ -1014,6 +1060,39 @@ def lift_over_obstacles(pts, attrs, world, start=None, passes=16):
     return seq, att, lifted, n_prefix
 
 
+LEAD_MIN = 0.03           # m: closer than this to its first point, the hand goes there straight
+
+
+def lead_in(start, goal, world):
+    """The way from where the hand is to a trajectory's first point, with the hand's real extent (world["hand_shape"]):
+    straight up first when it starts low over an object (its footprint, inflated by the hand: it may have just let go
+    of it) or below the work surface in front of its near edge (world["edge"]: x of that edge; a humanoid's hands hang
+    at its sides), then straight to the goal, lifted over the objects in the way (lift_over_obstacles). An object the
+    goal sits on is not flown over (the trajectory goes down onto it on purpose).
+    -> the points in between, neither start nor goal ([] = straight). The server uses it with physics only (the
+    kinematic hand is a point that moves straight to the start)."""
+    a, b = np.asarray(start, float), np.asarray(goal, float)
+    if float(np.linalg.norm(b - a)) < LEAD_MIN:
+        return []
+    objs = world.get("objects") or {}
+    clr = float(world.get("clearance", CLEARANCE))
+    below, foot = hand_extent(world)
+    drop = max(float(world.get("carry_drop", 0.0)), below)
+    surface = float(world.get("surface", 0.74))
+    rise = a[2]
+    if world.get("edge") is not None and a[2] < surface + 0.06 and a[0] < float(world["edge"]) + 0.05:
+        rise = max(rise, surface + max(0.10, clr + drop))
+    for o in objs.values():
+        c = np.asarray(o["pos"], float)
+        inside = math.hypot(a[0] - c[0], a[1] - c[1]) < float(o.get("r", 0.03)) + foot + 0.02
+        goal_on = math.hypot(b[0] - c[0], b[1] - c[1]) < float(o.get("r", 0.03)) + 0.01
+        if inside and not goal_on:
+            rise = max(rise, _top(o) + clr + drop)
+    via = [np.array([a[0], a[1], rise])] if rise > a[2] + 1e-3 else []
+    seq, _, _, _ = lift_over_obstacles([b], [{}], world, start=via[-1] if via else a)
+    return via + [np.asarray(p, float) for p in seq[:-1]]
+
+
 def from_keypoints(spec, world):
     """Language keypoints (written by the LLM) -> (normalized trajectory, notes).
 
@@ -1025,7 +1104,9 @@ def from_keypoints(spec, world):
               {"marker": "A"}, {"region": "left"}, {"from": "hand"}; plus "dx"/"dy" offsets, "height" (above the surface)
               and per point "speed", "force", "grip", "tol", "yaw", "tilt", "hold", "note", "pattern": true.
     world: {"objects": {name: {"pos": [x,y,z centre], "r", "h" (half height), "kind"?}}, "surface": z, "hand": [x,y,z],
-            "markers": {id: [x,y,z]}, "regions": {name: [x, y]}, "clearance"?, "hand_r"?, "carry_drop"?}"""
+            "markers": {id: [x,y,z]}, "regions": {name: [x, y]}, "clearance"?, "hand_r"?, "carry_drop"?,
+            "hand_shape"?: [[x,y,z] relative to the TCP] (the gripper's real extent: lifts clear its lowest part, see
+            hand_extent), "edge"?: x of the surface's near edge (lead_in)}"""
     if not isinstance(spec, dict):
         raise TrajError("the trajectory spec must be an object")
     kps = spec.get("keypoints")
