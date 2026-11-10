@@ -1897,25 +1897,26 @@ class Tasks:
             out += list(d.geom_xpos[g] + (c + h * corners) @ d.geom_xmat[g].reshape(3, 3).T - tcp)
         return np.array(out)
 
-    def grip_reach(self, palm):
-        """The gripper's reach straight below its TCP the way the pick planner sees it (its open fingertips from above,
-        the pads of a side gripper; hand_disc with no footprint), whatever the hand's orientation now: for paths whose
-        orientation isn't the current one (P2 trajectories)."""
+    def grip_reach(self, palm, footprint=False):
+        """The gripper the way the pick planner sees it, whatever the hand's orientation now: its reach below the TCP
+        (open fingertips from above, the pads of a side gripper), straight down or, with `footprint`, over the jaws'
+        footprint (hand_disc). P2 trajectories (their own wrist orientation) and the red waypoints of a drawn path."""
         g = self.plant.grip.get(self.role(palm)) if self.plant is not None else None
         if g is None:
             return hand_disc(0.0, 0.0)
         prof = getattr(self.rt, "profile", None)
         side = prof is not None and (prof.physics or {}).get("grasp", prof.grasp) == "side"
-        return hand_disc(self._hang(palm, side), 0.0, n=1)
+        foot = float(np.clip(max(g.get("span", 0.0), g.get("depth", 0.0)), 0.02, 0.06)) if footprint else 0.0
+        return hand_disc(self._hang(palm, side), foot, n=8 if footprint else 1)
 
-    def path_hits(self, pts, palm, skip=(), carrying=None, hand=None):
+    def path_hits(self, pts, palm, skip=(), carrying=None, hand=None, margin=0.01):
         """Per point: why the hand (or what it carries) would hit an object there, or None (path_object_hits with this
         hand as it is held, or `hand` points, and the objects where they stand; `skip`: ones the path is meant to reach)."""
         held = carrying[0] if carrying else None
         bodies = [(c, r, h, self.pretty(n)) for c, r, h, n in self._bodies(skip=tuple(skip) + ((held,) if held else ()))]
         carry = (self.pretty(held), self._radius(held), self.objs[held]["half_h"], float(carrying[1])) if held else None
         hand = self.hand_points(palm) if hand is None else hand
-        return path_object_hits(pts, bodies, hand, f"my {self.limb(self.role(palm))}", carry)
+        return path_object_hits(pts, bodies, hand, f"my {self.limb(self.role(palm))}", carry, margin=margin)
 
     def lift_over(self, pts, palm, skip=(), carrying=None):
         """The path raised over the movable objects it would run into (lift_path); fixed obstacles (the vase) are not
@@ -1958,14 +1959,15 @@ class Tasks:
             palm = self.hand_for([0.0, float(np.mean([p[1] for p in pts]))])
         pts = densify(pts, 0.04)
         side = "right" if palm.startswith("right") else "left"
-        carry = self.carrying(palm)
-        hits, over = (self.path_hits(pts, palm, carrying=carry) if self.plant is not None else None), []
-        if hits and any(hits):                    # physics: the hand would run into something: over the movable ones, if
-            lp, over = self.lift_over(pts, palm, carrying=carry)   # it can reach that high (the vase is not flown over,
-            if over and all(self.rt.precheck(lp, palm)):            # as with a carry)
-                pts, hits = lp, self.path_hits(lp, palm, carrying=carry)
-            else:
-                over = []
+        carry, hits, over = self.carrying(palm), None, []
+        if self.plant is not None:                # physics: the hand would run into something: over the movable ones, if
+            if any(self.path_hits(pts, palm, carrying=carry)):     # it can reach that high (the vase is not flown over,
+                lp, over = self.lift_over(pts, palm, carrying=carry)   # as with a carry); the hand as held: lifts are
+                if over and all(self.rt.precheck(lp, palm)):        # generous (higher is harmless), red waypoints need
+                    pts = lp                                        # a real overlap (a false refusal is not harmless:
+                else:                                               # the corners of mesh bounding boxes overstate a hand)
+                    over = []
+            hits = self.path_hits(pts, palm, carrying=carry, margin=0.0)
         ok = self.rt.precheck(pts, palm)
         seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
         self.rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
