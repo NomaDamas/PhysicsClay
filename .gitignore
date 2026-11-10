@@ -1,12 +1,26 @@
-.venv/
-vendor/
-models/*.task
+# environment and fetched assets (scripts/setup.sh); no trailing slash so symlinks are ignored too
+/.venv
+/vendor
+/models
 __pycache__/
 *.pyc
-recordings/*.mp4
-.DS_Store
-models/*.tflite
-certs/
-recordings/
+*.egg-info/
+/build/
+/dist/
+.pytest_cache/
+.ruff_cache/
+
+# secrets: keys live only in .env (SECURITY.md); certs/ holds the generated TLS key
 .env
+.env.*
+!.env.example
+certs/
+
+# generated data
 recordings/
+datasets/
+/skills/
+/library/
+selftest-server.log
+
+.DS_Store

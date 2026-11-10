@@ -1,0 +1,28 @@
+{
+  "id": "workshop",
+  "label": "Workshop helper",
+  "icon": "workshop",
+  "summary": "A wrench, a screwdriver and a brush in stands on the bench. “When I put my hand out, give me the wrench” is a standing rule: hold your open hand out and the robot hands it over.",
+  "robot": "g1",
+  "robots": ["g1", "panda", "ur5e", "xarm7", "iiwa14", "aloha", "apollo", "tidybot", "stretch3", "spot"],
+  "scene": {
+    "template": "table",
+    "objects": [
+      {"name": "wrench", "kind": "wrench", "color": "steel", "pos": [0.33, -0.19], "movable": true},
+      {"name": "screwdriver", "kind": "screwdriver", "color": "yellow", "pos": [0.33, 0.0], "movable": true},
+      {"name": "brush", "kind": "brush", "color": "brown", "pos": [0.33, 0.19], "movable": true}
+    ]
+  },
+  "examples": [
+    "When I put my hand out, give me the wrench",
+    "Give me the screwdriver",
+    "When I'm done with the brush, put it back",
+    "What are you watching for?"
+  ],
+  "setup": {
+    "say": "Workshop ready. I'm watching for your open hand: hold it out and I'll give you the wrench.",
+    "rules": [{"text": "when I put my hand out, give me the wrench"}]
+  },
+  "demo": {"kind": "offer", "seconds": 0.6, "hold": 20.0, "target": [0.80, -0.05, 0.99], "name": "offer_demo"},
+  "physics": "Handing over uses the robot's grasp (contact grasp with P0 physics, a kinematic grasp otherwise); the person's hand is the camera pose."
+}

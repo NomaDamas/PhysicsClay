@@ -1,0 +1,111 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "physicsclay"
+version = "0.1.0"
+description = "Instruct robots by saying, pointing and showing: a MuJoCo + mink web app where the robot proposes and you correct."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+authors = [{ name = "PhysicsClay contributors" }]
+requires-python = ">=3.10"
+keywords = ["robotics", "mujoco", "inverse-kinematics", "human-robot-interaction", "physical-ai"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Only what the code imports at module level or on its default paths (grep `^import|^from` in pps/).
+dependencies = [
+    "mujoco>=3.2,<4",       # tested with 3.17 (the browser lab uses @mujoco/mujoco 3.17 too)
+    "mink>=1.0",
+    "daqp>=0.5",               # QP solver mink.solve_ik(..., "daqp") uses
+    "qpsolvers>=4.0",
+    "loop-rate-limiters>=1.0",  # pps/robot_runtime.py
+    "numpy>=1.24,<2",
+    "aiohttp>=3.9",
+    "certifi",
+    "opencv-python>=4.8",
+    "imageio>=2.30",
+    "imageio-ffmpeg>=0.4",
+    "trimesh>=4.0",           # pps/recon: meshes from photos (watertight repair, inertia, convex hulls); pure Python
+    "networkx>=2.6",          # trimesh's hole filling (pps/recon watertight repair) needs it; pure Python
+]
+
+[project.optional-dependencies]
+# Camera understanding on the server: MediaPipe pose (--webcam / --video) and object detection (--objects).
+vision = ["mediapipe>=0.10"]
+# YOLO11 segmentation (the "yolo-seg" spatial model) and SAM 2.1 masks (scripts/vision_clip.py).
+# Ultralytics is AGPL-3.0 (see NOTICE): installing this extra makes AGPL terms apply to a deployment that uses it.
+yolo = ["ultralytics>=8.3"]
+# Real photos -> simulated objects (docs/RECON.md). Depth Anything V2 Small runs on onnxruntime (the ~99 MB Apache-2.0
+# weights are fetched on first use; `pip install onnxruntime` alone is enough for that), CoACD splits concave meshes
+# into convex pieces, scipy speeds up nearest-vertex lookups. The rest is for the opt-in local TripoSR provider (MIT;
+# also needs the TripoSR source in vendor/TripoSR, torchmcubes, and PC_TRIPOSR=1 for its one-time 1.7 GB download).
+recon = ["onnxruntime>=1.17", "coacd>=1.0", "scipy>=1.10", "torch>=2.1", "omegaconf>=2.3", "einops>=0.7",
+         "transformers>=4.35", "Pillow>=10"]
+# LeRobot v2 datasets (docs/V1.md P1).
+data = ["pyarrow>=14"]
+dev = ["ruff==0.8.6", "pytest>=8"]   # ruff pinned: CI checks formatting, which changes between ruff releases
+
+[project.urls]
+Homepage = "https://github.com/NomaDamas/PhysicsClay"
+Issues = "https://github.com/NomaDamas/PhysicsClay/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pps"]
+
+[tool.hatch.build.targets.sdist]
+exclude = ["/vendor", "/models", "/recordings", "/datasets", "/docs/hackathon", "/web/samples", "/.venv", "/certs"]
+
+# ---------------------------------------------------------------------------------------------------------- ruff
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["vendor", "models", "recordings", "datasets", "web", "certs"]
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "B",   # bugbear
+    "I",   # import order
+    "UP",  # pyupgrade (py310)
+]
+ignore = [
+    "E501",  # long lines: the existing code is dense on purpose; `ruff format` keeps new code at 120
+    "E702",  # `a; b` on one line is house style in the self test and checks
+    "E731",  # small named lambdas are house style
+    "B905",  # zip(strict=...) everywhere would be noise
+    "UP038", # isinstance(x, (A, B)) is fine (the rule is deprecated upstream)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pps"]
+
+[tool.ruff.lint.per-file-ignores]
+# Files under active development by several v1 workstreams at once: their existing findings are waived for now so
+# lint clean-ups don't collide with feature work. Remove an entry once that file has settled.
+"pps/robot_runtime.py" = ["I001"]
+"pps/agent.py" = ["UP041", "B007"]
+"pps/features/copresence.py" = ["F841"]
+"pps/world/*.py" = ["F401", "F841"]
+"pps/app.py" = ["E402", "I001", "F401", "B904"]
+# scripts and tests put the repo root on sys.path before importing pps; generate.py awaits its lambdas right away
+"scripts/*.py" = ["E402"]
+"scripts/generate.py" = ["E402", "B023"]
+"tests/*.py" = ["E402"]
+
+# ---------------------------------------------------------------------------------------------------------- pytest
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>PhysicsClay · desktop</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#fbfbfd}
+a{color:#5c77df}a:hover{color:#3f59c4}
+</style>
+</helmet>
+<div style="min-height: 900px; box-sizing: border-box; background: #fbfbfd; font-family: Inter, -apple-system, system-ui, sans-serif; color: #1d1d1f; display: flex; flex-direction: column">
+
+<header style="height: 60px; box-sizing: border-box; padding: 0 20px; display: flex; align-items: center; gap: 16px; border-bottom: 1px solid rgba(29,29,31,.08); background: rgba(251,251,253,.9)">
+  <div style="display: flex; align-items: center; gap: 10px; flex: 1 1 0; min-width: 0">
+    <div style="width: 28px; height: 28px; border-radius: 9px; background: #5c77df; display: flex; align-items: center; justify-content: center">
+      <div style="width: 12px; height: 12px; border-radius: 4px; background: #f59145"></div>
+    </div>
+    <div style="display: flex; flex-direction: column; min-width: 0">
+      <span style="font-size: 15px; font-weight: 700; letter-spacing: -0.2px">PhysicsClay</span>
+      <span style="font-size: 11px; color: rgba(29,29,31,.62); white-space: nowrap; overflow: hidden; text-overflow: ellipsis">New Generation of interactive prompt for Physical AI</span>
+    </div>
+  </div>
+  <div style="display: flex; align-items: center; gap: 8px; padding: 7px 14px; border-radius: 999px; background: #ffffff; border: 1px solid rgba(29,29,31,.1); font-size: 13px; font-weight: 500">
+    <span style="width: 8px; height: 8px; border-radius: 999px; background: #1f8f55"></span>
+    <span>Unitree G1</span>
+    <span style="color: rgba(29,29,31,.62)">· simulation · ready</span>
+  </div>
+  <div style="display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex: 1 1 0">
+    <button type="button" style="height: 36px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; font: 500 13px Inter, sans-serif; color: #1d1d1f">Demo</button>
+    <button type="button" aria-label="Settings" style="width: 40px; height: 40px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; display: flex; align-items: center; justify-content: center; color: #1d1d1f">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="3.2"></circle><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"></path></svg>
+    </button>
+  </div>
+</header>
+
+<main style="flex: 1 1 auto; display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; box-sizing: border-box">
+
+  <section aria-label="You" style="flex: 1 1 280px; max-width: 320px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; align-items: center; justify-content: space-between">
+      <h2 style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: rgba(29,29,31,.62)">You</h2>
+      <span style="font-size: 12px; color: rgba(29,29,31,.62)">phone camera</span>
+    </div>
+    <div style="border-radius: 20px; overflow: hidden; background: #26262b; position: relative; height: 236px">
+      <svg width="100%" height="100%" viewBox="0 0 320 236" preserveAspectRatio="xMidYMid slice" role="img" aria-label="Camera: person pointing to the right side of the table">
+        <rect width="320" height="236" fill="#26262b"></rect>
+        <rect x="0" y="170" width="320" height="66" fill="#303036"></rect>
+        <g stroke="#5fd08a" stroke-width="4" stroke-linecap="round" fill="none">
+          <path d="M150 70 L150 140"></path>
+          <path d="M130 84 L170 84"></path>
+          <path d="M130 84 L118 122 L112 154"></path>
+          <path d="M170 84 L206 98 L240 102"></path>
+          <path d="M140 140 L134 196"></path>
+          <path d="M160 140 L168 196"></path>
+        </g>
+        <circle cx="150" cy="54" r="14" fill="none" stroke="#5fd08a" stroke-width="4"></circle>
+        <g fill="#ffffff"><circle cx="130" cy="84" r="4"></circle><circle cx="170" cy="84" r="4"></circle><circle cx="206" cy="98" r="4"></circle><circle cx="240" cy="102" r="4"></circle><circle cx="118" cy="122" r="4"></circle><circle cx="140" cy="140" r="4"></circle><circle cx="160" cy="140" r="4"></circle></g>
+        <path d="M240 102 L312 112" stroke="#f59145" stroke-width="3" stroke-dasharray="6 6" stroke-linecap="round"></path>
+        <circle cx="312" cy="112" r="6" fill="#f59145"></circle>
+      </svg>
+      <div style="position: absolute; left: 12px; top: 12px; display: flex; gap: 6px; flex-wrap: wrap">
+        <span style="padding: 4px 9px; border-radius: 999px; background: rgba(255,255,255,.92); font-size: 11px; font-weight: 600; color: #1d1d1f">Pointing → right side</span>
+        <span style="padding: 4px 9px; border-radius: 999px; background: rgba(255,255,255,.92); font-size: 11px; font-weight: 500; color: #1d1d1f">33 joints</span>
+      </div>
+    </div>
+    <div style="flex: 1 1 auto; border-radius: 20px; background: #ffffff; border: 1px solid rgba(29,29,31,.08); padding: 14px; display: flex; flex-direction: column; gap: 12px">
+      <div style="display: flex; flex-direction: column; gap: 4px; align-self: flex-end; max-width: 88%">
+        <span style="font-size: 11px; color: rgba(29,29,31,.62); align-self: flex-end">You · voice + pointing</span>
+        <p style="margin: 0; padding: 10px 13px; border-radius: 16px 16px 4px 16px; background: #5c77df; color: #ffffff; font-size: 14px; line-height: 1.4">Put the mug over there.</p>
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 4px; max-width: 92%">
+        <span style="font-size: 11px; color: rgba(29,29,31,.62)">Robot</span>
+        <p style="margin: 0; padding: 10px 13px; border-radius: 16px 16px 16px 4px; background: #f0f0f3; font-size: 14px; line-height: 1.4">Got it. I'll carry the mug to the spot you pointed at, over the vase. Here's my plan.</p>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: rgba(29,29,31,.62)">Marker P placed from your pointing.</p>
+    </div>
+  </section>
+
+  <section aria-label="Stage" style="flex: 999 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+    <div style="position: relative; flex: 1 1 auto; min-height: 470px; border-radius: 24px; background: #eef0f4; overflow: hidden">
+      <svg width="100%" height="100%" viewBox="0 0 720 470" preserveAspectRatio="xMidYMid meet" role="img" aria-label="3D stage: the robot's planned path carries the mug over the vase to marker P">
+        <ellipse cx="380" cy="330" rx="330" ry="90" fill="#e4e7ee"></ellipse>
+        <g stroke="#c4c8d3" stroke-width="5" stroke-linecap="round"><path d="M150 262 L150 390"></path><path d="M600 300 L600 410"></path><path d="M300 360 L300 432"></path></g>
+        <polygon points="120,240 520,192 660,282 250,350" fill="#ffffff" stroke="#d9dce4" stroke-width="2"></polygon>
+        <polygon points="250,350 660,282 660,296 250,364" fill="#e2e5ec"></polygon>
+        <polygon points="120,240 250,350 250,364 120,254" fill="#d6d9e1"></polygon>
+        <g>
+          <circle cx="78" cy="86" r="20" fill="#d4d7e0" stroke="#aeb3c0" stroke-width="2"></circle>
+          <rect x="56" y="112" width="46" height="98" rx="18" fill="#d4d7e0" stroke="#aeb3c0" stroke-width="2"></rect>
+          <path d="M98 128 C 140 150, 170 200, 200 240" stroke="#aeb3c0" stroke-width="12" stroke-linecap="round" fill="none"></path>
+          <path d="M98 128 C 140 150, 170 200, 200 240" stroke="#d4d7e0" stroke-width="8" stroke-linecap="round" fill="none"></path>
+          <rect x="60" y="208" width="14" height="70" rx="7" fill="#d4d7e0" stroke="#aeb3c0" stroke-width="2"></rect>
+          <rect x="84" y="208" width="14" height="70" rx="7" fill="#d4d7e0" stroke="#aeb3c0" stroke-width="2"></rect>
+        </g>
+        <g>
+          <path d="M398 248 L398 176 C 398 160, 414 152, 422 152 C 430 152, 446 160, 446 176 L446 248 Z" fill="#b679e1" opacity=".85"></path>
+          <ellipse cx="422" cy="248" rx="24" ry="8" fill="#9c62c9"></ellipse>
+          <rect x="384" y="132" width="76" height="22" rx="11" fill="#ffffff" stroke="#d6453a" stroke-width="1.5"></rect>
+          <text x="422" y="147" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#b3342b">vase · avoid</text>
+        </g>
+        <g>
+          <rect x="228" y="236" width="40" height="40" rx="6" fill="#ffffff" stroke="#9aa0ad" stroke-width="2"></rect>
+          <ellipse cx="248" cy="236" rx="20" ry="7" fill="#f5f5f7" stroke="#9aa0ad" stroke-width="2"></ellipse>
+          <path d="M268 246 C 282 246, 282 266, 268 266" stroke="#9aa0ad" stroke-width="3" fill="none"></path>
+          <rect x="222" y="284" width="52" height="22" rx="11" fill="#5c77df"></rect>
+          <text x="248" y="299" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#ffffff">mug</text>
+        </g>
+        <rect x="470" y="276" width="34" height="26" rx="4" fill="#ed7473" stroke="#c9504f" stroke-width="2"></rect>
+        <rect x="320" y="292" width="30" height="24" rx="4" fill="#1da8e5" stroke="#1585b6" stroke-width="2"></rect>
+        <path d="M250 228 C 300 120, 470 96, 560 230" stroke="#5c77df" stroke-width="3" stroke-dasharray="8 7" fill="none" stroke-linecap="round"></path>
+        <g fill="#1f8f55" stroke="#ffffff" stroke-width="2"><circle cx="262" cy="202" r="6"></circle><circle cx="300" cy="158" r="6"></circle><circle cx="350" cy="132" r="6"></circle><circle cx="410" cy="122" r="6"></circle><circle cx="470" cy="134" r="6"></circle><circle cx="520" cy="166" r="6"></circle><circle cx="552" cy="208" r="6"></circle></g>
+        <text x="410" y="108" text-anchor="middle" font-family="Inter, sans-serif" font-size="11" font-weight="600" fill="#1f8f55">clears the vase by 4 cm</text>
+        <ellipse cx="562" cy="262" rx="30" ry="11" fill="none" stroke="#f59145" stroke-width="3"></ellipse>
+        <rect x="544" y="226" width="36" height="32" rx="6" fill="#ffffff" opacity=".55" stroke="#5c77df" stroke-width="1.5" stroke-dasharray="4 3"></rect>
+        <circle cx="604" cy="250" r="13" fill="#f59145"></circle>
+        <text x="604" y="255" text-anchor="middle" font-family="Inter, sans-serif" font-size="13" font-weight="700" fill="#ffffff">P</text>
+      </svg>
+      <div style="position: absolute; left: 14px; top: 14px; display: flex; padding: 4px; border-radius: 999px; background: rgba(255,255,255,.92); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(40,30,90,.08)">
+        <button type="button" aria-pressed="true" style="height: 34px; padding: 0 14px; border-radius: 999px; border: 0; background: #1d1d1f; color: #ffffff; font: 600 13px Inter, sans-serif">3D</button>
+        <button type="button" aria-pressed="false" style="height: 34px; padding: 0 14px; border-radius: 999px; border: 0; background: transparent; color: #1d1d1f; font: 500 13px Inter, sans-serif">Robot eye</button>
+      </div>
+      <div style="position: absolute; right: 14px; top: 14px; width: 168px; height: 112px; border-radius: 14px; overflow: hidden; background: #dfe2ea; border: 2px solid #ffffff; box-shadow: 0 8px 24px rgba(40,30,90,.12)">
+        <svg width="168" height="112" viewBox="0 0 168 112" aria-hidden="true">
+          <rect width="168" height="112" fill="#dfe2ea"></rect>
+          <polygon points="0,70 168,62 168,112 0,112" fill="#ffffff"></polygon>
+          <rect x="38" y="54" width="16" height="18" rx="3" fill="#f5f5f7" stroke="#9aa0ad" stroke-width="1.5"></rect>
+          <path d="M82 66 L82 40 C 82 34, 92 34, 92 40 L92 66 Z" fill="#b679e1"></path>
+          <ellipse cx="128" cy="72" rx="12" ry="4" fill="none" stroke="#f59145" stroke-width="2"></ellipse>
+          <path d="M46 52 C 70 24, 110 24, 128 66" stroke="#5c77df" stroke-width="2" stroke-dasharray="4 3" fill="none"></path>
+        </svg>
+        <span style="position: absolute; left: 8px; bottom: 6px; font-size: 10px; font-weight: 600; color: #1d1d1f; background: rgba(255,255,255,.9); padding: 2px 6px; border-radius: 6px">Robot eye</span>
+      </div>
+      <p style="position: absolute; left: 16px; bottom: 14px; margin: 0; padding: 7px 12px; border-radius: 999px; background: rgba(255,255,255,.92); font-size: 12px; color: rgba(29,29,31,.72)">The robot drew this path. Drag a point only if it's wrong.</p>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+      <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62); margin-right: 4px">Skills</span>
+      <button type="button" style="height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; font: 500 12px Inter, sans-serif; color: #1d1d1f">Table setup</button>
+      <button type="button" style="height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; font: 500 12px Inter, sans-serif; color: #1d1d1f">Dance duet</button>
+      <button type="button" style="height: 32px; padding: 0 12px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; font: 500 12px Inter, sans-serif; color: #1d1d1f">Wave hello</button>
+    </div>
+
+    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px; border-radius: 28px; background: #ffffff; border: 1px solid rgba(29,29,31,.08); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(40,30,90,.07)">
+      <button type="button" aria-label="Talk" style="width: 60px; height: 60px; border-radius: 999px; border: 0; background: #5c77df; color: #ffffff; display: flex; align-items: center; justify-content: center; box-shadow: 0 0 0 6px rgba(92,119,223,.16)">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"></path></svg>
+      </button>
+      <div style="flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: 2px">
+        <label for="cmd" style="font-size: 11px; font-weight: 600; color: rgba(29,29,31,.62)">Listening · say it, point, or show</label>
+        <input id="cmd" type="text" placeholder="or type: put the red block next to the mug" style="height: 40px; border: 0; border-radius: 12px; background: #f5f5f7; padding: 0 14px; font: 400 14px Inter, sans-serif; color: #1d1d1f">
+      </div>
+      <div role="toolbar" aria-label="Ways to show" style="display: flex; gap: 6px; flex-wrap: wrap">
+        <button type="button" aria-pressed="true" style="height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid #5c77df; background: #5c77df; color: #ffffff; display: flex; align-items: center; gap: 6px; font: 500 13px Inter, sans-serif">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 11V5.5a1.5 1.5 0 0 1 3 0V11m0-1.5a1.5 1.5 0 0 1 3 0V12m0-1a1.5 1.5 0 0 1 3 0v4a6 6 0 0 1-6 6h-1a6 6 0 0 1-5-2.7L4.5 15a1.5 1.5 0 0 1 2.4-1.8L9 15"></path></svg>Point</button>
+        <button type="button" aria-pressed="false" style="height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; color: #1d1d1f; display: flex; align-items: center; gap: 6px; font: 500 13px Inter, sans-serif">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="3"></rect><path d="M8 16 16 8"></path></svg>Zone</button>
+        <button type="button" aria-pressed="false" style="height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; color: #1d1d1f; display: flex; align-items: center; gap: 6px; font: 500 13px Inter, sans-serif">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3.5" y="5" width="17" height="14" rx="2.5"></rect><path d="m7 15 3.5-4 3 3 2-2 2.5 3"></path><circle cx="9" cy="9" r="1.2"></circle></svg>Goal</button>
+        <button type="button" aria-pressed="false" style="height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; color: #1d1d1f; display: flex; align-items: center; gap: 6px; font: 500 13px Inter, sans-serif">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"></path><circle cx="12" cy="13.2" r="3.4"></circle></svg>Show</button>
+        <button type="button" aria-pressed="false" style="height: 44px; padding: 0 14px; border-radius: 999px; border: 1px solid rgba(29,29,31,.1); background: #ffffff; color: #1d1d1f; display: flex; align-items: center; gap: 6px; font: 500 13px Inter, sans-serif">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 18c3 0 4-3 6-6s4-6 7-6"></path><circle cx="4" cy="18" r="1.6"></circle><circle cx="18" cy="6" r="1.6"></circle></svg>Path</button>
+      </div>
+    </div>
+  </section>
+
+  <aside aria-label="Robot's plan" style="flex: 1 1 320px; max-width: 360px; min-width: 0; display: flex; flex-direction: column; gap: 12px">
+    <div style="display: flex; align-items: center; justify-content: space-between">
+      <h2 style="margin: 0; font-size: 13px; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: rgba(29,29,31,.62)">Robot's plan</h2>
+      <span style="padding: 4px 10px; border-radius: 999px; background: rgba(245,145,69,.14); color: #a8561a; font-size: 12px; font-weight: 600">Waiting for you</span>
+    </div>
+    <div style="border-radius: 24px; background: #ffffff; border: 1px solid rgba(29,29,31,.08); box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(40,30,90,.07); padding: 20px; display: flex; flex-direction: column; gap: 18px">
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62)">What I understood</span>
+        <p style="margin: 0; font-size: 20px; line-height: 1.3; font-weight: 600; letter-spacing: -0.2px">Move the mug to the spot you pointed at.</p>
+        <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
+          <span style="padding: 5px 10px; border-radius: 999px; background: rgba(92,119,223,.12); color: #3f59c4; font-size: 13px; font-weight: 600">mug</span>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="rgba(29,29,31,.5)" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+          <span style="padding: 5px 10px; border-radius: 999px; background: rgba(245,145,69,.16); color: #a8561a; font-size: 13px; font-weight: 600">marker P · from your pointing</span>
+        </div>
+      </div>
+      <ol style="margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px">
+        <li style="display: flex; gap: 10px; align-items: flex-start"><span style="flex: 0 0 22px; height: 22px; border-radius: 999px; background: #f0f0f3; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center">1</span><span style="font-size: 14px; line-height: 1.45">Reach the mug with my right hand, side grasp</span></li>
+        <li style="display: flex; gap: 10px; align-items: flex-start"><span style="flex: 0 0 22px; height: 22px; border-radius: 999px; background: #f0f0f3; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center">2</span><span style="font-size: 14px; line-height: 1.45">Lift 12 cm and carry it over the vase</span></li>
+        <li style="display: flex; gap: 10px; align-items: flex-start"><span style="flex: 0 0 22px; height: 22px; border-radius: 999px; background: #f0f0f3; font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center">3</span><span style="font-size: 14px; line-height: 1.45">Set it down at P, upright</span></li>
+      </ol>
+      <div style="display: flex; flex-direction: column; gap: 8px">
+        <span style="font-size: 12px; font-weight: 600; color: rgba(29,29,31,.62)">I'll keep to</span>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap">
+          <span style="padding: 5px 10px; border-radius: 10px; border: 1px solid rgba(29,29,31,.12); font-size: 12px; font-weight: 500">Keep upright</span>
+          <span style="padding: 5px 10px; border-radius: 10px; border: 1px solid rgba(214,69,58,.35); color: #b3342b; font-size: 12px; font-weight: 500">Avoid the vase</span>
+          <span style="padding: 5px 10px; border-radius: 10px; border: 1px solid rgba(29,29,31,.12); font-size: 12px; font-weight: 500">Normal speed</span>
+        </div>
+      </div>
+      <div style="border-radius: 16px; background: rgba(31,143,85,.08); padding: 14px; display: flex; gap: 12px; align-items: flex-start">
+        <div style="flex: 0 0 28px; height: 28px; border-radius: 999px; background: #1f8f55; display: flex; align-items: center; justify-content: center">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m5 12 4.5 4.5L19 7"></path></svg>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 3px">
+          <span style="font-size: 15px; font-weight: 600; color: #17703f">I can do this</span>
+          <span style="font-size: 13px; line-height: 1.45; color: rgba(29,29,31,.72)">All 26 waypoints in reach · balance OK · about 6 s</span>
+        </div>
+      </div>
+      <div style="display: flex; gap: 8px">
+        <button type="button" style="flex: 1 1 auto; height: 48px; border-radius: 14px; border: 0; background: #5c77df; color: #ffffff; font: 600 15px Inter, sans-serif; display: flex; align-items: center; justify-content: center; gap: 8px">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5v14l11-7z"></path></svg>Run it</button>
+        <button type="button" style="height: 48px; padding: 0 16px; border-radius: 14px; border: 1px solid rgba(29,29,31,.14); background: #ffffff; color: #1d1d1f; font: 600 14px Inter, sans-serif">Fix</button>
+        <button type="button" style="height: 48px; padding: 0 14px; border-radius: 14px; border: 0; background: transparent; color: rgba(29,29,31,.72); font: 500 14px Inter, sans-serif">Cancel</button>
+      </div>
+      <p style="margin: 0; font-size: 12px; color: rgba(29,29,31,.62); text-align: center">or say “go”, or give a thumbs-up</p>
+    </div>
+  </aside>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+renderVals() {
+return {};
+}
+}
+</script>
+</body>
+</html>

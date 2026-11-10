@@ -1,0 +1,130 @@
+PhysicsClay
+Copyright 2026 PhysicsClay contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It includes, downloads or loads the third-party components listed below. Each keeps its own license; the
+license texts ship with the components themselves (paths given where they are on disk). Licenses marked
+"verified" were read from the license file on disk or from the installed package metadata.
+
+======================================================================================================================
+1. Included in this repository
+======================================================================================================================
+
+assets/unitree_g1/  (Unitree G1 MJCF model and meshes)
+    BSD-3-Clause, Copyright (c) 2016-2023 HangZhou YuShu TECHNOLOGY CO.,LTD. ("Unitree Robotics").
+    Derived from MuJoCo Menagerie's unitree_g1 package. License: assets/unitree_g1/LICENSE (verified).
+
+assets/unitree_g1/objects/mug/  (scanned mug mesh and texture)
+    MIT, Copyright (c) 2022 Kevin Zakka (mujoco_scanned_objects, generated with obj2mjcf).
+    License: assets/unitree_g1/objects/mug/LICENSE (verified). The underlying scan comes from the Google Scanned
+    Objects dataset, released under CC BY 4.0 by Google Research.
+
+======================================================================================================================
+2. Fetched by scripts/setup.sh (not committed)
+======================================================================================================================
+
+mink (vendor/mink, https://github.com/kevinzakka/mink)
+    Apache-2.0, Copyright Kevin Zakka and contributors. License: vendor/mink/LICENSE (verified).
+
+Robot models used by pps/world/profiles.py, from vendor/mink/examples/ (most derived from MuJoCo Menagerie):
+    Unitree G1 ............ unitree_g1/            BSD-3-Clause, Unitree Robotics                       (verified)
+    Franka Emika Panda .... franka_emika_panda/    Apache-2.0                                           (verified)
+    UR5e .................. universal_robots_ur5e/ BSD-3-Clause, Copyright 2018 ROS Industrial Consortium (verified)
+    uFactory xArm7 ........ ufactory_xarm7/        BSD-3-Clause, Copyright (c) 2018 UFACTORY Inc.       (verified)
+    KUKA LBR iiwa 14 ...... kuka_iiwa_14/          BSD-3-Clause, Robot Locomotion Group @ CSAIL (Drake) (verified)
+    ALOHA ................. aloha/                 BSD-3-Clause, Copyright (c) 2023 Trossen Robotics    (verified)
+    Apptronik Apollo ...... apptronik_apollo/      Apache-2.0, Copyright 2024 Apptronik                 (verified)
+    Hello Robot Stretch 3 . hello_robot_stretch_3/ Apache-2.0, Copyright 2020-2024 Hello Robot Inc.     (verified)
+    Boston Dynamics Spot .. boston_dynamics_spot/  BSD-3-Clause, Copyright (c) 2021 Clearpath Robotics  (verified)
+    Unitree H2 ............ unitree_h2/            BSD-3-Clause (body, Unitree Robotics, LICENSE-unitree) and
+                                                   Apache-2.0 (Sharpa Wave hands, Sharpa Group, LICENSE-sharpa)
+                                                                                                        (verified)
+    Stanford TidyBot ...... stanford_tidybot/      NO LICENSE FILE in the folder. Kinova Gen3 arm, Robotiq 2F-85
+                                                   gripper and IPRL mobile base; the upstream MuJoCo Menagerie
+                                                   package must be checked before redistributing.  (unverified)
+    Mug example asset ..... mug/                   Apache-2.0                                           (verified)
+
+MediaPipe models (models/, downloaded from storage.googleapis.com/mediapipe-models):
+    pose_landmarker_full.task, efficientdet_lite0.tflite: Apache-2.0 per the MediaPipe model cards (not on disk).
+
+Depth Anything V2 Small (models/depth_anything_v2_small.onnx, fetched on first use by pps/recon/depth.py from
+huggingface.co/onnx-community/depth-anything-v2-small at a pinned revision, SHA-256 checked):
+    Apache-2.0 (verified, Hugging Face model card / API license tag). Only the Small model is used: the Base, Large
+    and Giant Depth Anything V2 weights are CC BY-NC 4.0 and are never downloaded by PhysicsClay.
+
+docs/recon/aruco_4x4_50_id0.svg: an ArUco marker generated with OpenCV (part of this repository, Apache-2.0).
+
+======================================================================================================================
+3. Python dependencies (pyproject.toml; installed, not redistributed)
+======================================================================================================================
+
+    mujoco ................ Apache-2.0 (Google DeepMind)                 (verified, package metadata)
+    mink .................. Apache-2.0                                   (verified)
+    daqp .................. MIT                                          (verified)
+    qpsolvers ............. LGPL-3.0 (dynamically imported, unmodified)  (verified)
+    loop-rate-limiters .... Apache-2.0                                   (verified)
+    numpy ................. BSD-3-Clause                                 (verified)
+    aiohttp ............... Apache-2.0 AND MIT                           (verified)
+    certifi ............... MPL-2.0                                      (verified)
+    opencv-python ......... Apache-2.0 (its wheels bundle FFmpeg and Qt under LGPL)              (verified)
+    imageio, imageio-ffmpeg BSD-2-Clause (imageio-ffmpeg downloads/bundles an FFmpeg binary, GPL/LGPL) (verified)
+    mediapipe [vision] .... Apache-2.0                                   (verified)
+    trimesh ............... MIT                                          (verified, package metadata)
+    onnxruntime [recon] ... MIT                                          (verified, package metadata)
+    coacd [recon] ......... MIT                                          (verified, package metadata)
+    scipy [recon] ......... BSD-3-Clause                                 (verified, package metadata)
+    torch, omegaconf, einops, transformers, Pillow [recon] (only for the opt-in TripoSR provider):
+                            torch: BSD-3-Clause AND Apache-2.0 AND MIT and others (package metadata); omegaconf: BSD;
+                            einops: MIT; transformers: Apache-2.0; Pillow: MIT-CMU       (verified, package metadata)
+    pyarrow [data] ........ Apache-2.0
+    ruff, pytest [dev] .... MIT
+
+  !! ultralytics [yolo] ... AGPL-3.0 (verified, package metadata). Used for YOLO11 segmentation (pps/spatial.py,
+     the "yolo-seg" spatial model) and SAM 2.1 masks (scripts/vision_clip.py). It is an OPTIONAL extra and is
+     imported lazily. Installing it and serving PhysicsClay over a network means the AGPL-3.0 terms of Ultralytics
+     apply to that deployment. The YOLO11 weights (models/yolo11n-seg.pt) are AGPL-3.0 as well. Choose "MediaPipe"
+     or "Off" as the spatial model, or do not install [yolo], to stay Apache-2.0 compatible.
+     SAM 2.1 weights (models/sam2.1_t.pt): Apache-2.0 (Meta), fetched through Ultralytics.
+     PyTorch (pulled in by ultralytics): BSD-3-Clause.
+
+======================================================================================================================
+4. Loaded by the browser from a CDN (not redistributed)
+======================================================================================================================
+
+    three.js 0.160.0 ............ MIT        (cdn.jsdelivr.net, web/index.html)
+    @mujoco/mujoco 3.17.0 (WASM)  Apache-2.0 (cdn.jsdelivr.net, web/lab.html)
+    react / react-dom 18.3.1 .... MIT        (esm.sh, web/lab.html)
+    htm 3.1.1 ................... Apache-2.0 (esm.sh, web/lab.html)
+
+======================================================================================================================
+5. Remote services (optional, bring your own key)
+======================================================================================================================
+
+    Google Gemini (Live, Robotics-ER) and OpenAI-compatible LLM/TTS endpoints are called only with a key from
+    .env or one a visitor enters in the browser. Their terms of service apply to that use.
+
+    Photo -> 3D (pps/recon/providers, docs/RECON.md), only with a key the person brings:
+      fal.ai, model fal-ai/trellis ... Microsoft TRELLIS, model weights and most code MIT (github.com/microsoft/TRELLIS);
+                                       fal.ai's terms of service apply to the API use.
+      Meshy image-to-3d .............. Meshy terms of use: outputs made on the free plan are owned by Meshy and licensed
+                                       CC BY 4.0; on a paid plan the customer owns them; API outputs are deleted after
+                                       3 days; no training of competing models on outputs.
+    Opt-in, local (never downloaded unless PC_TRIPOSR=1):
+      TripoSR (Tripo AI & Stability AI) MIT, code (github.com/VAST-AI-Research/TripoSR, not redistributed here) and
+                                       weights (huggingface.co/stabilityai/TripoSR, 1.68 GB).
+    Deliberately NOT offered (license limits): Tencent Hunyuan3D 2.x (its community license excludes the EU, the UK
+    and South Korea and caps at 1 M monthly active users); Stability AI Stable Fast 3D / SPAR3D (Stability AI
+    Community License, free only under US$1 M annual revenue); Depth Anything V2 Base / Large / Giant (CC BY-NC 4.0).
+
+======================================================================================================================
+6. Acknowledgements
+======================================================================================================================
+
+    The HUD and path-drawing interaction were inspired by CozyClay (https://github.com/HaD0Yun/CozyClay,
+    AGPL-3.0). No CozyClay code is included in this repository.
+
+Design references
+    The interface's design pass (quiet chrome, one accent, 4 px spacing rhythm, sentence-case labels, radius by
+    size, no decorative glows or loops) followed the "unslop" method by Damir Sokolovsky
+    (https://heydamir.design/unslop, @heydamir), CC BY 4.0. No unslop images or code are included.

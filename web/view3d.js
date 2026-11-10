@@ -18,7 +18,7 @@ let isActive = false, loopOn = false, sceneState = "idle", retryTimer = 0;
 let state = {};
 const geomObjs = new Map(); // id -> Object3D (dynamic ones get matrix updates)
 const meshCache = new Map();
-let hand = "auto";
+let hand = "auto", editing = false; // UX 2.0: clicks add waypoints only while the path editor is open
 const wps = []; // THREE.Mesh waypoints
 let selected = null, dirty = true, gizmoPress = false, down = null;
 const wpGroup = new THREE.Group(), linkGroup = new THREE.Group(), srvGroup = new THREE.Group(), mkGroup = new THREE.Group(), objGroup = new THREE.Group(), rayGroup = new THREE.Group();
@@ -81,6 +81,19 @@ async function loadMesh(id, url) {
   meshCache.set(id, p); p.catch(() => meshCache.delete(id));
   return p;
 }
+// RGB u8 per vertex (an object imported from a photo): only when the count matches the mesh the server sent.
+async function addColors(geo, url) {
+  if (geo.getAttribute("color")) return true;
+  try {
+    const r = await fetch(url); if (!r.ok) return false;
+    const c = new Uint8Array(await r.arrayBuffer());
+    if (c.length !== geo.getAttribute("position").count * 3) return false;
+    const lin = new Float32Array(c.length);         // photo colours are sRGB; vertex colours are lit in linear space
+    for (let i = 0; i < c.length; i++) { const v = c[i] / 255; lin[i] = v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }
+    geo.setAttribute("color", new THREE.BufferAttribute(lin, 3));
+    return true;
+  } catch (e) { return false; }
+}
 function primitive(gm) {
   const s = arr(gm.size).map(Number), a = s[0] || 0.01, b = s[1] || a, c = s[2] || a;
   switch (gm.kind) {
@@ -100,18 +113,22 @@ async function loadScene() {
   try {
     const r = await fetch("/scene.json", { cache: "no-store" }); if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const sj = await r.json(), meshes = sj.meshes || {};
+    const sf = sj.surface; // UX 3: the work surface of the current world (table, kitchen counter, shelf, floor)
+    if (sf && [sf.z, sf.x0, sf.x1, sf.y0, sf.y1].every((v) => typeof v === "number" && isFinite(v))) { Object.assign(TABLE, sf); tablePlane.constant = -TABLE.z; }
     const built = await Promise.all(arr(sj.geoms).map(async (gm) => {
       if (!gm || (Array.isArray(gm.rgba) && gm.rgba[3] === 0)) return null;
       if (gm.kind === "plane") return floor(gm);
-      let geo = null, shared = false;
+      let geo = null, shared = false, vcol = false;
       if (gm.kind === "mesh" && gm.mesh != null) {
-        const url = (meshes[gm.mesh] && meshes[gm.mesh].url) || `/mesh/${gm.mesh}.bin`;
-        try { geo = await loadMesh(String(gm.mesh), url); shared = true; } catch (e) { console.warn("[3d]", e); return null; }
+        const ent = meshes[gm.mesh] || {}, url = ent.url || `/mesh/${gm.mesh}.bin`;
+        try { geo = await loadMesh(url, url); shared = true; } catch (e) { console.warn("[3d]", e); return null; }
+        if (ent.colors) vcol = await addColors(geo, ent.colors);   // objects imported from photos (pps/recon)
       } else geo = primitive(gm);
       if (!geo) return null;
       const alpha = Array.isArray(gm.rgba) && gm.rgba.length > 3 ? gm.rgba[3] : 1;
-      const mat = new THREE.MeshStandardMaterial({ color: colorOf(gm.rgba), roughness: 0.62, metalness: 0.04, transparent: alpha < 1, opacity: alpha });
+      const mat = new THREE.MeshStandardMaterial({ color: vcol ? 0xffffff : colorOf(gm.rgba), vertexColors: vcol, roughness: 0.62, metalness: 0.04, transparent: alpha < 1, opacity: alpha });
       const m = new THREE.Mesh(geo, mat); m.userData.sharedGeo = shared;
+      m.userData.gm = { name: gm.name || "", kind: gm.kind, dynamic: !!gm.dynamic };   // P2b: MR ghosts the static furniture
       m.castShadow = true; m.receiveShadow = true; m.matrixAutoUpdate = false;
       setPose(m, arr(gm.pos).length >= 3 ? gm.pos : [0, 0, 0], gm.mat);
       return [String(gm.id), m];
@@ -122,6 +139,7 @@ async function loadScene() {
     scene.add(g);
     sceneState = "ready"; say(""); needs = true; console.info("[3d] scene ready:", geomObjs.size, "geoms", Math.round(performance.now()) + " ms");
     applyPoses();
+    frameScene(g, loadGen > 0 ? 380 : 0);   // every world (the first one too): robot, work surface and the person in view
   } catch (e) {
     if (gen !== loadGen) return;
     console.warn("[3d] scene load failed:", e && e.message || e);
@@ -130,17 +148,120 @@ async function loadScene() {
   }
 }
 let loadGen = 0;
+// Where the co-presence person stands (pps/features/copresence.py: across the work surface, facing the robot), or null
+// when co-presence is off. Before the first state frame it is the server's own rule for the current surface.
+function personSpot() {
+  const c = state && state.copresence;
+  if (c && c.on === false) return null;
+  if (c && Array.isArray(c.anchor) && c.anchor.length >= 2 && isFinite(c.anchor[0]) && isFinite(c.anchor[1])) return [c.anchor[0], c.anchor[1]];
+  return [Math.min(1.6, TABLE.x1 + 0.33), (TABLE.y0 + TABLE.y1) / 2];
+}
+// Fit the camera to the robot + work surface + the person after a world change (ignore huge things like the floor plane).
+// Seen from the side (the robot at one end, the person at the other, the work surface between them), so the person
+// never stands between the camera and the work area; of the two sides the one with fewer things in the way wins (a
+// fume hood, racks or a wall beside the bench). The fit keeps the top corners (view tabs, robot-eye inset) and the
+// preset bar clear, at any aspect (phones too). If you orbit round behind the person, web/ui/copresence.js fades it.
+// view directions to try (the first that sees most wins; the steep ones look over racks and shelves in the way), and
+// the NDC window the scene is fitted into
+const FRAME = { dirs: [[0.1, -1.0, 0.62], [0.1, 1.0, 0.62], [0.1, -1.0, 1.4], [0.1, 1.0, 1.4]], x: 0.92, top: 0.58, bottom: -0.86 };
+function frameScene(g, ms = 380) {
+  if (!camera || !g) return;
+  const boxes = [], box = new THREE.Box3(), size = new THREE.Vector3(), mid = new THREE.Vector3();
+  // big rooms (issue #48): frame the station around the robot, not the far racks and walls
+  g.traverse((o) => {
+    if (!o.isMesh) return;
+    const b = new THREE.Box3().setFromObject(o); b.getSize(size); b.getCenter(mid);
+    if (size.x < 4 && size.y < 4 && size.z < 4 && Math.hypot(mid.x - 0.3, mid.y) < 1.3) { boxes.push(b); box.union(b); }
+  });
+  if (box.isEmpty()) return;
+  const ps = personSpot();
+  if (ps) { const b = new THREE.Box3(new THREE.Vector3(ps[0] - 0.15, ps[1] - 0.3, 0), new THREE.Vector3(ps[0] + 0.15, ps[1] + 0.3, 1.72)); boxes.push(b); box.union(b); }
+  // the band around the work surface: from a little under it (legs and feet below may leave the frame) to the heads
+  const zc = Math.max(0, TABLE.z - 0.45);
+  for (const b of boxes) if (b.max.z > zc) b.min.z = Math.max(b.min.z, zc);
+  const c = box.getCenter(new THREE.Vector3());
+  const tv = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2), th = tv * Math.max(0.3, camera.aspect || 1);
+  function fit(dir) {
+    const back = new THREE.Vector3(...dir).normalize();          // from the target toward the camera
+    const f = back.clone().negate(), right = new THREE.Vector3().crossVectors(f, new THREE.Vector3(0, 0, 1)).normalize();
+    const up = new THREE.Vector3().crossVectors(right, f), pts = [], v = new THREE.Vector3();
+    for (const b of boxes) if (b.max.z > zc) for (const x of [b.min.x, b.max.x]) for (const y of [b.min.y, b.max.y]) for (const z of [b.min.z, b.max.z]) {
+      v.set(x, y, z).sub(c); pts.push([v.dot(right), v.dot(up), v.dot(f)]);
+    }
+    // the nearest distance at which every corner fits: some shift (sx, sy) of the camera across the view puts every x
+    // inside the side margins and every y between FRAME.bottom and FRAME.top
+    const fits = (d) => {
+      let xl = -Infinity, xh = Infinity, yl = -Infinity, yh = Infinity;
+      for (const [x, y, z] of pts) {
+        const depth = d + z; if (depth < 0.1) return null;
+        xl = Math.max(xl, x - FRAME.x * depth * th); xh = Math.min(xh, x + FRAME.x * depth * th);
+        yl = Math.max(yl, y - FRAME.top * depth * tv); yh = Math.min(yh, y - FRAME.bottom * depth * tv);
+      }
+      return xl <= xh && yl <= yh ? [(xl + xh) / 2, (yl + yh) / 2] : null;
+    };
+    let d0 = ZOOM.min, d1 = Math.min(ZOOM.max, 6);
+    if (fits(d1) === null) d0 = d1;
+    for (let i = 0; i < 40 && d1 - d0 > 1e-3; i++) { const dm = (d0 + d1) / 2; if (fits(dm) === null) d0 = dm; else d1 = dm; }
+    const [sx, sy] = fits(d1) || [0, 0], t = c.clone().addScaledVector(right, sx).addScaledVector(up, sy);
+    return { p: t.clone().addScaledVector(back, d1), t };
+  }
+  // what the camera must see: the work surface, the robot (near the origin) and the person's upper body
+  const look = [];
+  for (const fx of [0.15, 0.5, 0.85]) for (const fy of [0.15, 0.5, 0.85]) look.push([TABLE.x0 + (TABLE.x1 - TABLE.x0) * fx, TABLE.y0 + (TABLE.y1 - TABLE.y0) * fy, TABLE.z + 0.03, 0.05, 1]);
+  look.push([0, 0, TABLE.z + 0.25, 0.3, 2]);
+  if (ps) look.push([ps[0], ps[1], 1.3, 0.05, 2]);
+  const ray = new THREE.Raycaster(), to = new THREE.Vector3();
+  g.updateMatrixWorld(true);
+  const blocked = (p) => look.reduce((n, [x, y, z, tol, w]) => {
+    to.set(x, y, z).sub(p); const dist = to.length(); ray.set(p, to.normalize()); ray.far = Math.max(0, dist - tol);
+    return n + (ray.intersectObject(g, true).some((h) => h.object.isMesh && !(h.object.parent && h.object.parent.userData.floor)) ? w : 0);
+  }, 0);
+  let best = null;
+  FRAME.dirs.forEach((dir, i) => {
+    const v = fit(dir); v.score = blocked(v.p) + (i >= 2 ? 1.5 : 0);   // the side views read better: steep only when it sees more
+    if (!best || v.score < best.score) best = v;
+  });
+  CAMS.reset = [[best.p.x, best.p.y, best.p.z], [best.t.x, best.t.y, best.t.z]];
+  CAMS.stage = CAMS.reset;
+  camPreset("reset", ms);
+}
 function reload() { // robot body switched: /scene.json changed
   loadGen++; clearTimeout(retryTimer);
   if (scene) { const old = scene.getObjectByName("geoms"); if (old) { scene.remove(old); old.traverse((o) => { if (o.material) o.material.dispose(); if (o.geometry) o.geometry.dispose(); }); } }
-  geomObjs.clear(); meshCache.clear(); sceneState = "idle"; needs = true;
+  geomObjs.clear(); meshCache.clear(); floors.length = 0; sceneState = "idle"; needs = true;
   if (root && isActive) loadScene();
 }
+// Stage colours follow the app theme (CSS tokens --stage-bg / --stage-floor / --stage-grid / --stage-grid2).
+let hemi = null;
+const floors = [];
+function themeColors() {
+  const cs = getComputedStyle(document.documentElement), c = (k, d) => (cs.getPropertyValue(k) || "").trim() || d;
+  return { bg: c("--stage-bg", "#f5f5f7"), floor: c("--stage-floor", "#eceef2"), grid: c("--stage-grid", "#c4c7cf"), grid2: c("--stage-grid2", "#dcdfe5"),
+    dark: document.documentElement.dataset.theme === "dark" };
+}
+function makeGrid(z, t) {
+  const grid = new THREE.GridHelper(14, 56, new THREE.Color(t.grid), new THREE.Color(t.grid2)); grid.rotation.x = Math.PI / 2; grid.position.z = z + 0.001;
+  return grid;
+}
+function applyTheme() {
+  if (!scene) return;
+  const t = themeColors();
+  scene.background = new THREE.Color(t.bg); scene.fog.color.set(t.bg);
+  if (hemi) { hemi.groundColor.set(t.dark ? 0x3a3c44 : 0xd9dbe2); hemi.intensity = t.dark ? 1.0 : 1.15; }
+  for (const f of floors) {
+    f.pl.material.color.set(t.floor);
+    if (f.grid) { f.g.remove(f.grid); f.grid.geometry.dispose(); f.grid.material.dispose(); }
+    f.grid = makeGrid(f.z, t); f.g.add(f.grid);
+  }
+  needs = true;
+}
 function floor(gm) {
-  const g = new THREE.Group(), z = isXYZ(gm.pos) ? gm.pos[2] : 0;
-  const pl = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshStandardMaterial({ color: 0xeceef2, roughness: 0.95 }));
+  const g = new THREE.Group(), z = isXYZ(gm.pos) ? gm.pos[2] : 0, t = themeColors();
+  g.userData.floor = true;            // P2b: hidden in passthrough (MR), where the real floor is
+  const pl = new THREE.Mesh(new THREE.PlaneGeometry(14, 14), new THREE.MeshStandardMaterial({ color: new THREE.Color(t.floor), roughness: 0.95 }));
   pl.position.z = z; pl.receiveShadow = true; g.add(pl);
-  const grid = new THREE.GridHelper(14, 56, 0xc4c7cf, 0xdcdfe5); grid.rotation.x = Math.PI / 2; grid.position.z = z + 0.001; g.add(grid);
+  const grid = makeGrid(z, t); g.add(grid);
+  floors.push({ g, pl, grid, z });
   return g;
 }
 function applyPoses() {
@@ -201,9 +322,70 @@ const CAMS = { stage: [[1.9, -1.3, 1.15], [0.1, 0, 0.65]], orbit: [[2.6, 1.8, 2.
   reset: [[2.0, -1.6, 1.7], [0.3, 0, 0.75]], top: [[0.52, -0.001, 3.0], [0.52, 0, 0.74]],
   front: [[2.6, 0, 1.05], [0.45, 0, 0.82]], side: [[0.5, -2.5, 0.98], [0.5, 0, 0.84]],
 };
-function camPreset(k) {
+function camPreset(k, ms = 380) {
   const c = CAMS[k] || CAMS.reset; if (!camera) return; needs = true;
-  camera.position.set(...c[0]); orbit.target.set(...c[1]); camera.up.set(0, 0, 1); orbit.update();
+  zoomGoal = null; camera.up.set(0, 0, 1);
+  flyTo(new THREE.Vector3(...c[0]), new THREE.Vector3(...c[1]), ms);
+}
+// Smooth camera move (presets, focus on a proposed path). Any user input (wheel, drag) cancels it.
+let flyAnim = 0;
+function cancelFly() { if (flyAnim) { cancelAnimationFrame(flyAnim); flyAnim = 0; } }
+function flyTo(p1, t1, ms) {
+  cancelFly();
+  const p0 = camera.position.clone(), t0 = orbit.target.clone(), start = performance.now();
+  const step = (now) => {
+    const u = ms > 0 ? Math.min(1, (now - start) / ms) : 1, e = u * u * (3 - 2 * u);
+    camera.position.lerpVectors(p0, p1, e); orbit.target.lerpVectors(t0, t1, e); orbit.update(); needs = true;
+    flyAnim = u < 1 ? requestAnimationFrame(step) : 0;
+  };
+  if (ms > 0) flyAnim = requestAnimationFrame(step); else step(start);
+}
+
+// ------------------------------------------------------------------ wheel / pinch zoom
+// We zoom ourselves instead of OrbitControls: three r160 scales each wheel step by 1 / (devicePixelRatio | 0), which is
+// 1/0 on a page zoomed below 100 % on a standard display (every notch slams to the min or max distance: "two steps")
+// and half speed on Retina. Here a step is proportional to the wheel distance in CSS px (line / page deltas
+// normalised), the same on every display, eased over a few frames, and centred on the point under the pointer.
+const ZOOM = { min: 0.2, max: 8, perPx: 0.0011, pinchPerPx: 0.012, maxStep: 0.6, tau: 70 };
+let zoomGoal = null;                 // {r, t}: the distance and orbit target the camera eases toward
+const wheelCaptures = [];            // feature modules (a trajectory handle under the pointer) may take the wheel
+function wheelPx(ev) {
+  const k = ev.deltaMode === 1 ? 18 : ev.deltaMode === 2 ? (root && root.clientHeight) || 600 : 1;
+  return ev.deltaY * k;
+}
+function onWheel(ev) {
+  if (!renderer || ev.target !== renderer.domElement) return;       // panels over the stage keep their own wheel
+  if (wheelCaptures.some((fn) => { try { return fn({ ev, hit: tableHit(ev) }) === true; } catch (e) { console.error(e); return false; } })) {
+    ev.preventDefault(); ev.stopPropagation(); return;
+  }
+  ev.preventDefault(); ev.stopPropagation();                      // OrbitControls' own (broken) wheel zoom never runs
+  if (!orbit.enabled) return;
+  cancelFly();
+  const step = Math.max(-ZOOM.maxStep, Math.min(ZOOM.maxStep, wheelPx(ev) * (ev.ctrlKey ? ZOOM.pinchPerPx : ZOOM.perPx)));
+  zoomAt(Math.exp(step), ev);
+}
+// Scale the camera distance by f (>1 = out), keeping the point under the pointer where it is on screen.
+function zoomAt(f, ev) {
+  if (!camera) return;
+  const r0 = zoomGoal ? zoomGoal.r : camera.position.distanceTo(orbit.target);
+  const t0 = zoomGoal ? zoomGoal.t.clone() : orbit.target.clone();
+  const r1 = Math.min(ZOOM.max, Math.max(ZOOM.min, r0 * f)), s = r1 / r0;
+  let t1 = t0;
+  if (ev && Math.abs(s - 1) > 1e-6) {
+    raycaster.setFromCamera(ndc(ev), camera);
+    const p = new THREE.Vector3(), plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -t0.z);
+    if (raycaster.ray.intersectPlane(plane, p) && p.distanceTo(t0) < 2.5 * r0) t1 = p.clone().add(t0.clone().sub(p).multiplyScalar(s));
+  }
+  zoomGoal = { r: r1, t: t1 }; needs = true;
+}
+function easeZoom(dt) {
+  if (!zoomGoal) return false;
+  const a = 1 - Math.exp(-dt / ZOOM.tau), off = camera.position.clone().sub(orbit.target), r = off.length();
+  orbit.target.lerp(zoomGoal.t, a);
+  const nr = r + (zoomGoal.r - r) * a, done = Math.abs(nr - zoomGoal.r) < 1e-4 && orbit.target.distanceTo(zoomGoal.t) < 1e-4;
+  camera.position.copy(orbit.target).addScaledVector(off.normalize(), done ? zoomGoal.r : nr);
+  if (done) { orbit.target.copy(zoomGoal.t); zoomGoal = null; }
+  return true;
 }
 function clearAll() { clearLocal(); send({ type: "clear" }); }
 
@@ -285,19 +467,32 @@ function tableHit(ev) {
   const p = new THREE.Vector3(); if (!raycaster.ray.intersectPlane(tablePlane, p)) return null;
   return p.x >= TABLE.x0 && p.x <= TABLE.x1 && p.y >= TABLE.y0 && p.y <= TABLE.y1 ? p : null;
 }
-function onDown(ev) { gizmoPress = !!(tc.dragging || tc.axis); down = { x: ev.clientX, y: ev.clientY, b: ev.button }; }
+// Feature tools (web/ui/*.js) can take over the pointer: PC3D.capture(fn) where fn({type, ev, hit}) returns true to consume.
+const captures = [];
+function captured(type, ev) {
+  if (!captures.length) return false;
+  const hit = tableHit(ev);
+  return captures.some((fn) => { try { return fn({ type, ev, hit }) === true; } catch (e) { console.error(e); return false; } });
+}
+function onDown(ev) {
+  cancelFly();                                                     // grabbing the view stops a fly-to
+  if (captured("down", ev)) { orbit.enabled = false; down = null; return; }
+  gizmoPress = !!(tc.dragging || tc.axis); down = { x: ev.clientX, y: ev.clientY, b: ev.button };
+}
 function onUp(ev) {
+  if (captured("up", ev)) { orbit.enabled = true; down = null; return; }
   const d = down; down = null;
   if (!d || d.b !== 0 || gizmoPress || Math.hypot(ev.clientX - d.x, ev.clientY - d.y) > 5) { gizmoPress = false; return; }
   raycaster.setFromCamera(ndc(ev), camera);
   const hit = raycaster.intersectObjects(wps, false)[0];
   if (hit) { select(hit.object); return; }
   const p = tableHit(ev);
-  if (p) { addWaypoint(new THREE.Vector3(p.x, p.y, HOVER_Z)); select(null); hintEl.textContent = "Click a waypoint to move it — the blue (Z) arrow sets its height."; }
+  if (p && editing) { addWaypoint(new THREE.Vector3(p.x, p.y, HOVER_Z)); select(null); hintEl.textContent = "Click a waypoint to move it — the blue (Z) arrow sets its height."; }
   else select(null);
 }
 function onMove(ev) {
-  if (!hoverGhost || down) { if (hoverGhost) hoverGhost.visible = false; return; }
+  if (captured("move", ev)) { if (hoverGhost) hoverGhost.visible = false; return; }
+  if (!hoverGhost || down || !editing) { if (hoverGhost) hoverGhost.visible = false; return; }
   const p = tableHit(ev); hoverGhost.visible = !!p && !tc.axis;
   if (p) hoverGhost.position.set(p.x, p.y, HOVER_Z);
   needs = true;
@@ -317,7 +512,7 @@ function onKey(ev) {
 // ------------------------------------------------------------------ mount / loop
 function buildUi(container) {
   container.innerHTML = `
-    <button type="button" class="btn sm v3d-toggle" aria-expanded="false" title="Show the 3D path editor">✎ Path editor</button>
+    <button type="button" class="btn sm v3d-toggle" aria-expanded="false" title="Show the 3D path editor">Edit path</button>
     <div class="v3d-panel" role="group" aria-label="3D path editor" hidden>
       <div class="v3d-row"><span class="label mono">3D PATH</span><span class="grow"></span>
         <div class="seg" role="group" aria-label="Hand">
@@ -341,7 +536,7 @@ function buildUi(container) {
       <button type="button" class="seg-btn" data-cam="orbit">Orbit</button>
       <button type="button" class="seg-btn" data-cam="top">Top</button>
       <button type="button" class="seg-btn" data-cam="side">Side</button>
-      <button type="button" class="seg-btn" data-cam="reset" aria-label="Reset view">↺</button>
+      <button type="button" class="seg-btn" data-cam="reset" aria-label="Reset view" title="Reset view"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" style="display:block"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></svg></button>
     </div>
     <div class="v3d-msg" hidden></div>`;
   msgEl = container.querySelector(".v3d-msg"); listEl = container.querySelector(".v3d-list");
@@ -349,7 +544,7 @@ function buildUi(container) {
   const panel = container.querySelector(".v3d-panel");
   const tog = container.querySelector(".v3d-toggle");
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => tog.addEventListener(t, (e) => e.stopPropagation()));
-  tog.addEventListener("click", () => { panel.hidden = !panel.hidden; tog.setAttribute("aria-expanded", String(!panel.hidden)); tog.textContent = panel.hidden ? "✎ Path editor" : "✕ Close editor"; });
+  tog.addEventListener("click", () => editPath(panel.hidden));
   ["pointerdown", "pointerup", "pointermove", "wheel"].forEach((t) => panel.addEventListener(t, (e) => e.stopPropagation()));
   panel.querySelectorAll("[data-hand]").forEach((b) => b.addEventListener("click", () => {
     hand = b.dataset.hand; dirty = true;
@@ -363,6 +558,14 @@ function buildUi(container) {
   ["pointerdown", "pointerup", "pointermove", "wheel"].forEach((t) => views.addEventListener(t, (e) => e.stopPropagation()));
   views.querySelectorAll("[data-cam]").forEach((b) => b.addEventListener("click", () => camPreset(b.dataset.cam)));
 }
+function editPath(on) { // open / close the waypoint editor (the "Path" tool calls this too)
+  if (!root) return;
+  const panel = root.querySelector(".v3d-panel"), tog = root.querySelector(".v3d-toggle");
+  editing = !!on; panel.hidden = !editing;
+  tog.setAttribute("aria-expanded", String(editing)); tog.textContent = editing ? "Done editing" : "Edit path";
+  if (!editing && hoverGhost) hoverGhost.visible = false;
+  needs = true; window.dispatchEvent(new CustomEvent("pc-path-edit", { detail: editing }));
+}
 function mount(container) {
   if (root || !container) return;
   root = container; root.classList.add("view3d");
@@ -375,16 +578,17 @@ function mount(container) {
   scene = new THREE.Scene(); scene.background = new THREE.Color(0xf5f5f7); scene.fog = new THREE.Fog(0xf5f5f7, 7, 16);
   camera = new THREE.PerspectiveCamera(42, 4 / 3, 0.02, 60); camera.up.set(0, 0, 1); camera.position.set(2.0, -1.6, 1.7);
   orbit = new OrbitControls(camera, renderer.domElement); orbit.target.set(0.3, 0, 0.75); orbit.enableDamping = true; orbit.dampingFactor = 0.12;
-  orbit.enableRotate = orbit.enablePan = orbit.enableZoom = true; orbit.screenSpacePanning = true;
-  orbit.minDistance = 0.25; orbit.maxDistance = 9; orbit.update(); // free orbit (left drag) · pan (right drag / shift) · zoom (wheel)
-  const hemi = new THREE.HemisphereLight(0xffffff, 0xd9dbe2, 1.15); hemi.position.set(0, 0, 1); scene.add(hemi);
+  orbit.enableRotate = orbit.enablePan = orbit.enableZoom = true; orbit.screenSpacePanning = true;   // enableZoom: touch pinch
+  orbit.minDistance = ZOOM.min; orbit.maxDistance = ZOOM.max; orbit.update(); // orbit (left drag) · pan (right drag / shift) · zoom (wheel: onWheel)
+  root.addEventListener("wheel", onWheel, { capture: true, passive: false });
+  hemi = new THREE.HemisphereLight(0xffffff, 0xd9dbe2, 1.15); hemi.position.set(0, 0, 1); scene.add(hemi);
   const dir = new THREE.DirectionalLight(0xffffff, 1.9); dir.position.set(1.6, -1.8, 4.2); dir.castShadow = true;
   dir.shadow.mapSize.set(1024, 1024); Object.assign(dir.shadow.camera, { left: -1.6, right: 1.6, top: 1.6, bottom: -1.6, near: 0.5, far: 10 }); dir.shadow.bias = -0.0004;
   scene.add(dir, dir.target);
   // editable zone outline on the table top
   const zone = new THREE.LineLoop(new THREE.BufferGeometry().setFromPoints([[TABLE.x0, TABLE.y0], [TABLE.x1, TABLE.y0], [TABLE.x1, TABLE.y1], [TABLE.x0, TABLE.y1]]
     .map(([x, y]) => new THREE.Vector3(x, y, TABLE.z + 0.003))), new THREE.LineBasicMaterial({ color: 0x5c77df, transparent: true, opacity: 0.45 }));
-  scene.add(zone, wpGroup, linkGroup, srvGroup, mkGroup, objGroup, rayGroup);
+  scene.add(zone, wpGroup, linkGroup, srvGroup, mkGroup, objGroup, rayGroup, ...layers.values());
   hoverGhost = new THREE.Mesh(wpGeo, new THREE.MeshBasicMaterial({ color: COL.wp, transparent: true, opacity: 0.35, depthWrite: false })); hoverGhost.visible = false; scene.add(hoverGhost);
   raycaster = new THREE.Raycaster();
   tc = new TransformControls(camera, renderer.domElement); tc.setMode("translate"); tc.setSpace("world"); tc.setSize(0.6);
@@ -404,19 +608,24 @@ function mount(container) {
   cv.addEventListener("contextmenu", (e) => e.preventDefault());
   document.addEventListener("keydown", onKey, true);
   new ResizeObserver(resize).observe(root); resize();
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] }); applyTheme();
   renderHud(); renderServer();
   if (isActive) { loadScene(); startLoop(); }
 }
 function resize() {
-  if (!root || !renderer) return;
+  if (!root || !renderer || (renderer.xr && renderer.xr.isPresenting)) return;   // P2b: the headset owns the size while in VR
   const w = Math.max(1, root.clientWidth), h = Math.max(1, root.clientHeight);
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); needs = true;
 }
 function startLoop() {
   if (loopOn) return; loopOn = true;
-  const tick = () => {
+  let last = performance.now();
+  const tick = (now) => {
     if (!isActive || !root) { loopOn = false; return; }
-    if (orbit.update() || needs) { needs = false; renderer.render(scene, camera); } // render on demand (cheap when idle)
+    if (renderer.xr && renderer.xr.isPresenting) { needs = true; requestAnimationFrame(tick); return; }   // P2b: web/xr.js renders in VR
+    const dt = Math.min(100, Math.max(0, (now || performance.now()) - last)); last = now || performance.now();
+    const zoomed = easeZoom(dt);
+    if (orbit.update() || needs || zoomed) { needs = false; renderer.render(scene, camera); } // render on demand (cheap when idle)
     requestAnimationFrame(tick);
   };
   requestAnimationFrame(tick);
@@ -438,5 +647,47 @@ function project(x, y, z) { // world -> client px (debug / tests)
   const v = new THREE.Vector3(x, y, z).project(camera), r = renderer.domElement.getBoundingClientRect();
   return [r.left + (v.x + 1) / 2 * r.width, r.top + (1 - v.y) / 2 * r.height];
 }
-window.PC3D = { mount, setState, active, reload, project, get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); } };
+// Named layers feature modules draw into (cleared and rebuilt by their owner).
+const layers = new Map();
+function layer(name) {
+  if (!layers.has(name)) { const g = new THREE.Group(); g.name = "layer:" + name; layers.set(name, g); if (scene) scene.add(g); }
+  return layers.get(name);
+}
+function capture(fn) { captures.push(fn); return () => { const i = captures.indexOf(fn); if (i >= 0) captures.splice(i, 1); }; }
+// Fly the camera to frame these world points, keeping the current viewing direction (P2: a proposed trajectory).
+function focus(points, opts = {}) {
+  if (!camera || !orbit) return;
+  const box = new THREE.Box3();
+  for (const p of arr(points)) if (isXYZ(p)) box.expandByPoint(new THREE.Vector3(p[0], p[1], p[2]));
+  if (box.isEmpty()) return;
+  const c = box.getCenter(new THREE.Vector3()), r = Math.max(opts.min || 0.22, box.getSize(new THREE.Vector3()).length() / 2);
+  const vf = THREE.MathUtils.degToRad(camera.fov), hf = 2 * Math.atan(Math.tan(vf / 2) * camera.aspect);
+  const dir = new THREE.Vector3().subVectors(camera.position, orbit.target).normalize();
+  const dist = Math.min(ZOOM.max, Math.max(ZOOM.min, r / Math.sin(Math.min(vf, hf) / 2) * (opts.pad || 1.1)));
+  zoomGoal = null;
+  flyTo(c.clone().addScaledVector(dir, dist), c, opts.ms == null ? 450 : opts.ms);
+}
+// Is every point on screen (inside a margin) and is the group big enough to work with? (callers skip a fly-to then)
+function inView(points, margin = 0.08, minSpan = 0.18) {
+  if (!camera) return false;
+  let x0 = 1, x1 = -1, y0 = 1, y1 = -1, n = 0;
+  for (const p of arr(points)) {
+    if (!isXYZ(p)) continue;
+    const v = new THREE.Vector3(p[0], p[1], p[2]).project(camera); n++;
+    if (v.z > 1 || Math.abs(v.x) > 1 - margin || Math.abs(v.y) > 1 - margin) return false;
+    x0 = Math.min(x0, v.x); x1 = Math.max(x1, v.x); y0 = Math.min(y0, v.y); y1 = Math.max(y1, v.y);
+  }
+  return n > 0 && Math.max(x1 - x0, y1 - y0) / 2 >= minSpan;
+}
+window.PC3D = {
+  mount, setState, active, reload, editPath, get editing() { return editing; }, project, layer, capture, redraw, disposeGroup, labelSprite, segmentMesh, TABLE, THREE, focus, inView,
+  // wheel: fn({ev, hit}) -> true to take the wheel (a trajectory handle under the pointer); zoomBy(f) scales the distance (tests, keys)
+  wheelCapture(fn) { wheelCaptures.push(fn); return () => { const i = wheelCaptures.indexOf(fn); if (i >= 0) wheelCaptures.splice(i, 1); }; },
+  zoomBy(f) { zoomAt(f, null); }, get zoomLimits() { return { min: ZOOM.min, max: ZOOM.max }; },
+  get orbitTarget() { return orbit ? orbit.target : null; }, get distance() { return camera && orbit ? camera.position.distanceTo(orbit.target) : null; },
+  get scene() { return scene; }, get camera() { return camera; }, get mounted() { return !!root; }, get isActive() { return isActive; },
+  get renderer() { return renderer; }, get geoms() { return scene ? scene.getObjectByName("geoms") : null; }, get sceneReady() { return sceneState === "ready"; },
+  tableHit: (ev) => (renderer ? tableHit(ev) : null),
+  get waypoints() { return pointsOut(); }, get selectedIndex() { return wps.indexOf(selected); },
+};
 window.dispatchEvent(new Event("pc3d-ready"));

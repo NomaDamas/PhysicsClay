@@ -1,0 +1,4 @@
+{"version": 1, "name": "spot_bench", "kind": "spot",
+ "params": {"object": "barbell", "follow": "hands", "assist_when": {"bar_velocity_below": 0.05, "for_s": 0.5},
+            "max_force": 40.0, "lift_cm": 6.0},
+ "created": 1762732800.0, "source": {"demo": null, "note": "example: spot a bench press or a squat"}, "measured": {}, "notes": []}

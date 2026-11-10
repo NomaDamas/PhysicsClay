@@ -1,0 +1,36 @@
+{
+  "id": "weld_cell",
+  "label": "Weld cell",
+  "icon": "weld",
+  "summary": "Two steel plate butt joints (a straight seam and an L seam) and a welding torch on the arm. Show the weave with your hand; the robot welds the other seam in your style.",
+  "robot": "ur5e",
+  "robots": ["ur5e", "panda"],
+  "scene": {
+    "template": "table",
+    "tool": {"kind": "torch", "tcp": 0.16},
+    "objects": [
+      {"name": "plate_a", "kind": "steel_plate", "color": "steel", "size": [0.09, 0.30, 0.008], "pos": [0.404, -0.21], "movable": false, "exact": true},
+      {"name": "plate_b", "kind": "steel_plate", "color": "steel", "size": [0.09, 0.30, 0.008], "pos": [0.496, -0.21], "movable": false, "exact": true},
+      {"name": "plate_c", "kind": "steel_plate", "color": "steel", "size": [0.12, 0.12, 0.008], "pos": [0.42, 0.14], "movable": false, "exact": true},
+      {"name": "plate_l1", "kind": "steel_plate", "color": "steel", "size": [0.08, 0.202, 0.008], "pos": [0.522, 0.181], "movable": false, "exact": true},
+      {"name": "plate_l2", "kind": "steel_plate", "color": "steel", "size": [0.122, 0.08, 0.008], "pos": [0.421, 0.242], "movable": false, "exact": true}
+    ],
+    "seams": {
+      "seam_a": {"label": "the straight seam", "between": ["plate_a", "plate_b"],
+                 "points": [[0.45, -0.345, 0.748], [0.45, -0.075, 0.748]]},
+      "seam_l": {"label": "the L seam", "between": ["plate_c", "plate_l1", "plate_l2"],
+                 "points": [[0.37, 0.201, 0.748], [0.481, 0.201, 0.748], [0.481, 0.09, 0.748]]}
+    }
+  },
+  "examples": [
+    "Watch me weld this seam",
+    "Now weld the L seam like that",
+    "A bit wider and slower",
+    "Go"
+  ],
+  "setup": {
+    "say": "Weld cell ready: a straight seam and an L seam, and a torch on my arm. Say “watch me” and show me the weave with your hand, then say done."
+  },
+  "demo": {"kind": "weave", "seconds": 8.0, "amp": 0.005, "freq": 2.0, "travel": 0.01, "name": "weave_demo"},
+  "physics": "No arc or melt physics: the bead is drawn along the torch tip's actual path. With P0 physics on, the torch is a collision body on the wrist."
+}

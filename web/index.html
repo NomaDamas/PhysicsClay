@@ -4,24 +4,41 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#fbfbfd">
+<meta name="color-scheme" content="light dark">
 <title>PhysicsClay · New Generation of interactive prompt for Physical AI</title>
+<link rel="icon" href="data:,">
+<script>/* theme before first paint: Settings → Appearance stores pc.theme = system | light | dark (web/shell.js) */
+(function () { var m = "system"; try { m = localStorage.getItem("pc.theme") || "system"; } catch (e) { /* storage blocked */ }
+  var dark = m === "dark" || (m !== "light" && !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches));
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light"); document.documentElement.setAttribute("data-theme-pref", m); })();</script>
 <link rel="stylesheet" href="/static/style.css">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
-  <symbol id="i-mic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
-  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></g></symbol>
-  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor"/></symbol>
-  <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M10.3 4.9 10.57 2.41h2.86l.27 2.49a7.3 7.3 0 0 1 2.11.88l1.96-1.58 2.03 2.03-1.58 1.96a7.3 7.3 0 0 1 .88 2.11l2.49.27v2.86l-2.49.27a7.3 7.3 0 0 1-.88 2.11l1.58 1.96-2.03 2.03-1.96-1.58a7.3 7.3 0 0 1-2.11.88l-.27 2.49h-2.86l-.27-2.49a7.3 7.3 0 0 1-2.11-.88l-1.96 1.58-2.03-2.03 1.58-1.96a7.3 7.3 0 0 1-.88-2.11l-2.49-.27v-2.86l2.49-.27a7.3 7.3 0 0 1 .88-2.11L4.2 6.23 6.23 4.2l1.96 1.58a7.3 7.3 0 0 1 2.11-.88z"/><circle cx="12" cy="12" r="3.1"/></g></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.85.85c0 1.75-2.45 2.1-2.45 3.75M12 17.1v.15"/></g></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></g></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.75"/></symbol>
+  <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round" d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></symbol>
-  <symbol id="i-cam" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.2" r="3.4"/></g></symbol>
-  <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-cam" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><path d="M4 8h3l2-2.5h6L17 8h3v11H4z"/><circle cx="12" cy="13.2" r="3.4"/></g></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M6 9l6 6 6-6"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="5.5" cy="12" r="1.3"/><circle cx="12" cy="12" r="1.3"/><circle cx="18.5" cy="12" r="1.3"/></g></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linejoin="round"><rect x="3" y="6" width="13" height="12" rx="2.5"/><path d="m16 10.5 5-3v9l-5-3z"/></g></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-follow" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="5.5" r="2"/><path d="M12 8v6m0 0-3 6m3-6 3 6M7 10.5l5-1.5 5 1.5"/></g></symbol>
+  <symbol id="i-reset" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4"/></symbol>
+  <symbol id="i-export" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m0-11-4 4m4-4 4 4M5 15v4h14v-4"/></symbol>
+  <symbol id="i-arm" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" d="M5 20h8M9 20v-4l4-6 5 2M13 10l-2-5"/></symbol>
+  <symbol id="i-skill" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h10M4 17h7"/><path d="m16 15 4 2.5-4 2.5z"/></g></symbol>
 </svg>
 
 <header class="topbar">
   <div class="brand">
-    <span class="logo" aria-hidden="true"></span>
+    <span class="logo" aria-hidden="true"><i></i></span>
     <div class="brand-text">
       <span class="name">PhysicsClay</span>
       <span class="tag" title="New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.">New Generation of interactive prompt for Physical AI</span>
@@ -29,217 +46,223 @@
   </div>
 
   <div class="bar-mid">
-    <span id="demoPill" class="demo-pill mono" role="status" hidden><i></i><span id="demoPillTxt">DEMO</span></span>
-    <span id="phoneCamChip" class="chip mono phone-cam-chip" title="This device's camera is the robot's view of you" hidden>● phone camera</span>
-    <span id="mode" class="mode-chip" data-mode="IDLE" role="status" aria-label="Robot mode"><i></i><b>IDLE</b></span>
-    <button id="talk" class="talk" type="button" aria-label="Talk to the robot (Space)" aria-pressed="false" data-state="off">
-      <span class="ring" aria-hidden="true"></span>
-      <svg class="ico" aria-hidden="true"><use href="#i-mic"/></svg>
-    </button>
-    <div class="talk-meta">
-      <span id="talkLabel" class="talk-label">Talk</span>
-      <span id="talkSub" class="talk-sub mono">press space</span>
-    </div>
-    <button id="camBtnM" class="icon-btn mobile-gear" type="button" aria-label="Camera settings"><svg aria-hidden="true"><use href="#i-cam"/></svg></button>
-    <button id="settingsBtnM" class="icon-btn mobile-gear" type="button" aria-label="Settings"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
+    <span id="stats" class="status-pill" data-conn="off" role="status" aria-label="Robot status">
+      <i aria-hidden="true"></i>
+      <span id="robotLabel" class="sp-robot">Unitree G1</span>
+      <span class="sp-sub"><span class="sp-sim">· simulation · </span><span id="mode" class="sp-mode" data-mode="IDLE"><b>connecting</b></span></span>
+      <span id="statsTxt" class="sp-stats">connecting</span>
+    </span>
   </div>
 
   <div class="bar-right">
     <div class="meter" title="Physically feasible share of recent frames">
       <span class="meter-label">Feasible</span>
       <span class="meter-track"><span id="feasFill" class="meter-fill"></span></span>
-      <span id="feasTxt" class="meter-val mono">--</span>
+      <span id="feasTxt" class="meter-val">--</span>
     </div>
-    <span id="mockPill" class="chip mono mock-pill" title="Mock AI: offline gestures + scripted replies" hidden>MOCK AI</span>
-    <span id="speed" class="chip mono" title="Speed scale">×1.0</span>
-    <span id="stats" class="stats mono" data-conn="off"><i></i><span id="statsTxt">connecting</span></span>
-    <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
+    <span id="speed" class="chip speed-chip" title="Speed scale" hidden>×1.0</span>
+    <span id="mockPill" class="chip mock-pill" title="Mock AI: offline gestures + scripted replies" hidden>Mock AI</span>
+    <span id="demoPill" class="demo-pill" role="status" hidden><i></i><span id="demoPillTxt">Demo</span></span>
+    <button id="demoBtn" class="pill-btn" type="button" title="Run the guided demo">Demo</button>
+    <button id="helpBtn" class="icon-btn labelled" type="button" aria-label="Help: how to use PhysicsClay" title="How to use PhysicsClay" aria-haspopup="dialog"><svg aria-hidden="true"><use href="#i-help"/></svg><span class="btn-lbl">Help</span></button>
+    <button id="settingsBtn" class="icon-btn labelled" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog"><svg aria-hidden="true"><use href="#i-gear"/></svg><span class="btn-lbl">Settings</span></button>
   </div>
 </header>
 
-<main class="stage">
-  <section class="panel robot" aria-label="Robot view">
-    <div class="panel-head">
-      <span class="label">Robot view</span>
-      <div class="seg" role="group" aria-label="Camera">
-        <button type="button" class="seg-btn" data-view="robot" aria-pressed="true">Robot eye</button>
-        <button type="button" class="seg-btn" data-view="3d" aria-pressed="false" title="3D: orbit freely, full-body stage view, path editor">3D</button>
-      </div>
-      <span id="holding" class="chip mono subtle">hands empty</span>
+<main class="layout" id="layout">
+  <!-- YOU: camera (always on screen) + conversation -->
+  <section class="col col-you" aria-label="You">
+    <div class="col-head">
+      <h2 class="col-title">You</h2>
       <span class="grow"></span>
-      <span id="robotLabel" class="muted small">Unitree G1 · MuJoCo</span>
+      <span id="phoneCamChip" class="chip phone-cam-chip" title="The camera the robot sees you through" role="status" hidden></span>
+      <span id="source" class="src-chip" title="Camera source">—</span>
     </div>
-    <div class="frame robot-frame" id="robotFrame">
-      <img id="robotImg" alt="Robot view of the table" draggable="false">
-      <button type="button" class="pip" id="pip" aria-label="Switch to this view">
-        <img id="pipImg" alt="" draggable="false"><span id="pipLabel">Full body</span>
-      </button>
-      <canvas id="robotOverlay" aria-label="Tap to place a marker, drag to draw a path"></canvas>
-      <div id="robotEmpty" class="empty"><span class="spinner" aria-hidden="true"></span><span>Waiting for the robot view…<br><small class="empty-tag">New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.</small></span></div>
-      <div id="caption" class="caption-bar" aria-live="polite" hidden></div>
-      <div id="subtitle" class="subtitle-bar" aria-live="polite" hidden></div>
-      <div id="view3d" class="view3d" hidden><div class="v3d-msg">Loading 3D engine…</div></div>
-      <div id="taskHud" class="task-hud" hidden><span class="dot"></span><span id="taskHudTxt"></span></div>
-      <div id="pathBar" class="path-bar" hidden>
-        <span id="pathInfo" class="mono"></span>
-        <button type="button" class="btn sm primary" id="runPath"><svg aria-hidden="true"><use href="#i-play"/></svg>Run path <kbd>F</kbd></button>
-        <button type="button" class="btn sm ghost" id="clearPath">Clear <kbd>C</kbd></button>
-      </div>
-    </div>
-    <p class="think-hint">You can't put everything you think into words — show it, point at it, draw it.</p>
-    <div class="hint-row">
-      <span>Say <q>let me show you</q></span><span class="sep">·</span><span><b>Point</b> and say <q>there</q></span><span class="sep">·</span><span><b>Tap</b> to mark · <b>Draw</b> a path</span>
-      <span class="grow"></span>
-      <span id="orbitHint" class="muted" hidden>right-drag / two fingers to orbit · wheel to zoom</span>
-    </div>
-
-    <button id="talkBig" class="talk-big" type="button" aria-label="Talk to the robot" aria-pressed="false" data-state="off">
-      <span class="ring" aria-hidden="true"></span>
-      <svg aria-hidden="true"><use href="#i-mic"/></svg>
-      <span id="talkBigLabel">Hold a conversation</span>
-    </button>
-
-    <div class="actions" role="toolbar" aria-label="Quick actions">
-      <span class="act-hint muted small">Teach the robot like a friend: <b>show</b> it on camera, <b>tell</b> it what matters.</span>
-      <span class="grow"></span>
-      <button type="button" class="btn danger" data-act="stop" title="Esc"><svg aria-hidden="true"><use href="#i-stop"/></svg>Stop</button>
-      <details class="more" id="moreMenu">
-        <summary class="btn" aria-label="More actions">⋯</summary>
-        <div class="more-menu" role="menu">
-          <button type="button" class="btn sm ghost" data-act="home" role="menuitem"><svg aria-hidden="true"><use href="#i-home"/></svg>Home</button>
-          <button type="button" class="btn sm ghost" data-act="reset" role="menuitem">Reset scene</button>
-          <button type="button" class="btn sm ghost" data-act="export" role="menuitem">Export</button>
-          <button type="button" class="btn sm ghost" data-act="compile" role="menuitem" title="Check the last motion on a UR5e arm">Compile for UR5e</button>
-        </div>
-      </details>
-      <span class="legacy" hidden>
-        <button type="button" class="btn toggle" data-act="follow" aria-pressed="false">Follow me</button>
-        <select id="skillSel" aria-label="Learned skill" disabled><option value="">no skills yet</option></select>
-        <button type="button" class="btn" data-act="play" id="playBtn" disabled>Play</button>
-      </span>
-    </div>
-    <div id="skillEdit" class="skill-edit legacy-edit" hidden>
-      <div class="se-head">
-        <span class="label mono">EDIT SKILL</span>
-        <span id="seName" class="se-name"></span>
-        <span id="seRange" class="mono muted small"></span>
-        <span class="grow"></span>
-        <select id="sePart" aria-label="Body part">
-          <option value="body">Whole body</option><option value="arms">Both arms</option>
-          <option value="left_arm">Left arm</option><option value="right_arm">Right arm</option><option value="legs">Legs</option>
-        </select>
-      </div>
-      <div id="seTrack" class="se-track" role="slider" tabindex="0" aria-label="Time range to edit (drag to select; arrow keys move)" aria-valuemin="0">
-        <div id="seSel" class="se-sel"><span class="h l"></span><span class="h r"></span></div>
-        <div id="seTicks" class="se-ticks" aria-hidden="true"></div>
-      </div>
-      <div class="se-btns">
-        <button type="button" class="btn sm" data-edit="faster">Faster</button>
-        <button type="button" class="btn sm" data-edit="slower">Slower</button>
-        <button type="button" class="btn sm" data-edit="bigger">Bigger</button>
-        <button type="button" class="btn sm" data-edit="smaller">Smaller</button>
-        <span class="grow"></span>
-        <span class="muted small">or say “make 2 to 4 seconds faster”, “left arm bigger”</span>
-      </div>
-    </div>
-    <form id="cmdForm" class="cmd" autocomplete="off">
-      <span class="prompt mono" aria-hidden="true">›</span>
-      <input id="cmd" type="text" placeholder="Explain or correct — “start teaching”, “don't touch the vase”, “put the mug there”" aria-label="Command">
-      <button class="btn primary" type="submit">Send</button>
-    </form>
-  </section>
-
-  <aside class="side">
-    <section class="panel teach" id="teachPanel" data-phase="idle" aria-label="Teach by showing">
-      <div class="panel-head">
-        <h2 class="label teach-title">Teach by showing</h2>
-        <span id="teachRec" class="badge rec" hidden>REC 0.0s</span>
-        <span class="grow"></span>
-        <span id="teachPhase" class="phase-chip">ready</span>
-        <button type="button" id="teachCancel" class="btn sm ghost" hidden>Start over</button>
-      </div>
-      <ol class="teach-strip" aria-label="How it works">
-        <li data-k="show"><b>1</b>Show &amp; tell</li><li data-k="understand"><b>2</b>Robot understands</li>
-        <li data-k="practice"><b>3</b>Practice</li><li data-k="correct"><b>4</b>You correct</li>
-      </ol>
-      <div class="teach-body">
-        <div class="t-idle">
-          <button type="button" class="btn primary teach-go" id="teachStart"><svg aria-hidden="true"><use href="#i-play"/></svg>Start teaching</button>
-          <p class="muted small">Show the task on camera and say what matters. The robot learns the task, asks about anything unclear, then practices in sim.</p>
-        </div>
-        <div class="t-rec">
-          <div class="t-evidence mono small" id="teachEvidence"></div>
-          <ul class="t-utt" id="teachUtt"><li class="muted">Talk while you show: “pick up the mug, carry it over, don't touch the vase”.</li></ul>
-          <button type="button" class="btn danger teach-go" id="teachStop"><svg aria-hidden="true"><use href="#i-stop"/></svg>Done showing</button>
-        </div>
-        <div class="t-spec">
-          <div class="t-card">
-            <div class="t-card-head"><span class="label">Robot understood</span><span class="grow"></span><span id="teachSummary" class="mono small muted"></span></div>
-            <div class="t-goal" id="teachGoal"></div>
-            <ol class="t-steps" id="teachSteps"></ol>
-            <div class="t-cons" id="teachCons"></div>
-          </div>
-          <div class="t-bubble" id="teachQ" hidden></div>
-          <div class="t-btns" id="teachConfirmBtns">
-            <button type="button" class="btn primary" id="teachYes">Yes, practice</button>
-            <button type="button" class="btn" id="teachCorrectBtn">Correct…</button>
-          </div>
-          <form class="t-correct" id="teachCorrectForm" hidden autocomplete="off">
-            <input id="teachCorrectIn" type="text" placeholder="e.g. “go around the vase on the left”, “slower”" aria-label="Correction">
-            <button type="submit" class="btn sm primary">Send</button>
-          </form>
-          <form class="t-save" id="teachSaveForm" hidden autocomplete="off">
-            <input id="teachName" type="text" placeholder="Skill name, e.g. mug over vase" aria-label="Skill name">
-            <button type="submit" class="btn sm primary">Save skill</button>
-          </form>
-        </div>
-      </div>
-    </section>
-
-    <section class="panel cam" aria-label="Your camera">
-      <div class="panel-head">
-        <span class="label">Your camera</span>
-        <span id="followBadge" class="badge follow" hidden>FOLLOWING YOU</span>
-        <span id="recBadge" class="badge rec" hidden>REC 0.0s</span>
-        <span id="gestureChip" class="chip mono gesture-chip" hidden></span>
-        <span class="grow"></span>
-        <span id="source" class="muted small mono">—</span>
-        <button type="button" id="videoBtn" class="btn sm">Show a video</button>
-        <input type="file" id="videoFile" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden>
-      </div>
+    <div class="panel cam" id="camPanel" aria-label="Your camera">
       <div class="frame cam-frame" id="camFrame">
         <img id="camImg" alt="Your camera" draggable="false">
+        <video id="camSelf" class="cam-self" muted playsinline autoplay hidden aria-label="You, from this computer's camera"></video>
         <canvas id="camOverlay" aria-hidden="true"></canvas>
-        <div id="camEmpty" class="empty small"><span>No camera frames yet</span></div>
-        <div id="noPose" class="toast" hidden>No person detected</div>
+        <div id="camEmpty" class="empty cam-empty">
+          <span class="ce-title" id="camEmptyTitle">Camera is off</span>
+          <span class="ce-sub" id="camEmptySub">Turn it on so the robot can see you, where you point and your gestures.</span>
+          <div class="ce-btns">
+            <button id="camBtnM" class="cam-on" type="button"><svg aria-hidden="true"><use href="#i-cam"/></svg><span>Turn on camera</span></button>
+            <button id="camPhoneBtn" class="cam-on alt" type="button"><svg aria-hidden="true"><use href="#i-phone"/></svg><span>Use my phone</span></button>
+          </div>
+        </div>
+        <button type="button" id="camOffBtn" class="cam-off-btn" title="Turn off this computer's camera" aria-label="Turn off camera" hidden><svg aria-hidden="true"><use href="#i-x"/></svg></button>
+        <div class="cam-chips">
+          <span id="followBadge" class="badge follow" hidden>Following you</span>
+          <span id="recBadge" class="badge rec" hidden>REC 0.0s</span>
+          <span id="gestureChip" class="ov-chip gesture-chip" hidden></span>
+        </div>
+        <div id="noPose" class="toast" hidden>I can't see you yet: step back so your upper body is in view</div>
         <div id="dropHint" class="drop-hint" hidden>Drop a video — the robot will imitate it</div>
-        <div id="videoBar" class="video-bar" hidden><span id="videoName" class="mono"></span><span class="vb-track"><span id="videoFill"></span></span><span id="videoPct" class="mono"></span></div>
+        <div id="videoBar" class="video-bar" hidden><span id="videoName"></span><span class="vb-track"><span id="videoFill"></span></span><span id="videoPct"></span></div>
+        <button type="button" id="videoBtn" class="cam-video-btn" title="Show a video: the robot imitates it"><svg aria-hidden="true"><use href="#i-video"/></svg><span>Show a video</span></button>
+        <input type="file" id="videoFile" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden>
       </div>
-    </section>
+    </div>
 
-    <section class="panel feed" id="feedPanel" aria-label="Intent feed">
+    <section class="panel feed" id="feedPanel" aria-label="Conversation">
       <div class="panel-head">
         <button id="feedToggle" class="head-toggle" type="button" aria-expanded="true" aria-controls="feed">
-          <span class="label">Intent feed</span>
+          <span class="label">Conversation</span>
           <svg class="chev" aria-hidden="true"><use href="#i-chev"/></svg>
         </button>
         <span class="grow"></span>
-        <span id="feedCount" class="muted small mono">0 intents</span>
+        <span id="feedCount" class="muted small">0 intents</span>
       </div>
       <div id="feed" class="feed-list" role="log" aria-live="polite">
-        <div class="feed-empty"><b>New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.</b> Speak, type, or tap the robot view. Every intent becomes a card here with the physics verdict.</div>
+        <div class="feed-empty">Talk, type, point or show. What you ask and what the robot does appears here.</div>
       </div>
     </section>
+  </section>
 
-    <section class="panel says" aria-label="Robot says">
-      <div class="panel-head">
-        <span class="label">Robot says</span>
-        <span class="grow"></span>
-        <span id="saysFeas" class="muted small mono"></span>
+  <!-- STAGE: 3D shared space (default) | Robot eye, timeline, dock -->
+  <section class="col col-stage" aria-label="Stage">
+    <div class="frame stage-frame v3d" id="robotFrame">
+      <img id="robotImg" alt="Robot eye: the robot's camera view of the table" draggable="false">
+      <canvas id="robotOverlay" aria-label="Robot eye: tap to place a marker, drag to draw a path"></canvas>
+      <div id="robotEmpty" class="empty"><span class="spinner" aria-hidden="true"></span><span>Waiting for the robot view…</span></div>
+      <div id="view3d" class="view3d"><div class="v3d-msg">Loading the 3D stage…</div></div>
+      <div class="stage-slot" data-slot="stage"></div>
+      <div class="stage-tl">
+        <div class="seg stage-seg" role="group" aria-label="Stage view">
+          <button type="button" class="seg-btn" data-view="3d" aria-pressed="true" title="3D shared space: orbit freely">3D</button>
+          <button type="button" class="seg-btn" data-view="robot" aria-pressed="false" title="What the robot's head camera sees">Robot eye</button>
+        </div>
+        <span id="holding" class="ov-chip subtle">hands empty</span>
       </div>
-      <ul id="says" class="says-list"><li class="info">Waiting for the robot…</li></ul>
-      <div id="saved" class="saved mono" hidden></div>
-    </section>
+      <button type="button" class="pip" id="pip" aria-label="Switch to Robot eye">
+        <canvas id="eyePip" aria-hidden="true"></canvas>
+        <img id="pipImg" alt="" draggable="false">
+        <span id="pipLabel">Robot eye</span>
+      </button>
+      <div id="taskHud" class="task-hud" hidden><span class="dot"></span><span id="taskHudTxt"></span></div>
+      <div id="caption" class="caption-bar" aria-live="polite" hidden></div>
+      <div id="subtitle" class="subtitle-bar" aria-live="polite" hidden></div>
+      <div id="pathBar" class="path-bar" hidden>
+        <span id="pathInfo"></span>
+        <button type="button" class="btn sm primary" id="runPath"><svg aria-hidden="true"><use href="#i-play"/></svg>Run path <kbd>F</kbd></button>
+        <button type="button" class="btn sm ghost" id="clearPath">Clear <kbd>C</kbd></button>
+      </div>
+      <p class="stage-hint" id="stageHint"><span id="orbitHint" hidden>Right-drag to orbit · wheel to zoom · </span><span class="sh-3d">Drag to look around</span><span class="sh-eye">Tap to mark a spot · drag to draw a path.</span></p>
+    </div>
+
+    <div class="timeline-slot" data-slot="timeline" aria-label="Timeline"></div>
+
+    <div class="dock" id="dock">
+      <button id="talk" class="talk" type="button" aria-label="Talk to the robot (Space)" aria-pressed="false" data-state="off">
+        <span class="ring" aria-hidden="true"></span>
+        <svg class="ico" aria-hidden="true"><use href="#i-mic"/></svg>
+      </button>
+      <form id="cmdForm" class="cmd" autocomplete="off">
+        <label for="cmd" class="cmd-label"><span id="talkLabel">Talk</span><span id="talkSub" class="talk-sub">press Space</span></label>
+        <div class="cmd-row">
+          <input id="cmd" type="text" enterkeyhint="send" placeholder="or type: put the mug on the right">
+          <button class="send-btn" type="submit" aria-label="Send"><svg aria-hidden="true"><use href="#i-send"/></svg></button>
+        </div>
+      </form>
+      <div class="dock-actions">
+        <button type="button" class="stop-btn" data-act="stop" title="Stop (Esc)"><svg aria-hidden="true"><use href="#i-stop"/></svg><span>Stop</span></button>
+        <details class="more" id="moreMenu">
+          <summary class="icon-btn more-btn" aria-label="More actions" title="More actions"><svg aria-hidden="true"><use href="#i-more"/></svg></summary>
+          <div class="more-menu" role="menu">
+            <button type="button" class="menu-item toggle" data-act="follow" aria-pressed="false" role="menuitem"><svg aria-hidden="true"><use href="#i-follow"/></svg>Follow me</button>
+            <button type="button" class="menu-item" data-act="video" role="menuitem"><svg aria-hidden="true"><use href="#i-video"/></svg>Show a video…</button>
+            <button type="button" class="menu-item" data-act="skills" role="menuitem"><svg aria-hidden="true"><use href="#i-skill"/></svg>Skills…</button>
+            <button type="button" class="menu-item" data-act="home" role="menuitem"><svg aria-hidden="true"><use href="#i-home"/></svg>Home pose</button>
+            <button type="button" class="menu-item" data-act="reset" role="menuitem"><svg aria-hidden="true"><use href="#i-reset"/></svg>Reset scene</button>
+            <button type="button" class="menu-item" data-act="export" role="menuitem"><svg aria-hidden="true"><use href="#i-export"/></svg>Export</button>
+            <button type="button" class="menu-item" data-act="compile" role="menuitem" title="Check the last motion on a UR5e arm"><svg aria-hidden="true"><use href="#i-arm"/></svg>Compile for UR5e</button>
+          </div>
+        </details>
+      </div>
+      <div class="tools" data-slot="tools" role="toolbar" aria-label="Ways to show"></div>
+    </div>
+  </section>
+
+  <!-- ROBOT'S PLAN: plan slot (plan.js), teach flow fallback, side slot, status -->
+  <aside class="col col-plan" id="planCol" aria-label="Robot's plan">
+    <button type="button" class="sheet-grab" id="sheetGrab" aria-expanded="false" aria-controls="planCol"><span aria-hidden="true"></span><span class="sr">Expand the robot's plan</span></button>
+    <div class="col-head">
+      <h2 class="col-title">Robot's plan</h2>
+      <span class="grow"></span>
+      <span id="planChip" class="plan-chip" data-tone="wait">Waiting for you</span>
+    </div>
+    <div class="plan-scroll">
+      <div class="plan-slot" data-slot="plan">
+        <article class="plan-idle" id="planIdle" data-shell="idle" aria-label="Nothing planned yet">
+          <p class="pi-title">Tell me, point, or show me</p>
+          <p class="pi-sub">I'll show my plan here before I move</p>
+          <div class="pi-examples" role="group" aria-label="Examples">
+            <button type="button" class="pi-ex" data-example="Put the mug on the right">“Put the mug on the right”</button>
+            <button type="button" class="pi-ex" data-example="Stay away from the vase">“Stay away from the vase”</button>
+            <button type="button" class="pi-ex" data-example="Let me show you">“Let me show you”</button>
+          </div>
+        </article>
+      </div>
+
+      <section class="panel teach" id="teachPanel" data-phase="idle" aria-label="Teach by showing">
+        <div class="panel-head">
+          <h2 class="label teach-title">Teach by showing</h2>
+          <span id="teachRec" class="badge rec" hidden>REC 0.0s</span>
+          <span class="grow"></span>
+          <span id="teachPhase" class="phase-chip">ready</span>
+          <button type="button" id="teachCancel" class="btn sm ghost" hidden>Start over</button>
+        </div>
+        <ol class="teach-strip" aria-label="How it works">
+          <li data-k="show"><b>1</b>Show &amp; tell</li><li data-k="understand"><b>2</b>Robot understands</li>
+          <li data-k="practice"><b>3</b>Practice</li><li data-k="correct"><b>4</b>You correct</li>
+        </ol>
+        <div class="teach-body">
+          <div class="t-idle">
+            <p class="muted small">Show the task on camera and say what matters. The robot learns it, asks about anything unclear, then practices in sim.</p>
+            <button type="button" class="btn teach-go" id="teachStart"><svg aria-hidden="true"><use href="#i-play"/></svg>Start teaching</button>
+          </div>
+          <div class="t-rec">
+            <div class="t-evidence small" id="teachEvidence"></div>
+            <ul class="t-utt" id="teachUtt"><li class="muted">Talk while you show: “pick up the mug, carry it over, don't touch the vase”.</li></ul>
+            <button type="button" class="btn danger teach-go" id="teachStop"><svg aria-hidden="true"><use href="#i-stop"/></svg>Done showing</button>
+          </div>
+          <div class="t-spec">
+            <div class="t-card">
+              <div class="t-card-head"><span class="label">Robot understood</span><span class="grow"></span><span id="teachSummary" class="small muted"></span></div>
+              <div class="t-goal" id="teachGoal"></div>
+              <ol class="t-steps" id="teachSteps"></ol>
+              <div class="t-cons" id="teachCons"></div>
+            </div>
+            <div class="t-bubble" id="teachQ" hidden></div>
+            <div class="t-btns" id="teachConfirmBtns">
+              <button type="button" class="btn primary" id="teachYes">Yes, practice</button>
+              <button type="button" class="btn" id="teachCorrectBtn">Correct…</button>
+            </div>
+            <form class="t-correct" id="teachCorrectForm" hidden autocomplete="off">
+              <input id="teachCorrectIn" type="text" placeholder="e.g. “go around the vase on the left”, “slower”" aria-label="Correction">
+              <button type="submit" class="btn sm primary">Send</button>
+            </form>
+            <form class="t-save" id="teachSaveForm" hidden autocomplete="off">
+              <input id="teachName" type="text" placeholder="Skill name, e.g. mug over vase" aria-label="Skill name">
+              <button type="submit" class="btn sm primary">Save skill</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <div class="side-slot" data-slot="side"></div>
+
+      <section class="panel says" aria-label="Robot status">
+        <div class="panel-head">
+          <span class="label">Robot status</span>
+          <span class="grow"></span>
+          <span id="saysFeas" class="muted small"></span>
+        </div>
+        <ul id="says" class="says-list"><li class="info">Waiting for the robot…</li></ul>
+        <div id="saved" class="saved" hidden></div>
+      </section>
+    </div>
   </aside>
 </main>
 
@@ -247,8 +270,24 @@
 
 <dialog id="settings" aria-labelledby="settingsTitle">
   <form method="dialog" id="settingsForm">
-    <header class="dlg-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" value="cancel" aria-label="Close settings">✕</button></header>
+    <header class="dlg-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" value="cancel" aria-label="Close settings"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
     <div class="dlg-body">
+      <section class="set-sec" id="secLook"><h3>Appearance</h3>
+        <div class="seg seg-lg" role="radiogroup" aria-label="Theme" id="themeSeg">
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="system" aria-checked="true" aria-pressed="true">System</button>
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="light" aria-checked="false" aria-pressed="false">Light</button>
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="dark" aria-checked="false" aria-pressed="false">Dark</button>
+        </div>
+        <small class="muted">System follows your computer's light or dark setting. Applies right away.</small>
+      </section>
+      <section class="set-sec" id="secLang"><h3>Language · 언어</h3>
+        <div class="seg seg-lg" role="radiogroup" aria-label="Language" id="langSeg">
+          <button type="button" class="seg-btn" role="radio" data-lang-pick="system" aria-checked="true" aria-pressed="true">System</button>
+          <button type="button" class="seg-btn" role="radio" data-lang-pick="ko" aria-checked="false" aria-pressed="false" lang="ko">한국어</button>
+          <button type="button" class="seg-btn" role="radio" data-lang-pick="en" aria-checked="false" aria-pressed="false" lang="en">English</button>
+        </div>
+        <small class="muted">The robot's messages (tasks, plans, safety, watch, skills…) and the guide. System follows this browser's language. Applies right away. · 로봇의 메시지와 안내서 언어예요.</small>
+      </section>
       <section class="set-sec" id="secRobot"><h3>Robot</h3>
         <div class="seg seg-lg" role="group" aria-label="Robot body" id="robotSeg">
           <button type="button" class="seg-btn" data-robot="g1" aria-pressed="true">G1 humanoid</button>
@@ -258,32 +297,73 @@
       </section>
       <section class="set-sec" id="secCamera"><h3>Camera</h3>
         <label class="check"><input id="setPhoneCam" type="checkbox"><span>Use this device's camera</span></label>
-        <div class="set-row"><button type="button" class="btn sm" id="camFlip">Switch front / back</button><span id="camStatus" class="muted small mono"></span></div>
+        <div class="set-row"><button type="button" class="btn sm" id="camFlip">Switch front / back</button><button type="button" class="btn sm" id="camPhoneBtn2"><svg aria-hidden="true"><use href="#i-phone"/></svg>Use my phone instead…</button></div>
+        <small id="camStatus" class="muted" role="status"></small>
+        <small class="muted">Off by default. Frames go only to this PhysicsClay server, which runs pose tracking on them.</small>
+      </section>
+      <section class="set-sec" id="secSkills"><h3>Skills</h3>
+        <div class="set-row">
+          <select id="skillSel" aria-label="Learned skill" disabled><option value="">no skills yet</option></select>
+          <button type="button" class="btn sm" data-act="play" id="playBtn" disabled><svg aria-hidden="true"><use href="#i-play"/></svg>Play</button>
+        </div>
+        <div id="skillEdit" class="skill-edit" hidden>
+          <div class="se-head">
+            <span id="seName" class="se-name"></span>
+            <span id="seRange" class="muted small"></span>
+            <span class="grow"></span>
+            <select id="sePart" aria-label="Body part">
+              <option value="body">Whole body</option><option value="arms">Both arms</option>
+              <option value="left_arm">Left arm</option><option value="right_arm">Right arm</option><option value="legs">Legs</option>
+            </select>
+          </div>
+          <div id="seTrack" class="se-track" role="slider" tabindex="0" aria-label="Time range to edit (drag to select; arrow keys move)" aria-valuemin="0">
+            <div id="seSel" class="se-sel"><span class="h l"></span><span class="h r"></span></div>
+            <div id="seTicks" class="se-ticks" aria-hidden="true"></div>
+          </div>
+          <div class="se-btns">
+            <button type="button" class="btn sm" data-edit="faster">Faster</button>
+            <button type="button" class="btn sm" data-edit="slower">Slower</button>
+            <button type="button" class="btn sm" data-edit="bigger">Bigger</button>
+            <button type="button" class="btn sm" data-edit="smaller">Smaller</button>
+          </div>
+          <small class="muted">Or say “make 2 to 4 seconds faster”, “left arm bigger”.</small>
+        </div>
       </section>
       <section class="set-sec" id="secSpatial"><h3>Spatial model</h3>
         <label class="field"><span>Object understanding on your camera</span>
           <select id="setSpatial"><option value="yolo-seg">YOLO segmentation</option><option value="mediapipe">MediaPipe</option><option value="off">Off</option></select>
         </label>
+        <small id="spatialNote" class="muted" hidden></small>
         <div class="set-row"><button type="button" class="btn sm" id="erCam">Ask Gemini Robotics-ER what it sees</button><button type="button" class="btn sm ghost" id="erRobot">…in the robot view</button></div>
-        <small id="erStatus" class="muted mono"></small>
+        <small id="erStatus" class="muted"></small>
       </section>
       <section class="set-sec" id="secAI"><h3>AI</h3>
         <p id="serverGemini" class="server-gemini small" hidden>Gemini: server key active</p>
-        <label class="field"><span>Gemini API key (optional)</span>
+        <p id="byokNote" class="byok-note small" hidden>Bring your own keys. This public demo never uses ours: add yours below to talk with Gemini Live, ask Gemini Robotics-ER, read goal photos and hear the natural robot voice. Without keys the offline mock demo still works.</p>
+        <label class="field"><span>Gemini API key</span>
           <input id="setKey" type="password" autocomplete="off" spellcheck="false" placeholder="AIza…">
-          <small>Stored only in this browser.</small>
+          <small>Stored only in this browser. Talk connects straight to Google; spatial pointing and goal photos send it to this server for that one request.</small>
+        </label>
+        <label class="field"><span>OpenAI API key (robot voice)</span>
+          <input id="setOpenAI" type="password" autocomplete="off" spellcheck="false" placeholder="sk-…">
+          <small>Stored only in this browser and sent only with voice requests. Without it the browser's own voice is used.</small>
         </label>
         <label class="field"><span>Live model</span><input id="setLive" type="text" spellcheck="false"></label>
         <label class="field"><span>Robotics-ER model</span><input id="setEr" type="text" spellcheck="false"></label>
         <label class="check"><input id="setSendCam" type="checkbox" checked><span>Send my camera to Gemini</span></label>
         <label class="check"><input id="setSendRobot" type="checkbox"><span>Send robot view to Gemini</span></label>
         <label class="check"><input id="setMock" type="checkbox"><span>Mock AI (offline demo: gestures + scripted replies)</span></label>
-        <label class="field"><span>Speech language (no-key fallback)</span>
+        <label class="field"><span>Talk language (speech recognition without a Gemini key)</span>
           <select id="setLang"><option value="en-US">English (en-US)</option><option value="ko-KR">한국어 (ko-KR)</option></select>
         </label>
-        <p id="geminiStatus" class="muted small mono"></p>
+        <p id="geminiStatus" class="muted small"></p>
       </section>
-      <section class="set-sec" id="secAbout"><h3>About</h3><p class="small muted">PhysicsClay · New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.</p></section>
+      <section class="set-sec" id="secVoice"><h3>Voice</h3>
+        <label class="check"><input id="setSpeak" type="checkbox" checked><span>Speak the robot's replies</span></label>
+        <div id="voicePickers" class="voice-pickers"></div>
+        <small id="voiceNote" class="muted"></small>
+        <small class="muted">The robot answers in the language you use: Korean in, Korean out.</small>
+      </section>
       <section class="set-sec" id="secDemo"><h3>Demo</h3>
         <div class="set-row">
           <button type="button" class="btn sm primary" data-demo="full">Run full demo</button>
@@ -292,6 +372,8 @@
           <button type="button" class="btn sm danger" data-demo="stop">Stop demo</button>
         </div>
       </section>
+      <section class="set-sec" id="secAbout"><h3>About</h3><p class="small muted">PhysicsClay · New Generation of interactive prompt for Physical AI — turning human intent into spatial instructions that robots can understand and execute.</p>
+        <p class="small muted">Say · Point · Show. The robot proposes, you correct.</p></section>
     </div>
     <footer class="dlg-foot">
       <button class="btn ghost" value="cancel">Cancel</button>
@@ -300,8 +382,33 @@
   </form>
 </dialog>
 
+<dialog id="phoneDlg" class="phone-dlg" aria-labelledby="phoneTitle">
+  <form method="dialog">
+    <header class="dlg-head"><h2 id="phoneTitle">Use your phone as the camera</h2><button class="icon-btn" value="cancel" aria-label="Close"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
+    <div class="dlg-body phone-body">
+      <div class="phone-qr-row">
+        <div class="qr-box" id="phoneQr" role="img" aria-label="QR code for the phone camera page"></div>
+        <ol class="phone-steps">
+          <li>Put the phone on the <b>same Wi-Fi</b> as this computer.</li>
+          <li><b>Scan the code</b> with the phone's camera, or open<br><a id="phoneUrl" class="phone-url" href="#" target="_blank" rel="noopener">…</a> <button type="button" class="btn sm ghost" id="phoneCopy">Copy</button></li>
+          <li>The phone warns that the connection isn't private: this server's certificate is self-signed. <b>Safari:</b> Show Details → visit this website. <b>Chrome:</b> Advanced → Proceed.</li>
+          <li>Tap <b>Start camera</b>, then prop the phone up facing you, 1–2 m away, upper body in view.</li>
+        </ol>
+      </div>
+      <p class="phone-warn" id="phoneNoHttps" hidden>Phones only share their camera over https, and this server is running without it. Restart it with <code>--https</code> (<code>scripts/run.sh</code> and <code>make run</code> do), then open this again.</p>
+      <p class="phone-status" id="phoneStatus" role="status" aria-live="polite"><i aria-hidden="true"></i><span>Waiting for the phone…</span></p>
+    </div>
+    <footer class="dlg-foot"><button class="btn primary" value="cancel">Done</button></footer>
+  </form>
+</dialog>
+
+<script src="/static/qr.js"></script>
 <script src="/static/gemini.js"></script>
 <script src="/static/app.js"></script>
 <script type="module" src="/static/view3d.js"></script>
+<script type="module" src="/static/xr.js"></script>
+<script src="/static/help-content.js"></script>
+<script src="/static/ui/core.js"></script>
+<script src="/static/shell.js"></script>
 </body>
 </html>

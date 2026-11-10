@@ -17,12 +17,13 @@
     cmdForm: $("cmdForm"), cmd: $("cmd"), toast: $("toast"), dlg: $("settings"),
   };
   const camPanel = el.camFrame.closest(".panel");
-  let view3d = new URLSearchParams(location.search).get("view") === "3d";
+  let view3d = new URLSearchParams(location.search).get("view") !== "robot"; // UX 2.0: the 3D shared space is the default stage
   const P3 = () => window.PC3D;
   function mount3d() { const v = P3(); if (!v) return; v.mount($("view3d")); v.active(view3d); v.setState(state); }
   window.addEventListener("pc3d-ready", mount3d);
   const SKELETON = [[11, 13], [13, 15], [12, 14], [14, 16], [11, 12], [11, 23], [12, 24], [23, 24], [0, 11], [0, 12]];
   const REGIONS = ["left", "right", "center", "front", "back"];
+  const MODE_LABEL = { IDLE: "ready", FOLLOW: "following you", TASK: "working", PATH: "following a path", PREVIEW: "previewing" };
   const C = { ok: "#1f8f55", bad: "#d6453a", cyan: "#1da8e5", accent: "#5c77df", hot: "#f59145" };
   const arr = (x) => (Array.isArray(x) ? x : []);
   const num = (x, d = 0) => (typeof x === "number" && isFinite(x) ? x : d);
@@ -34,13 +35,16 @@
     set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* private mode */ } },
   };
   const G = () => window.PCGemini;
+  function langPref() { return LS.get("pc.uiLang", "system"); }   // "system" | "ko" | "en"
+  function uiLang() { const p = langPref(); return p === "ko" || p === "en" ? p : (/^ko/i.test(navigator.language || "") ? "ko" : "en"); }
   const settings = {
     get key() { return LS.get("pc.geminiKey", ""); },
+    get openaiKey() { return LS.get("pc.openaiKey", ""); },
     get liveModel() { return LS.get("pc.liveModel", "") || (G() && G().DEFAULT_LIVE_MODEL) || ""; },
     get erModel() { return LS.get("pc.erModel", "") || (G() && G().DEFAULT_ER_MODEL) || ""; },
     get sendCam() { return LS.get("pc.sendCam", "1") === "1"; },
     get sendRobot() { return LS.get("pc.sendRobot", "0") === "1"; },
-    get lang() { return LS.get("pc.lang", "en-US"); },
+    get lang() { return LS.get("pc.lang", "") || (uiLang() === "ko" ? "ko-KR" : "en-US"); },   // talk (speech recognition)
     get mock() { return LS.get("pc.mock", "0") === "1"; },
   };
   const useProxy = () => !settings.key && !!(typeof state === "object" && state && state.server_gemini);
@@ -57,11 +61,14 @@
     const url = `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`;
     try { ws = new WebSocket(url); } catch (e) { setTimeout(connect, 1500); return; }
     ws.binaryType = "arraybuffer";
-    ws.onopen = () => { connected = true; if (LS.get("pc.mock", null) !== null) send({ type: "mock", enabled: settings.mock }); schedule(); maybeAutoDemo(); };
+    ws.onopen = () => {
+      connected = true; send({ type: "hello", lang: uiLang(), client: "app" });   // the server's messages in our language
+      if (LS.get("pc.mock", null) !== null) send({ type: "mock", enabled: settings.mock }); schedule(); maybeAutoDemo();
+    };
     ws.onmessage = (ev) => {
       if (typeof ev.data === "string") {
         let s; try { s = JSON.parse(ev.data); } catch (e) { return; }
-        if (s && typeof s === "object" && !s.type) { state = s; gotState = true; onState(); schedule(); if (P3()) P3().setState(s); }
+        if (s && typeof s === "object" && !s.type) { state = s; gotState = true; onState(); schedule(); if (P3()) P3().setState(s); window.dispatchEvent(new CustomEvent("pc-state", { detail: s })); }
         return;
       }
       const buf = ev.data; if (!(buf instanceof ArrayBuffer) || buf.byteLength < 2) return;
@@ -101,7 +108,8 @@
   function render() {
     rafPending = false;
     const s = state, mode = String(s.mode || "IDLE");
-    if (changed("mode", mode)) { el.mode.dataset.mode = mode; el.mode.querySelector("b").textContent = mode; }
+    const modeTxt = !connected ? "offline" : !gotState ? "connecting" : (MODE_LABEL[mode] || mode.toLowerCase());
+    if (changed("mode", mode + modeTxt)) { el.mode.dataset.mode = mode; el.mode.querySelector("b").textContent = modeTxt; }
     const feas = Math.round(Math.max(0, Math.min(1, num(s.feasibility, 0))) * 100);
     if (changed("feas", gotState ? feas : -1)) {
       el.feasFill.style.width = (gotState ? feas : 0) + "%";
@@ -110,13 +118,11 @@
       el.saysFeas.textContent = gotState ? `feasible ${feas}%` : "";
     }
     const sp = num(s.speed_scale, 1);
-    if (changed("speed", sp)) el.speed.textContent = `×${sp.toFixed(sp < 1 && sp * 10 % 1 ? 2 : 1)}`;
+    if (changed("speed", sp)) { el.speed.textContent = `×${sp.toFixed(sp < 1 && sp * 10 % 1 ? 2 : 1)}`; el.speed.hidden = Math.abs(sp - 1) < 1e-3; }
     const stats = connected ? `${num(s.fps).toFixed(0)} fps · IK ${Math.round(num(s.ik_hz))} Hz` : "offline · reconnecting";
     if (changed("stats", stats + connected)) { el.statsTxt.textContent = stats; el.stats.dataset.conn = connected ? "on" : "off"; }
-    if (changed("src", s.source || "")) el.source.textContent = s.source || "—";
     el.robotEmpty.hidden = el.robotImg.classList.contains("live");
-    el.camEmpty.hidden = el.camImg.classList.contains("live");
-    el.noPose.hidden = !gotState || !!s.pose_ok || s.source === "synthetic" || !el.camImg.classList.contains("live");
+    renderCam(s);
 
     const following = mode === "FOLLOW";
     el.followBadge.hidden = !following; camPanel.classList.toggle("following", following);
@@ -125,12 +131,13 @@
     document.querySelectorAll('[data-act="follow"]').forEach((b) => b.setAttribute("aria-pressed", String(following)));
 
     const view = ["orbit", "stage"].includes(s.view) ? s.view : "robot";
-    const pipLabel = document.getElementById("pipLabel"); if (pipLabel) pipLabel.textContent = view === "robot" ? "Full body" : "Robot eye";
+    const pipLabel = document.getElementById("pipLabel"); if (pipLabel) pipLabel.textContent = view3d ? "Robot eye" : "3D stage";
     if (changed("view", view + view3d)) {
       const shown = view3d ? "3d" : "robot"; // only Robot eye | 3D buttons; server view may be stage/orbit
       document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.view === shown)));
       el.robotFrame.classList.toggle("orbit", view !== "robot" && !view3d); el.orbitHint.hidden = view === "robot" || view3d;
       el.robotFrame.classList.toggle("v3d", view3d); $("view3d").hidden = !view3d;
+      $("pip").setAttribute("aria-label", view3d ? "Switch to Robot eye" : "Switch to the 3D stage");
       if (P3()) P3().active(view3d);
     }
     const mockOn = typeof s.mock === "boolean" ? s.mock : settings.mock;
@@ -178,7 +185,7 @@
       else if (!gotState) add("Waiting for the robot…", "info");
       else {
         if (t && t.message) add(t.message, t.status === "failed" ? "" : t.status === "done" ? "ok" : "warn");
-        for (const m of msgs) add(m, /too fast|slow/i.test(m) ? "warn" : "");
+        for (const m of msgs) add(m, /too fast|slow|너무 빨|느리게|감속/i.test(m) ? "warn" : "");
         if (!msgs.length && !(t && t.message)) add(mode === "FOLLOW" ? "Following you. Every pose is checked against my joints." : "Ready. Tap the table, draw a path, or just tell me what you want.", "ok");
       }
     }
@@ -195,10 +202,8 @@
     const dm = s.demo && typeof s.demo === "object" ? s.demo : null;
     const dtxt = dm ? `DEMO · ${num(dm.step)}/${num(dm.total)} · ${dm.title || dm.name || ""}` : "";
     if (changed("demo", dtxt)) { $("demoPill").hidden = !dm; $("demoPillTxt").textContent = dtxt; }
-    const pcOn = !!phoneCam.stream;
-    if (changed("pcam", [pcOn, s.source])) { $("phoneCamChip").hidden = !pcOn; $("phoneCamChip").classList.toggle("live", s.source === "phone"); }
     const rlab = (arr(s.robots).find((r) => r && r.id === s.robot) || {}).label || (s.robot === "ur5e" ? "UR5e arm" : s.robot ? "Unitree G1" : "");
-    if (rlab && changed("rlab", rlab)) $("robotLabel").textContent = `${rlab} · MuJoCo`;
+    if (rlab && changed("rlab", rlab)) $("robotLabel").textContent = rlab;
     if (el.dlg.open) renderSettingsLive();
     if (changed("sg", !!s.server_gemini) && (live.state === "off" || live.state === "error")) setTalk("off");
     renderSkillEdit();
@@ -314,8 +319,16 @@
     });
   }
   function drawCam() {
-    const { ctx, W, H } = fitCanvas(el.camOv), c = contentRect(el.camImg, W, H, 960, 540), s = state;
-    if (!el.camImg.classList.contains("live")) return;
+    const self = selfView(), s = state;
+    const { ctx, W, H } = fitCanvas(el.camOv);
+    // overlays use the server frame's uv: they map onto the live self-view the same way (both mirrored, same framing)
+    let c = self ? contentRect({ naturalWidth: self.videoWidth, naturalHeight: self.videoHeight }, W, H, 640, 480) : contentRect(el.camImg, W, H, 960, 540);
+    if (self) {   // the server's 16:9 frame holds the video with bars (camTick): place that frame around the video
+      const f = frameFit(self.videoWidth, self.videoHeight, 16, 9), sx = c.w / f.w, sy = c.h / f.h;
+      c = { x: c.x - f.x * sx, y: c.y - f.y * sy, w: 16 * sx, h: 9 * sy };
+    }
+    if (!self && !el.camImg.classList.contains("live")) return;
+    if (camOffState(s)) return;                       // camera off: no synthetic stand-in skeleton under the "Camera is off" card
     const P = (uv) => [c.x + uv[0] * c.w, c.y + uv[1] * c.h];
     for (const o of arr(s.objects)) {
       if (!Array.isArray(o) || o.length < 6) continue;
@@ -423,21 +436,35 @@
     schedule();
   }
   ov.addEventListener("pointerup", endPointer); ov.addEventListener("pointercancel", endPointer);
+  // Server-rendered views: wheel deltas are summed (never dropped) and sent at most every 30 ms as one proportional
+  // zoom factor, the same rate per pixel as the 3D stage. The Robot eye is the robot's own head camera: no zoom.
+  let wheelLog = 0, wheelT = 0, eyeHint = false;
   ov.addEventListener("wheel", (ev) => {
-    if (state.view !== "orbit" && state.view !== "stage") return; ev.preventDefault();
-    const now = performance.now(); if (now - lastCam < 30) return; lastCam = now;
-    send({ type: "camera", zoom: Math.exp(Math.max(-200, Math.min(200, ev.deltaY)) * 0.0015) });
+    if (state.view !== "orbit" && state.view !== "stage") {
+      if (!eyeHint && Math.abs(ev.deltaY) > 0) { eyeHint = true; toast("The Robot eye is the robot's own camera. Switch to 3D to zoom and look around."); }
+      return;
+    }
+    ev.preventDefault();
+    const px = ev.deltaY * (ev.deltaMode === 1 ? 18 : ev.deltaMode === 2 ? (el.robotFrame.clientHeight || 600) : 1);
+    wheelLog += Math.max(-0.6, Math.min(0.6, px * (ev.ctrlKey ? 0.012 : 0.0011)));
+    if (!wheelT) wheelT = setTimeout(flushWheel, Math.max(0, 30 - (performance.now() - lastCam)));
   }, { passive: false });
+  function flushWheel() {
+    wheelT = 0; if (!wheelLog) return;
+    const f = Math.exp(Math.max(-1.2, Math.min(1.2, wheelLog))); wheelLog = 0; lastCam = performance.now();
+    send({ type: "camera", zoom: f });
+  }
   function centroid() { let x = 0, y = 0; for (const p of pointers.values()) { x += p[0]; y += p[1]; } const n = pointers.size || 1; return [x / n, y / n]; }
   const round3 = (x) => Math.round(x * 1000) / 1000;
   function decimate(pts, max) { if (pts.length <= max) return pts; const out = []; for (let i = 0; i < max; i++) out.push(pts[Math.round(i * (pts.length - 1) / (max - 1))]); return out; }
   new ResizeObserver(schedule).observe(el.robotFrame); new ResizeObserver(schedule).observe(el.camFrame);
 
-  document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.addEventListener("click", () => {
-    if (b.dataset.view === "3d") { view3d = true; schedule(); return; } // client-side view: the server keeps rendering as is
+  function setStageView(v) {
+    if (v === "3d") { view3d = true; schedule(); return; } // client-side view: the server keeps rendering as is
     view3d = false;
-    send({ type: "view", name: b.dataset.view }); state = Object.assign({}, state, { view: b.dataset.view }); schedule();
-  }));
+    send({ type: "view", name: v }); state = Object.assign({}, state, { view: v }); schedule();
+  }
+  document.querySelectorAll(".seg-btn[data-view]").forEach((b) => b.addEventListener("click", () => setStageView(b.dataset.view)));
   $("runPath").addEventListener("click", () => runTask("follow_path", {}, "button"));
   $("clearPath").addEventListener("click", clearAll);
   function clearAll() { send({ type: "clear" }); addLine("sys", "Cleared markers and path."); }
@@ -478,14 +505,20 @@
     while (f.children.length > 120) f.firstElementChild.remove();
     if (atBottom) f.scrollTop = f.scrollHeight;
   }
+  let lastLine = { k: "", t: "", at: 0 };
+  let lastSaid = { t: "", at: 0 }; // P1 datasets: the words that asked for a task become the episode's language
   function addLine(kind, text) {
+    // the same robot sentence can arrive twice (task result + a feature's own echo): show it once
+    if (kind === lastLine.k && text === lastLine.t && Date.now() - lastLine.at < 4000) return lastLine.el;
     const d = document.createElement("div"); d.className = "line " + kind;
     const who = document.createElement("span"); who.className = "who"; who.textContent = kind === "user" ? "YOU" : kind === "robot" ? "ROBOT" : "·";
     const t = document.createElement("span"); t.className = "txt"; t.textContent = text;
-    d.append(who, t); feedAppend(d); return d;
+    d.append(who, t); feedAppend(d); lastLine = { k: kind, t: text, at: Date.now(), el: d };
+    if (kind === "user") lastSaid = { t: String(text || "").slice(0, 300), at: Date.now() };
+    return d;
   }
   function makeCard(id, action, args, source) {
-    const card = document.createElement("article"); card.className = "card"; card.dataset.status = "planning";
+    const card = document.createElement("article"); card.className = "card"; card.dataset.status = "planning"; card.dataset.id = id;
     card.innerHTML = '<div class="card-top"><span class="card-title"></span><span class="card-act"></span><span class="pill">planning</span></div><div class="card-args"></div><div class="card-msg"></div><div class="card-meta"></div>';
     card.querySelector(".card-title").textContent = actionTitle(action);
     card.querySelector(".card-act").textContent = action;
@@ -502,13 +535,15 @@
   }
 
   function runTask(action, args = {}, source = "you") {
+    if (window.PCUI && window.PCUI.taskFilter) args = window.PCUI.taskFilter(action, args, source) || args; // UX2 plan preview adds preview:true
     const id = `t${++seq}${TAG}`;
     const rec = { id, action, args, source, status: "planning", message: "", step: "", settled: false, resolve: null, timer: 0 };
     rec.card = makeCard(id, action, args, source); tasks.set(id, rec);
     const p = new Promise((res) => { rec.resolve = res; });
     const finish = (r) => { if (rec.settled) return; rec.settled = true; clearTimeout(rec.timer); rec.resolve(r); };
     rec.finish = finish;
-    if (!send(Object.assign({ type: "task", id, action }, args))) {
+    const said = lastSaid.t && Date.now() - lastSaid.at < 30000 && !args.utterance ? { utterance: lastSaid.t } : {};
+    if (!send(Object.assign({ type: "task", id, action }, args, said))) {
       rec.status = "failed"; rec.message = "Not connected to the robot."; updateCard(rec);
       finish({ ok: false, status: "failed", message: rec.message });
       return p;
@@ -517,7 +552,7 @@
       if (rec.settled) return;
       if (rec.status === "planning") { rec.status = "failed"; rec.message = "No response from the robot."; updateCard(rec); }
       finish({ ok: false, status: "timeout", message: "no response" });
-    }, 8000);
+    }, 20000); // a loaded server behind the public tunnel can take a while to plan; don't call it dead too early
     if (tasks.size > 60) { const k = tasks.keys().next().value; tasks.delete(k); }
     return p;
   }
@@ -544,10 +579,10 @@
         }
         if (rec) {
           const prevStatus = rec.status;
-          rec.status = ["planning", "running", "done", "failed"].includes(t.status) ? t.status : rec.status;
+          rec.status = ["planning", "proposed", "asking", "running", "done", "failed"].includes(t.status) ? t.status : rec.status;
           rec.message = t.message || rec.message || ""; rec.step = t.step || "";
           updateCard(rec);
-          if (!rec.settled && ["running", "done", "failed"].includes(rec.status)) rec.finish({ ok: rec.status !== "failed", status: rec.status, message: rec.message });
+          if (!rec.settled && ["proposed", "asking", "running", "done", "failed"].includes(rec.status)) rec.finish({ ok: rec.status !== "failed", status: rec.status, message: rec.message });
           else if (rec.viaModel && prevStatus !== rec.status && (rec.status === "done" || rec.status === "failed")) {
             contextToModel(`[robot update] ${rec.action} ${rec.status}: ${rec.message || ""}`);
           }
@@ -556,13 +591,15 @@
     }
     trackVideo();
     onSay();
-    if (state.robot) {
-      if (lastRobot && state.robot !== lastRobot) {
+    // UX 3: the world (robot body and/or scene) was rebuilt -> reload /scene.json and the 3D stage
+    const wrev = state.world && state.world.rev, robotKey = state.robot ? `${state.robot}#${wrev == null ? "" : wrev}` : null;
+    if (robotKey) {
+      if (lastRobot && robotKey !== lastRobot) {
         const v = P3();
         if (v && typeof v.reload === "function") { try { v.reload(); } catch (e) { /* noop */ } }
         else if (view3d) { location.href = location.pathname + "?view=3d"; }
       }
-      lastRobot = state.robot;
+      lastRobot = robotKey;
     }
     // marker created after our tap
     if (pendingTap && arr(state.markers).length !== pendingTap.n) pendingTap = null;
@@ -584,6 +621,9 @@
   function teachHear(text) {
     const t = String(text).trim(), low = t.toLowerCase().replace(/[.!?。]+$/g, "").trim(), ph = teachPhase();
     if (!low) return false;
+    // UX2 features hear every final utterance first (plan "yes/go", "which one?" answers, "stay away from X");
+    // a listener calls preventDefault() when it handled it. Not while a demonstration is being recorded.
+    if (ph !== "recording" && !window.dispatchEvent(new CustomEvent("pc-hear", { detail: { text: t, phase: ph }, cancelable: true }))) return true;
     if (ph === "recording") {
       if (TEACH_STOP.test(low)) { teachStop(); return true; }
       teachCmd("utterance", { text: t }); return true;
@@ -680,7 +720,7 @@
   // mock / scripted brain utterances: state.say = {id, text, kind: "robot"|"user"|"vision"}
   let lastSayId = null;
   function onSay() {
-    const sy = state.say; if (!sy || typeof sy !== "object" || sy.id == null || !sy.text) return;
+    const sy = state.say; if (!sy || typeof sy !== "object" || sy.id == null || !sy.text) { if (gotState && lastSayId === null) lastSayId = ""; return; } // nothing stale: the next line is new
     const id = String(sy.id); if (id === lastSayId) return;
     const first = lastSayId === null; lastSayId = id;
     if (first && !state.mock && !settings.mock && !state.demo) return; // stale line from before this page loaded
@@ -691,7 +731,7 @@
     if (k === "user") { addLine("user", text); showOverlay("subtitle", text, 3000); return; }
     const d = addLine("robot", text);
     if (k === "vision") {
-      d.classList.add("vision"); const tag = document.createElement("span"); tag.className = "vtag"; tag.textContent = "VISION";
+      d.classList.add("vision"); const tag = document.createElement("span"); tag.className = "vtag"; tag.textContent = "Vision";
       d.querySelector(".txt").prepend(tag);
     }
     speak(text, "en-US");
@@ -714,10 +754,20 @@
     m = raw.match(/(?:^|[^A-Za-z])([A-F])(?:[^A-Za-z]|$)/); if (m && /[가-힣]/.test(raw)) return m[1];
     if (ALONG_RE.test(t)) return "along my path";
     if (DEICTIC_RE.test(t)) return "there";
+    m = raw.match(KO_NEAR); if (m) return `${m[1].trim()} 옆`;          // "그릇 옆으로" -> next to the bowl (pps/tasks.py resolve)
+    m = raw.match(KO_ONTO) || raw.match(KO_INTO);                       // "그릇 위에 / 안에", "그릇에 담아" -> the bowl
+    if (m && !KO_PLACE_WORD.test(m[1].trim())) return m[1].trim();
     for (const [k, v] of KO_REGION) if (t.includes(k)) return v;
     m = t.match(/\b(left|right|center|centre|middle|front|back)\b/); if (m) return normRegion(m[1]);
     return null;
   }
+  // Korean: "<color> <noun> 옆(에|으로)" next to it, "<noun> 위에 / 안에 / 속에" on or into it; the object is "<noun>을/를"
+  const KO_ADJ = "(?:(?:빨간|빨강|초록|녹색|파란|파랑|노란|노랑|하얀|흰|검은|검정|큰|작은)\\s*)?";
+  const KO_NEAR = new RegExp(`(${KO_ADJ}[가-힣A-Za-z0-9]+?)(?:의)?\\s*(?:옆|근처|곁)(?:에|으로|로|쪽)?(?:\\s|$)`);
+  const KO_ONTO = new RegExp(`(${KO_ADJ}[가-힣A-Za-z0-9]+?)(?:의)?\\s*(?:위|안|속)(?:에|으로|로|쪽)(?:\\s|$)`);
+  const KO_INTO = new RegExp(`(${KO_ADJ}[가-힣A-Za-z0-9]+?)에\\s*(?:담아|넣어|올려|놓아|놔|둬|옮겨)`);
+  const KO_PLACE_WORD = /^(테이블|탁자|책상|바닥|오른쪽|왼쪽|우측|좌측|가운데|중앙|앞|뒤|앞쪽|뒤쪽|여기|저기|거기)$/;   // regions, not objects
+  const KO_OBJ = new RegExp(`(${KO_ADJ}[가-힣A-Za-z0-9]+?)(?:을|를)(?:\\s|$)`);
   const ALONG_RE = /\b(along|follow(?:ing)?|via|using|by)\s+(?:my|the|this|that)\s+(path|route|line|trajectory)\b|경로대로|내 경로|경로로|경로 따라/;
   const DEICTIC_RE = /\b(over there|there|here|where i'?m pointing|where i point(?:ed)?|that spot|this spot)\b|저기|여기|거기|저쪽|이쪽/;
   function normRegion(x) { x = x.toLowerCase(); if (x === "centre" || x === "middle") return "center"; return x.length === 1 ? x.toUpperCase() : x; }
@@ -734,10 +784,11 @@
     m = raw.match(/["“']?(.+?)["”']?\s*(?:으로|로|라고)\s*(?:배워|기억해|저장해)/); if (m) return ["learn_skill", { name: m[1].trim() }];
     if (ALONG_RE.test(t) && (/\b(mug|cup|it|that|carry|move|bring|take|put)\b|\bmy\s+(path|route)\b|머그|컵|옮겨|내 경로|경로대로/.test(t))) return ["pick_place", { object: "mug", target: "along my path" }];
     if (/\b(follow|run|execute|go along|trace)\s+(the\s+)?(path|line|route)\b|경로/.test(t)) return ["follow_path", {}];
-    const hasObj = /\b(mug|cup)\b|머그|컵/.test(t);
-    const place = /\b(pick|put|move|place|bring|carry|set|drop|take)\b|옮겨|놓아|놔|올려|가져/.test(t);
+    const koObj = /[가-힣]/.test(raw) ? raw.match(KO_OBJ) : null;   // "빨간 컵을 …" -> "빨간 컵" (any noun the scene knows)
+    const objM = (koObj && [koObj[1].trim()]) || t.match(/\b(?:(?:red|green|blue)\s+)?(?:mug|cup|block|cube)\b/) || t.match(/(?:(?:빨간|초록|파란)\s*)?(?:머그|컵|블록|큐브)/), hasObj = !!objM;
+    const place = /\b(pick|put|move|place|bring|carry|set|drop|take)\b|옮겨|놓아|놔|올려|가져|넣어|담아|치워/.test(t);
     if (place && (hasObj || /\b(it|that)\b/.test(t) || /[가-힣]/.test(t))) {
-      const target = findTarget(t, raw); const a = { object: "mug" }; if (target) a.target = target; return ["pick_place", a];
+      const target = findTarget(t, raw); const a = { object: objM ? objM[0] : "mug" }; if (target) a.target = target; return ["pick_place", a];
     }
     if (/\b(reach|touch|point)\b|뻗어|가리켜/.test(t)) { const target = findTarget(t, raw); if (target) return ["reach", { target }]; }
     const kind = /\b(faster|quicker|speed up)\b|빠르게|빨리/.test(t) ? "faster" : /\b(slower|slow down)\b|천천히|느리게/.test(t) ? "slower"
@@ -773,51 +824,207 @@
     if (live.session) { live.session.sendText(text); return; } // gemini.js echoes it as a final user transcript -> teachHear there
     addLine("user", text);
     if (teachHear(text)) return;
+    // UX 3: nothing on pc-hear took it (plan "go", "which one?" answers, zone phrases) -> the LLM agent (web/ui/agent.js)
+    // may take it here; if it doesn't, the UX 2.0 rule parser below runs as before.
+    if (!window.dispatchEvent(new CustomEvent("pc-intent", { detail: { text, source }, cancelable: true }))) return;
     const it = parseIntent(text);
-    if (!it) { const msg = "I didn't catch an action. Try “put the mug on the right”, “follow me”, or tap the table."; addLine("robot", msg); speak(msg); return; }
-    if (it[0] === "clear") { clearAll(); speak("Cleared."); return; }
+    const ko = /[\uac00-\ud7a3]/.test(text);   // answer in the language the person used
+    if (!it) {
+      const msg = ko ? "무엇을 할지 잘 못 알아들었어요. “머그를 오른쪽에 놓아줘”, “따라 해”처럼 말하거나 테이블을 눌러 보세요."
+        : "I didn't catch an action. Try “put the mug on the right”, “follow me”, or tap the table.";
+      addLine("robot", msg); speak(msg); return;
+    }
+    if (it[0] === "clear") { clearAll(); speak(ko ? "지웠어요." : "Cleared."); return; }
     const r = await runTask(it[0], it[1], source);
     if (r && r.message) { addLine("robot", r.message); speak(r.message); }
   }
   el.cmdForm.addEventListener("submit", (ev) => { ev.preventDefault(); const v = el.cmd.value; el.cmd.value = ""; handleText(v, "typed"); });
 
-  const ttsQ = []; let ttsBusy = false, ttsOK = true;
+  // ------------------------------------------------------------------ the robot's voice
+  // 1. OpenAI TTS through the server (/tts: the visitor's key in X-OpenAI-Key, or the server's own outside BYOK) for any
+  //    language. The server answers 204 when there is no working key, so the browser never logs an error; we then stop
+  //    asking for this visit (until a key is saved) and use 2.
+  // 2. The browser's speechSynthesis with the best voice of the language (detected per line: Hangul -> ko-KR): a voice
+  //    picked in Settings → Voice, else Premium / Enhanced / Neural / Google voices, never novelty voices. Markdown,
+  //    emoji and symbols are not read out; long text is spoken sentence by sentence (Chrome cuts long utterances).
+  const TTS_VOICE = { robot: "coral", narrator: "alloy" };
+  const voicePref = {
+    get on() { return LS.get("pc.speak", "1") === "1" && new URLSearchParams(location.search).get("nospeak") !== "1"; },
+    get(lang) { return LS.get("pc.voice." + lang.slice(0, 2), ""); },
+    set(lang, uri) { LS.set("pc.voice." + lang.slice(0, 2), uri || ""); },
+  };
+  function speechLang(text) {
+    const t = String(text || "");
+    if (/[가-힣ㄱ-ㆎ]/.test(t)) return "ko-KR";
+    if (/[぀-ヿ]/.test(t)) return "ja-JP";
+    if (/[一-鿿]/.test(t)) return "zh-CN";
+    return /^ko/i.test(settings.lang) && !/[a-z]{3,}/i.test(t) ? "ko-KR" : "en-US";
+  }
+  function speechText(text) {
+    return String(text || "")
+      .replace(/```[\s\S]*?```/g, " ").replace(/`([^`]*)`/g, "$1")
+      .replace(/!\[[^\]]*\]\([^)]*\)/g, " ").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+      .replace(/https?:\/\/\S+/g, " ").replace(/(^|\s)#{1,6}\s+/g, "$1")
+      .replace(/(\*\*|__|\*|_|~~)(?=\S)([^*_~]+?)\1/g, "$2").replace(/[*_~#>|]+/g, " ")
+      .replace(/\p{Extended_Pictographic}|\p{Regional_Indicator}|[\u{FE0F}\u{200D}\u{20E3}]/gu, "")
+      .replace(/\s*(→|->|⇒|➜|·|•|—|–)\s*/g, ", ").replace(/×\s?(\d)/g, "times $1").replace(/(\d)\s?×\s?(\d)/g, "$1 by $2")
+      .replace(/[“”«»„]/g, "\"").replace(/[‘’]/g, "'").replace(/[()[\]{}<>]/g, " ")
+      .replace(/\s*,\s*(,\s*)+/g, ", ").replace(/\s+([,.!?])/g, "$1").replace(/^[\s,.]+/, "").replace(/\s{2,}/g, " ").trim();
+  }
+  function speechChunks(text, max = 180) {
+    const parts = String(text).match(/[^.!?。！？]+[.!?。！？]+["')\]]*\s*|[^.!?。！？]+$/g) || [String(text)];
+    const out = [];
+    for (let p of parts) {
+      p = p.trim(); if (!p) continue;
+      while (p.length > max) { let k = p.lastIndexOf(", ", max); if (k < max / 3) k = p.lastIndexOf(" ", max); if (k < max / 3) k = max; out.push(p.slice(0, k + 1).trim()); p = p.slice(k + 1).trim(); }
+      if (out.length && out[out.length - 1].length + p.length < 90) out[out.length - 1] += " " + p; else if (p) out.push(p);
+    }
+    return out;
+  }
+  // voices: ranked per language; novelty voices never chosen automatically
+  const NOVELTY = /\b(Albert|Bad News|Bahh|Bells|Boing|Bubbles|Cellos|Deranged|Good News|Hysterical|Jester|Junior|Organ|Pipe Organ|Ralph|Superstar|Trinoids|Whisper|Wobble|Zarvox|Fred|Kathy|Princess|Grandma|Grandpa|Eddy|Flo|Reed|Rocko|Sandy|Shelley)\b/i;
+  const GOOD = /\b(Yuna|Sora|Ava|Zoe|Samantha|Allison|Susan|Joelle|Evan|Nathan|Noelle|Tom|Serena|Daniel|Karen|Moira|Tessa|Aria|Jenny|Guy|SunHi|InJoon|Hyunsu|Heami)\b/i;
+  function voiceScore(v, lang) {
+    const L = lang.toLowerCase(), vl = String(v.lang || "").toLowerCase().replace("_", "-");
+    if (!vl.startsWith(L.slice(0, 2))) return -1;
+    const n = v.name || "";
+    let s = vl === L ? 12 : 4;
+    if (/premium/i.test(n)) s += 60; else if (/enhanced/i.test(n)) s += 50;
+    if (/neural|natural|online/i.test(n)) s += 45;
+    if (/^Google\b/.test(n)) s += 35;
+    if (/siri/i.test(n)) s += 30;
+    if (GOOD.test(n)) s += 15;
+    if (/compact|eloquence/i.test(n)) s -= 25;
+    if (NOVELTY.test(n)) s -= 200;
+    if (v.default && s > 0) s += 2;
+    return s;
+  }
+  let voicesCache = [];
+  function allVoices() {
+    if (!("speechSynthesis" in window)) return [];
+    try { const v = speechSynthesis.getVoices(); if (v && v.length) voicesCache = v; } catch (e) { /* noop */ }
+    return voicesCache;
+  }
+  function rankedVoices(lang) {
+    return allVoices().map((v) => [voiceScore(v, lang), v]).filter((x) => x[0] >= 0).sort((a, b) => b[0] - a[0]).map((x) => x[1]);
+  }
+  function pickVoice(lang) {
+    const want = voicePref.get(lang), all = allVoices();
+    if (want) { const v = all.find((x) => x.voiceURI === want); if (v) return v; }
+    const r = rankedVoices(lang); return r.length && voiceScore(r[0], lang) > 0 ? r[0] : r[0] || null;
+  }
+  if ("speechSynthesis" in window) {
+    allVoices();
+    try { speechSynthesis.addEventListener("voiceschanged", () => { allVoices(); if (el.dlg.open) renderVoiceSettings(); }); } catch (e) { /* old browsers */ }
+  }
+
+  const ttsQ = []; let ttsBusy = false, ttsOK = true, ttsWarned = false;
   function ttsNext() {
     if (ttsBusy || !ttsQ.length) return;
     const item = ttsQ.shift(); ttsBusy = true;
     const text = item.text;
-    const a = new Audio("/tts?voice=" + item.voice + "&text=" + encodeURIComponent(text));
-    let settled = false, guard = 0;
-    const settle = (fallback, bad) => {
+    const a = new Audio();
+    let settled = false, guard = 0, url = "";
+    const settle = (fallback) => {
       if (settled) return; settled = true; clearTimeout(guard);
-      if (bad) ttsOK = false;
-      if (fallback) { try { a.pause(); } catch (e) { /* noop */ } speakBrowser(text); }
+      if (fallback) { try { a.pause(); } catch (e) { /* noop */ } speakBrowser(text, item.lang); }
+      if (url) URL.revokeObjectURL(url);
       ttsBusy = false; ttsNext();
     };
     guard = setTimeout(() => settle(false), 30000); // a stalled stream must not block the queue
-    a.onended = () => settle(false); a.onerror = () => settle(true, true);
-    a.play().catch(() => settle(true));
+    a.onended = () => settle(false); a.onerror = () => { ttsOK = false; settle(true); };
+    // BYOK: the visitor's OpenAI key rides in a header (never in the URL)
+    const k = settings.openaiKey;
+    fetch("/tts?voice=" + item.voice + "&lang=" + item.lang + "&text=" + encodeURIComponent(text), { headers: k ? { "X-OpenAI-Key": k } : {} })
+      .then((r) => {
+        if (r.status === 200 && /audio/.test(r.headers.get("Content-Type") || "")) return r.blob();
+        ttsOK = false;                                          // 204: no working key here; the browser voice from now on
+        if (k && !ttsWarned) { ttsWarned = true; toast("Your OpenAI key didn't work for the voice, so the browser's voice speaks. Check it in Settings → AI."); }
+        return null;
+      })
+      .then((b) => { if (settled) return; if (!b) { settle(true); return; } url = URL.createObjectURL(b); a.src = url; return a.play(); })
+      .catch(() => { ttsOK = false; settle(true); });
   }
   function speak(msg, lang, voice) {
-    if (live.session || !msg) return;
-    if (ttsOK && (!lang || String(lang).startsWith("en"))) {
-      const short = String(msg).split(/(?<=[.!?])\s/).slice(0, 2).join(" ");
+    if (live.session || !msg || !voicePref.on) return;
+    const text = speechText(msg); if (!text) return;
+    const L = /^[a-z]{2}(-|$)/i.test(String(lang || "")) && !/[가-힣]/.test(text) && !/^en/i.test(String(lang)) ? lang : speechLang(text);
+    if (ttsOK) {
+      const short = speechChunks(text).slice(0, 3).join(" ");
       if (ttsQ.length > 2) ttsQ.splice(0, ttsQ.length - 2);
-      ttsQ.push({ text: short, voice: voice || "coral" }); ttsNext(); return;
+      ttsQ.push({ text: short, voice: voice || TTS_VOICE.robot, lang: L }); ttsNext(); return;
     }
-    speakBrowser(msg, lang);
+    speakBrowser(text, L);
   }
-  function speakBrowser(msg, lang) {
+  // browser voice: sentence-sized utterances in order; a new line waits for the current sentence, older backlog is dropped
+  const sayQ = []; let saying = false;
+  function speakBrowser(msg, lang, opts = {}) {
     if (!("speechSynthesis" in window) || !msg) return;
-    try {
-      speechSynthesis.cancel();
-      const short = String(msg).split(/(?<=[.!?])\s/).slice(0, 2).join(" ");
-      const u = new SpeechSynthesisUtterance(short); u.lang = lang || settings.lang; u.rate = 1.05;
-      if (rec.on) { rec.paused = true; try { rec.r.stop(); } catch (e) { /* noop */ } }
-      u.onend = u.onerror = () => { if (rec.on && rec.paused) { rec.paused = false; startRecognizer(); } };
-      speechSynthesis.speak(u);
-    } catch (e) { /* noop */ }
+    const text = speechText(msg); if (!text) return;
+    const L = lang || speechLang(text), v = opts.voice || pickVoice(L);
+    if (opts.now) { sayQ.length = 0; try { speechSynthesis.cancel(); } catch (e) { /* noop */ } saying = false; }
+    if (sayQ.length > 4) sayQ.splice(0, sayQ.length - 2);
+    for (const c of speechChunks(text).slice(0, 6)) sayQ.push({ text: c, lang: v ? v.lang : L, voice: v });
+    sayNext();
   }
+  function sayNext() {
+    if (saying || !sayQ.length) return;
+    const it = sayQ.shift(); saying = true;
+    try {
+      const u = new SpeechSynthesisUtterance(it.text);
+      u.lang = it.lang; if (it.voice) u.voice = it.voice;
+      u.rate = /^ko/i.test(it.lang) ? 1.0 : 1.0; u.pitch = 1.0; u.volume = 1.0;
+      if (rec.on && !rec.paused) { rec.paused = true; try { rec.r.stop(); } catch (e) { /* noop */ } }
+      let done = false;
+      const end = () => {
+        if (done) return; done = true; saying = false;
+        if (sayQ.length) { sayNext(); return; }
+        if (rec.on && rec.paused) { rec.paused = false; startRecognizer(); }
+      };
+      u.onend = u.onerror = end;
+      setTimeout(end, 4000 + it.text.length * 120);          // some engines never fire onend
+      speechSynthesis.speak(u);
+    } catch (e) { saying = false; }
+  }
+  // Settings → Voice: a voice per language + Test
+  const VOICE_LANGS = [["en-US", "English", "Hi, I'm your robot. Tell me, point at, or show me what to do."],
+    ["ko-KR", "한국어", "안녕하세요. 말로 하거나, 가리키거나, 직접 보여 주세요."]];
+  function renderVoiceSettings() {
+    const host = $("voicePickers"); if (!host) return;
+    if (!host.dataset.built) {
+      host.dataset.built = "1";
+      host.innerHTML = VOICE_LANGS.map(([L, name]) => `<label class="field voice-row"><span>${name}</span><span class="set-row">
+        <select data-voice-lang="${L}" aria-label="${name} voice"></select>
+        <button type="button" class="btn sm" data-voice-test="${L}">Test</button></span></label>`).join("");
+      host.querySelectorAll("select[data-voice-lang]").forEach((sel) => sel.addEventListener("change", () => { voicePref.set(sel.dataset.voiceLang, sel.value); }));
+      host.querySelectorAll("[data-voice-test]").forEach((b) => b.addEventListener("click", () => {
+        const L = b.dataset.voiceTest, sel = host.querySelector(`select[data-voice-lang="${L}"]`), text = VOICE_LANGS.find((x) => x[0] === L)[2];
+        voicePref.set(L, sel.value);
+        if (ttsOK && (settings.openaiKey || $("setOpenAI").value.trim() || state.tts_server)) { ttsOK = true; speak(text, L); }
+        else speakBrowser(text, L, { now: true });
+      }));
+    }
+    host.querySelectorAll("select[data-voice-lang]").forEach((sel) => {
+      const L = sel.dataset.voiceLang, list = rankedVoices(L), best = list[0], want = voicePref.get(L);
+      const sig = list.map((v) => v.voiceURI).join("|") + "#" + want;
+      if (sel.dataset.sig === sig) return; sel.dataset.sig = sig;
+      sel.innerHTML = "";
+      sel.add(new Option(best ? `Automatic: ${best.name}` : "Automatic (no voice installed for this language)", ""));
+      for (const v of list) sel.add(new Option(`${v.name}${v === best ? " (recommended)" : ""}${v.localService === false ? " · online" : ""}`, v.voiceURI));
+      sel.value = list.some((v) => v.voiceURI === want) ? want : "";
+    });
+    const note = $("voiceNote");
+    if (note) {
+      const ko = rankedVoices("ko-KR")[0], en = rankedVoices("en-US")[0];
+      const plain = (v) => !v || !/premium|enhanced|neural|natural|google|online/i.test(v.name);
+      note.textContent = (settings.openaiKey || state.tts_server) && ttsOK ? "The robot uses OpenAI's natural voice; the browser voices below are the fallback."
+        : "The robot speaks with your browser's voices. For a natural voice add an OpenAI key under AI." + (plain(ko) || plain(en)
+          ? (/Mac/.test(navigator.platform) ? " On a Mac, better voices are free: System Settings → Accessibility → Spoken Content → System voice → Manage Voices (e.g. Yuna Premium, Ava Premium)." : " Chrome's Google voices or your system's natural voices sound best.") : "");
+    }
+    if ($("setSpeak")) $("setSpeak").checked = voicePref.on;
+  }
+  if ($("setSpeak")) $("setSpeak").addEventListener("change", () => { LS.set("pc.speak", $("setSpeak").checked ? "1" : "0"); if (!$("setSpeak").checked) { sayQ.length = 0; try { speechSynthesis.cancel(); } catch (e) { /* noop */ } } });
+  window.PCVoice = { speechText, speechChunks, speechLang, voiceScore, pickVoice: (l) => pickVoice(l), get ttsOK() { return ttsOK; } };
 
   // ------------------------------------------------------------------ quick actions
   const acts = {
@@ -833,6 +1040,8 @@
     reset: () => runTask("reset_scene", {}, "button").then(sayBack),
     export: () => runTask("export", {}, "button").then(sayBack),
     compile: () => runTask("compile_for", { robot: "ur5e" }, "button").then(sayBack),
+    video: () => el.videoFile.click(),
+    skills: () => openSettings("secSkills"),
   };
   function sayBack(r) { if (r && r.message && !live.session) speak(r.message); }
   document.querySelectorAll("[data-act]").forEach((b) => b.addEventListener("click", () => { const f = acts[b.dataset.act]; if (f) f(); }));
@@ -927,25 +1136,26 @@
     if (v && typeof v === "object") videoJob.seen = true;
     else if (videoJob.seen) {
       const skill = String(videoJob.name).replace(/\.[^.]+$/, "");
-      videoJob.done("done", `Video finished. Saved as a skill${arr(state.skills).map(String).includes(skill) ? ` “${skill}”` : ""} — select it below to edit or play.`);
+      videoJob.done("done", `Video finished. Saved as a skill${arr(state.skills).map(String).includes(skill) ? ` “${skill}”` : ""} — play or edit it under More → Skills.`);
       if (arr(state.skills).map(String).includes(skill)) { el.skillSel.value = skill; }
       videoJob = null;
     }
   }
 
   // ------------------------------------------------------------------ talk: Gemini Live or Web Speech fallback
+  const talkBtns = [el.talk, el.talkBig].filter(Boolean); // UX 2.0 shell: one big Talk button in the dock
   const live = { session: null, state: "off", level: 0, frameTimer: 0, tick: 0, gen: 0, lines: { user: null, model: null } };
   const rec = { on: false, r: null, paused: false, line: null };
 
   function setTalk(st, sub) {
     live.state = st;
-    for (const b of [el.talk, el.talkBig]) { b.dataset.state = st; b.setAttribute("aria-pressed", String(st !== "off" && st !== "error")); }
-    const labels = { off: "Talk", connecting: "Connecting…", live: "Live", listening: "Listening", speaking: "Speaking", error: "Talk" };
+    for (const b of talkBtns) { b.dataset.state = st; b.setAttribute("aria-pressed", String(st !== "off" && st !== "error")); }
+    const labels = { off: "Say it, point, or show", connecting: "Connecting…", live: "Live · say it, point, or show", listening: "Listening · say it, point, or show", speaking: "Robot is speaking", error: "Voice unavailable · type instead" };
     el.talkLabel.textContent = labels[st] || st;
-    el.talkBigLabel.textContent = st === "off" || st === "error" ? "Tap to talk" : (labels[st] || st) + " · tap to end";
-    el.talkSub.textContent = sub || (st === "off" ? (geminiReady() ? "gemini live · space" : "browser speech · space") : st === "error" ? "error" : live.session ? "gemini live" : "browser speech");
+    if (el.talkBigLabel) el.talkBigLabel.textContent = st === "off" || st === "error" ? "Tap to talk" : (labels[st] || st) + " · tap to end";
+    el.talkSub.textContent = sub || (st === "off" ? (geminiReady() ? "Gemini Live · Space to talk" : "Space to talk") : st === "error" ? "error" : live.session ? "Gemini Live" : "browser speech");
   }
-  function setLevel(v) { live.level = v; el.talk.style.setProperty("--lvl", v.toFixed(3)); el.talkBig.style.setProperty("--lvl", v.toFixed(3)); }
+  function setLevel(v) { live.level = v; for (const b of talkBtns) b.style.setProperty("--lvl", v.toFixed(3)); }
 
   const SYSTEM = [
     "You are the voice and brain of a Unitree G1 humanoid robot standing at a table with a mug on it, in a physics simulation that mirrors the real robot.",
@@ -961,6 +1171,7 @@
     "If the user asks to wipe or trace a shape, ask them to draw it on the robot view or place waypoints in the 3D view, then run it with follow_path.",
     "TEACH BY SHOWING is the core experience: the user teaches you a task like teaching a friend — they show it on camera and explain it out loud. You do NOT copy their motion live. The app handles 'start teaching' / 'done' / 'yes' phrases itself.",
     "During teaching, watch the demonstration frames and listen; when they finish (or when you understand), call propose_task with the goal, steps (pick_place object -> target) and constraints (avoid the vase, keep something still, keep upright, slow, grasp side/top), then ask them to confirm in ONE sentence. If they correct you, call propose_task again with the fix.",
+    "Safety around people is not yours to change: when a tool result or [robot update] says the robot slowed or paused for safety (a person is close), never retry, reroute or switch arms to get around it. Say why in one sentence and that it goes on when they step back.",
     "Speak in short, warm sentences — one or two at a time. Reply in the user's language.",
   ].join("\n");
   const S = (d) => ({ type: "STRING", description: d });
@@ -1136,7 +1347,7 @@
     }
     rec.r.lang = settings.lang;
     try { rec.r.start(); } catch (e) { /* already started */ }
-    el.talk.classList.add("nolevel"); el.talkBig.classList.add("nolevel");
+    for (const b of talkBtns) b.classList.add("nolevel");
     setTalk("listening", fromFailover ? "browser speech" : undefined);
   }
   function stopRecognizer() { rec.on = false; rec.paused = false; if (rec.line) { rec.line.remove(); rec.line = null; } try { rec.r && rec.r.stop(); } catch (e) { /* noop */ } }
@@ -1146,31 +1357,32 @@
     const s = live.session; live.session = null;
     if (s) { try { s.stopMic(); } catch (e) { /* noop */ } try { s.close(); } catch (e) { /* noop */ } addLine("sys", "Conversation ended."); }
     for (const k of ["user", "model"]) { if (live.lines[k]) live.lines[k].classList.remove("interim"); live.lines[k] = null; }
-    stopRecognizer(); setLevel(0); el.talk.classList.remove("nolevel"); el.talkBig.classList.remove("nolevel");
+    stopRecognizer(); setLevel(0); for (const b of talkBtns) b.classList.remove("nolevel");
     setTalk(final);
   }
   function toggleTalk() {
     if (live.state !== "off" && live.state !== "error") { stopTalk(); return; }
     if (geminiReady()) startGemini(); else startRecognizer();
   }
-  el.talk.addEventListener("click", toggleTalk); el.talkBig.addEventListener("click", toggleTalk);
+  for (const b of talkBtns) b.addEventListener("click", toggleTalk);
 
   // ------------------------------------------------------------------ settings dialog
   function openSettings(section) {
     if (typeof section !== "string") section = "";
-    $("setKey").value = settings.key; $("setLive").value = settings.liveModel; $("setEr").value = settings.erModel;
+    $("setKey").value = settings.key; $("setOpenAI").value = settings.openaiKey; $("setLive").value = settings.liveModel; $("setEr").value = settings.erModel;
     $("setLive").placeholder = (G() && G().DEFAULT_LIVE_MODEL) || "live model"; $("setEr").placeholder = (G() && G().DEFAULT_ER_MODEL) || "ER model";
     $("setMock").checked = typeof state.mock === "boolean" ? state.mock : settings.mock;
     $("setSendCam").checked = settings.sendCam; $("setSendRobot").checked = settings.sendRobot; $("setLang").value = settings.lang;
     $("geminiStatus").textContent = G() ? "gemini.js loaded · " + (settings.key ? "own key set → Talk uses Gemini Live" : state.server_gemini ? "server key → Talk uses Gemini Live (proxy)" : "no key → Talk uses browser speech") : "gemini.js not loaded → Talk uses browser speech";
-    $("serverGemini").hidden = !state.server_gemini;
-    $("setPhoneCam").checked = phoneCam.want; renderSettingsLive();
+    $("serverGemini").hidden = !state.server_gemini; $("byokNote").hidden = !state.byok;
+    $("setPhoneCam").checked = phoneCam.want; renderSettingsLive(); renderVoiceSettings();
     if (typeof el.dlg.showModal === "function") el.dlg.showModal(); else el.dlg.setAttribute("open", "");
     if (section) { const sec = $(section); if (sec) { sec.scrollIntoView({ block: "start" }); sec.classList.add("flash"); setTimeout(() => sec.classList.remove("flash"), 1200); } }
   }
   el.dlg.addEventListener("close", () => {
     if (el.dlg.returnValue !== "save") return;
     LS.set("pc.geminiKey", $("setKey").value.trim());
+    LS.set("pc.openaiKey", $("setOpenAI").value.trim()); ttsOK = true;
     const lm = $("setLive").value.trim(), em = $("setEr").value.trim();
     LS.set("pc.liveModel", G() && lm === G().DEFAULT_LIVE_MODEL ? "" : lm);
     LS.set("pc.erModel", G() && em === G().DEFAULT_ER_MODEL ? "" : em);
@@ -1180,20 +1392,37 @@
     if (live.state === "off" || live.state === "error") setTalk("off");
     toast("Settings saved.");
   });
+  // Settings → Language: System / 한국어 / English. The server keeps one language for its messages (pps/i18n.py):
+  // we say it on connect ("hello") and when it changes ("settings"); the help sheet follows ("pc-lang" event).
+  function applyLang(announce) {
+    const L = uiLang(), pref = langPref();
+    document.documentElement.lang = L;
+    document.querySelectorAll("[data-lang-pick]").forEach((b) => { const on = b.dataset.langPick === pref; b.setAttribute("aria-checked", String(on)); b.setAttribute("aria-pressed", String(on)); });
+    if (!announce) return;
+    send({ type: "settings", lang: L });
+    if (rec.r && !LS.get("pc.lang", "")) rec.r.lang = settings.lang;
+    window.dispatchEvent(new CustomEvent("pc-lang", { detail: L }));
+    toast(L === "ko" ? "로봇의 메시지를 한국어로 보여줄게요." : "Robot messages in English.");
+  }
+  document.querySelectorAll("[data-lang-pick]").forEach((b) => b.addEventListener("click", () => { LS.set("pc.uiLang", b.dataset.langPick); applyLang(true); }));
+  applyLang(false);
   $("setMock").addEventListener("change", () => {
     const on = $("setMock").checked; LS.set("pc.mock", on ? "1" : "0"); send({ type: "mock", enabled: on }); schedule();
     addLine("sys", on ? "Mock AI on: offline gestures + scripted replies." : "Mock AI off.");
   });
-  $("settingsBtn").addEventListener("click", () => openSettings()); $("settingsBtnM").addEventListener("click", () => openSettings());
-  $("camBtnM").addEventListener("click", () => openSettings("secCamera"));
+  [$("settingsBtn"), $("settingsBtnM")].forEach((b) => b && b.addEventListener("click", () => openSettings()));
+  if ($("demoBtn")) $("demoBtn").addEventListener("click", () => openSettings("secDemo"));
   function renderSettingsLive() {
     const rb = String(state.robot || "g1");
     document.querySelectorAll("[data-robot]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.robot === rb)));
     const sp = state.spatial && typeof state.spatial === "object" ? state.spatial : null;
     if (sp && sp.model && document.activeElement !== $("setSpatial")) $("setSpatial").value = String(sp.model);
+    const yo = $("setSpatial").querySelector('option[value="yolo-seg"]');   // YOLO (ultralytics, AGPL) is an optional extra
+    if (yo && sp) { yo.disabled = sp.yolo === false; yo.textContent = sp.yolo === false ? "YOLO segmentation (not installed)" : "YOLO segmentation"; }
+    if ($("spatialNote")) { $("spatialNote").textContent = (sp && sp.note) || ""; $("spatialNote").hidden = !(sp && sp.note); }
     const er = sp && sp.er && typeof sp.er === "object" ? sp.er : null;
     $("erStatus").textContent = er ? `ER · ${er.target || ""} · ${arr(er.points).length} points${er.ms ? " · " + Math.round(er.ms) + " ms" : ""}` : "";
-    $("serverGemini").hidden = !state.server_gemini;
+    $("serverGemini").hidden = !state.server_gemini; $("byokNote").hidden = !state.byok;
     $("camStatus").textContent = phoneCam.status;
   }
   // robot body
@@ -1204,8 +1433,8 @@
   }));
   // spatial model + Robotics-ER
   $("setSpatial").addEventListener("change", () => { send({ type: "spatial_model", name: $("setSpatial").value }); });
-  $("erCam").addEventListener("click", () => { if (send({ type: "spatial", target: "camera" })) { $("erStatus").textContent = "asking Gemini Robotics-ER (camera)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in your camera…"); } });
-  $("erRobot").addEventListener("click", () => { if (send({ type: "spatial", target: "robot" })) { $("erStatus").textContent = "asking Gemini Robotics-ER (robot view)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in the robot view…"); } });
+  $("erCam").addEventListener("click", () => { if (send({ type: "spatial", target: "camera", key: settings.key || undefined })) { $("erStatus").textContent = "asking Gemini Robotics-ER (camera)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in your camera…"); } });
+  $("erRobot").addEventListener("click", () => { if (send({ type: "spatial", target: "robot", key: settings.key || undefined })) { $("erStatus").textContent = "asking Gemini Robotics-ER (robot view)…"; addLine("sys", "Asking Gemini Robotics-ER what it sees in the robot view…"); } });
   // demo autopilot
   document.querySelectorAll("[data-demo]").forEach((b) => b.addEventListener("click", () => {
     if (!send({ type: "demo", name: b.dataset.demo })) { toast("Not connected to the robot."); return; }
@@ -1219,39 +1448,63 @@
   }
 
   // ------------------------------------------------------------------ this device's camera -> server (0x10 + JPEG)
+  // Off by default. "Turn on camera" starts it right away (the browser asks once); you see yourself at once (the local
+  // video, mirrored like the server's frame) while the server tracks your pose on the frames and puts you across the
+  // table. "Use my phone" shows a QR code for /phone (a light page that only streams its camera, over https).
   const IS_PHONE = /Android|iPhone|iPad|iPod|Mobile/i.test(navigator.userAgent) || (window.matchMedia && matchMedia("(pointer: coarse)").matches);
   const phoneCam = {
     get want() { return LS.get("pc.phoneCam", "0") === "1"; },
     facing: LS.get("pc.facing", IS_PHONE ? "environment" : "user"),
-    stream: null, video: null, canvas: null, timer: 0, busy: false, status: "off", sent: 0, gen: 0,
+    stream: null, video: null, canvas: null, timer: 0, busy: false, status: "off", error: "", sent: 0, gen: 0,
+  };
+  const CAM_ERR = {
+    insecure: "This page isn't https, so the browser won't share a camera here. Use “Use my phone”, or open the https address the server prints.",
+    NotAllowedError: "Camera blocked. Allow it from the camera icon in the address bar (site settings), then try again.",
+    SecurityError: "Camera blocked by the browser's settings for this site. Allow it, then try again.",
+    NotFoundError: "No camera found on this computer. Try “Use my phone”.",
+    OverconstrainedError: "No camera found on this computer. Try “Use my phone”.",
+    NotReadableError: "Another app is using the camera. Close it (Zoom, FaceTime, Meet…), then try again.",
+    AbortError: "The camera didn't start. Try again.",
   };
   async function camStart() {
-    camStop(); const gen = phoneCam.gen;
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phoneCam.status = "camera not available (needs https)"; schedule(); return; }
+    camStop(); const gen = phoneCam.gen; phoneCam.error = "";
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { phoneCam.status = "camera not available (needs https)"; phoneCam.error = CAM_ERR.insecure; schedule(); return; }
     phoneCam.status = "starting…"; schedule();
     try {
-      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: phoneCam.facing, width: 640 }, audio: false });
+      const st = await navigator.mediaDevices.getUserMedia({ video: { facingMode: phoneCam.facing, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false });
       if (!phoneCam.want || gen !== phoneCam.gen) { st.getTracks().forEach((t) => t.stop()); return; }
       phoneCam.stream = st;
       const v = phoneCam.video || (phoneCam.video = Object.assign(document.createElement("video"), { muted: true, playsInline: true, autoplay: true }));
       v.setAttribute("playsinline", ""); v.srcObject = st; try { await v.play(); } catch (e) { /* autoplay */ }
       if (gen !== phoneCam.gen) return; // stopped / restarted while starting (camStop already stopped the tracks)
+      const self = $("camSelf"); if (self) { self.srcObject = st; self.play().catch(() => { /* autoplay policy: the frame still shows */ }); }
       phoneCam.canvas = phoneCam.canvas || document.createElement("canvas");
-      phoneCam.timer = setInterval(camTick, 100);
+      phoneCam.timer = setInterval(camTick, 66);                // ~15 fps (the server keeps the newest frame)
+      st.getVideoTracks().forEach((t) => t.addEventListener("ended", () => { if (gen === phoneCam.gen) { camStop(); phoneCam.error = "The camera stopped (unplugged or taken by another app)."; schedule(); } }));
       phoneCam.status = `streaming · ${phoneCam.facing === "user" ? "front" : "back"}`; schedule();
-    } catch (e) { if (gen === phoneCam.gen) { phoneCam.status = "camera blocked: " + (e && e.name || e); schedule(); } }
+    } catch (e) {
+      if (gen !== phoneCam.gen) return;
+      const name = (e && e.name) || String(e);
+      phoneCam.status = "camera blocked: " + name; phoneCam.error = CAM_ERR[name] || `The camera didn't start (${name}).`; schedule();
+    }
   }
   function camStop() {
     phoneCam.gen++; clearInterval(phoneCam.timer); phoneCam.timer = 0;
     if (phoneCam.stream) phoneCam.stream.getTracks().forEach((t) => t.stop());
+    const self = $("camSelf"); if (self) { try { self.pause(); } catch (e) { /* noop */ } self.srcObject = null; }
     phoneCam.stream = null; phoneCam.status = "off"; schedule();
+  }
+  function camEnable(on) {
+    LS.set("pc.phoneCam", on ? "1" : "0"); $("setPhoneCam").checked = on;
+    if (on) camStart(); else { camStop(); phoneCam.error = ""; }
   }
   function camTick() {
     const v = phoneCam.video; if (phoneCam.busy || !v || v.readyState < 2 || !v.videoWidth) return;
     if (!ws || ws.readyState !== 1 || ws.bufferedAmount > 300000) return;
-    const w = Math.min(640, v.videoWidth), h = Math.round(w * v.videoHeight / v.videoWidth), cv = phoneCam.canvas;
-    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-    cv.getContext("2d").drawImage(v, 0, 0, w, h);
+    // the server works on 16:9 frames (it stretches whatever arrives): fit the picture inside 640×360, black bars
+    const cv = phoneCam.canvas, W = 640, H = 360, f = frameFit(v.videoWidth, v.videoHeight, W, H);
+    if (cv.width !== W || cv.height !== H) { cv.width = W; cv.height = H; }
+    const g = cv.getContext("2d"); g.fillStyle = "#000"; g.fillRect(0, 0, W, H); g.drawImage(v, f.x, f.y, f.w, f.h);
     phoneCam.busy = true;
     cv.toBlob(async (blob) => {
       try {
@@ -1262,16 +1515,79 @@
       } catch (e) { /* noop */ } finally { phoneCam.busy = false; }
     }, "image/jpeg", 0.6);
   }
-  $("setPhoneCam").addEventListener("change", () => {
-    LS.set("pc.phoneCam", $("setPhoneCam").checked ? "1" : "0");
-    if (phoneCam.want) camStart(); else camStop();
-  });
+  // where a vw×vh picture sits when fitted inside a W×H box (contain)
+  function frameFit(vw, vh, W, H) { const k = Math.min(W / vw, H / vh), w = vw * k, h = vh * k; return { x: (W - w) / 2, y: (H - h) / 2, w, h }; }
+  // the live self-view: this device's camera while it streams
+  function selfView() { const v = $("camSelf"); return v && phoneCam.stream && !v.hidden && v.videoWidth ? v : null; }
+  const realCam = (s) => s.source === "phone" || s.source === "webcam" || s.source === "video";
+  const camOffState = (s) => !phoneCam.stream && !realCam(s || {});
+  const SRC_LABEL = { phone: "browser camera", webcam: "server webcam", video: "video", synthetic: "no camera" };
+  function renderCam(s) {
+    const off = camOffState(s), starting = /starting/.test(phoneCam.status), cin = s.cam_in && typeof s.cam_in === "object" ? s.cam_in : null;
+    const self = $("camSelf"), selfOn = !!(phoneCam.stream && self);
+    if (self && self.hidden === selfOn) self.hidden = !selfOn;
+    el.camImg.style.visibility = selfOn ? "hidden" : "";
+    el.camEmpty.hidden = !off;
+    if (off) {
+      const t = starting ? "Starting your camera…" : phoneCam.error ? "Camera didn't start" : "Camera is off";
+      const sub = starting ? "Allow the camera if your browser asks." : phoneCam.error || "Turn it on so the robot can see you, where you point and your gestures.";
+      if ($("camEmptyTitle").textContent !== t) $("camEmptyTitle").textContent = t;
+      if ($("camEmptySub").textContent !== sub) $("camEmptySub").textContent = sub;
+      $("camBtnM").disabled = starting;
+      el.camEmpty.dataset.state = starting ? "starting" : phoneCam.error ? "error" : "off";
+    }
+    $("camOffBtn").hidden = !phoneCam.stream;
+    el.noPose.hidden = !gotState || off || !!s.pose_ok || s.source === "video";
+    const src = phoneCam.stream ? "this computer" : s.source === "phone" ? (cin && cin.mobile ? "phone" : "browser camera") : SRC_LABEL[s.source] || s.source || "—";
+    if (changed("src", src)) el.source.textContent = src;
+    // camera chip in the column head: who streams, and how fast
+    const chip = $("phoneCamChip"), txt = phoneCam.stream ? (cin ? `Camera on · ${Math.round(cin.fps)} fps` : "Camera on")
+      : cin && cin.mobile ? `Phone connected · ${Math.round(cin.fps)} fps` : cin ? `Camera · ${Math.round(cin.fps)} fps` : "";
+    if (changed("pcam", txt)) { chip.hidden = !txt; chip.textContent = txt; chip.classList.toggle("live", !!txt); }
+    if ($("phoneDlg").open) renderPhone(s);
+  }
+  $("setPhoneCam").addEventListener("change", () => camEnable($("setPhoneCam").checked));
+  $("camBtnM").addEventListener("click", () => camEnable(true));
+  $("camOffBtn").addEventListener("click", () => { camEnable(false); toast("Camera off."); });
   $("camFlip").addEventListener("click", () => {
     phoneCam.facing = phoneCam.facing === "user" ? "environment" : "user"; LS.set("pc.facing", phoneCam.facing);
     if (phoneCam.want) camStart(); else phoneCam.status = `off · next: ${phoneCam.facing === "user" ? "front" : "back"}`;
     schedule();
   });
   if (phoneCam.want) camStart();
+
+  // ------------------------------------------------------------------ "Use my phone": QR code for /phone
+  let phoneInfo = null;
+  async function openPhone() {
+    if (el.dlg.open) el.dlg.close("cancel");
+    if (phoneCam.stream) { camEnable(false); toast("Your phone will be the camera: this computer's camera is off."); }
+    const dlg = $("phoneDlg"), qr = $("phoneQr");
+    if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
+    try { const r = await fetch("/phone/info", { cache: "no-store" }); phoneInfo = r.ok ? await r.json() : null; } catch (e) { phoneInfo = null; }
+    // a server reached over its LAN address already knows the right host; prefer the address bar's host then
+    const host = /^(localhost|127\.|\[?::1)/.test(location.hostname) ? phoneInfo && phoneInfo.ip : location.hostname;
+    const url = phoneInfo && phoneInfo.https_port ? `https://${host}:${phoneInfo.https_port}/phone` : null;
+    $("phoneNoHttps").hidden = !!url || !phoneInfo; qr.hidden = !url;
+    const a = $("phoneUrl"); a.textContent = url || (phoneInfo ? "https is off on this server" : "couldn't reach the server"); a.href = url || "#";
+    $("phoneCopy").hidden = !url;
+    qr.innerHTML = "";
+    if (url && window.PCQR) { try { qr.innerHTML = window.PCQR.svg(url, { ecl: "M", border: 2, title: "Scan to open " + url }); } catch (e) { qr.textContent = ""; } }
+    renderPhone(state);
+  }
+  function renderPhone(s) {
+    const cin = s && s.cam_in && typeof s.cam_in === "object" ? s.cam_in : null, p = $("phoneStatus");
+    const st = cin && cin.mobile ? "live" : "wait";
+    const txt = st === "live" ? `Phone connected · streaming ${Math.round(cin.fps)} fps${s.pose_ok ? " · the robot sees you" : " · step back so your upper body is in view"}`
+      : "Waiting for the phone… (open the link on it and tap Start camera)";
+    p.dataset.state = st;
+    const span = p.querySelector("span"); if (span.textContent !== txt) span.textContent = txt;
+  }
+  $("camPhoneBtn").addEventListener("click", openPhone);
+  $("camPhoneBtn2").addEventListener("click", openPhone);
+  $("phoneCopy").addEventListener("click", async () => {
+    const t = $("phoneUrl").textContent;
+    try { await navigator.clipboard.writeText(t); toast("Link copied."); } catch (e) { toast(t); }
+  });
 
   // feed collapse (mobile mostly)
   el.feedToggle.addEventListener("click", () => {
@@ -1295,11 +1611,16 @@
   });
 
   // debug/demo hook: window.PC.ingest(stateObject) renders a state without a server
-  document.getElementById("pip").addEventListener("click", (ev) => {
-    ev.stopPropagation(); send({ type: "view", name: state.view === "robot" ? "stage" : "robot" });
+  document.getElementById("pip").addEventListener("click", (ev) => { // the PiP swaps the stage: 3D <-> Robot eye
+    ev.stopPropagation(); setStageView(view3d ? "robot" : "3d");
   });
   ["pointerdown", "pointerup", "pointermove"].forEach((t) => document.getElementById("pip").addEventListener(t, (ev) => ev.stopPropagation()));
-  window.PC = { ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, get state() { return state; } };
+  window.PC = { toast: (m) => toast(m), ingest(s) { state = s || {}; gotState = true; onState(); schedule(); if (P3()) P3().setState(state); }, runTask, parseIntent, send, addLine, setStageView, get view3d() { return view3d; }, get state() { return state; },
+    get camVideo() { return phoneCam.stream && phoneCam.video && phoneCam.video.readyState >= 2 ? phoneCam.video : null; },   // this device's camera (web/ui/watch.js runs hand tracking on it)
+    // camera controls for feature modules (gestures guide, help): start/stop this device's camera, open the phone QR
+    camera: { start: () => camEnable(true), stop: () => camEnable(false), phone: () => openPhone(), get on() { return !!phoneCam.stream; },
+      get status() { return phoneCam.status; }, get error() { return phoneCam.error; } },
+    speak: (text, lang) => speak(text, lang), get lang() { return uiLang(); } };
   if (P3()) mount3d();
 
   setTalk("off");

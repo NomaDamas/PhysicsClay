@@ -1,5 +1,17 @@
 """End-to-end self test: starts an isolated server (synthetic input) and exercises every feature over the real protocol.
-Run: .venv/bin/python scripts/selftest.py        Prints PASS/FAIL per check and exits non-zero on any failure."""
+Run: .venv/bin/python scripts/selftest.py        Prints PASS/FAIL per check and exits non-zero on any failure.
+
+Environment:
+  PC_SELFTEST_PORT=8791      HTTP port of the test server (HTTPS uses the next one); give parallel runs their own ports.
+  PC_SELFTEST_OFFLINE=1      CI / no keys: the server runs with --byok (never reads .env keys) and the checks that need
+                             a key, the network or a local test clip are reported as SKIP instead of FAIL.
+  PC_SELFTEST_LOG=path       write the server's stdout/stderr there (default: discarded).
+  PC_SELFTEST_CHECKS=a,b     run only those scripts/checks/ files (no core section).
+
+The test client shows no pictures (hello streams: []), so the server renders the streamed views only for the check that
+asks for them ("frames: ...") and for the browser the xr check drives; the robot's behaviour doesn't depend on them.
+After each checks/ file a TIME line says how long it took, the server's frame rate and, with physics, how fast the
+simulation ran against the wall clock (slow machines: what a timing-sensitive check had to work with)."""
 import asyncio
 import json
 import os
@@ -13,14 +25,24 @@ from pathlib import Path
 import aiohttp
 
 ROOT = Path(__file__).resolve().parents[1]
-PORT, HTTPS = 8791, 8792
+PORT = int(os.environ.get("PC_SELFTEST_PORT", "8791")); HTTPS = PORT + 1   # parallel runs: give each its own port
 BASE = f"http://127.0.0.1:{PORT}"
+OFFLINE = os.environ.get("PC_SELFTEST_OFFLINE") == "1"
+if OFFLINE:
+    os.environ["PC_BYOK"] = "1"   # checks in this process see what the --byok server sees: no server keys
+ONLY = [c for c in os.environ.get("PC_SELFTEST_CHECKS", "").split(",") if c]
 results = []
+skipped = []
 
 
 def check(name, ok, detail=""):
     results.append((name, bool(ok), detail))
     print(f"{'PASS' if ok else 'FAIL'}  {name}  {detail}", flush=True)
+
+
+def skip(name, why):
+    skipped.append(name)
+    print(f"SKIP  {name}  {why}", flush=True)
 
 
 async def main():
@@ -33,16 +55,29 @@ async def main():
         except Exception:
             await asyncio.sleep(0.5)
     ws = await s.ws_connect(BASE + "/ws")
+    # checks match English text; no pictures (STREAMS in pps/app.py): the frames check below subscribes to them
+    await ws.send_str(json.dumps({"type": "hello", "lang": "en", "client": "selftest", "streams": []}))
     st = {}
     bins = {}
+    perf = {"fps": [], "sim": None}     # per checks/ file: the server's fps and (physics) sim clock, for the TIME line
 
     async def pump(sec):
         nonlocal st
         t0 = time.time()
         while time.time() - t0 < sec:
-            m = await asyncio.wait_for(ws.receive(), 10)
+            m = await asyncio.wait_for(ws.receive(), 120)   # a plan made inside one server tick (goal set-aside spots, a
+                                                             # dry run) can take seconds with physics on a loaded machine
             if m.type == aiohttp.WSMsgType.TEXT:
                 st = json.loads(m.data)
+                perf["fps"].append(float(st.get("fps") or 0.0))
+                ph = st.get("physics") or {}
+                if ph.get("mode") == "dynamic" and ph.get("time") is not None:
+                    w, sim = time.time(), float(ph["time"])
+                    a = perf["sim"]
+                    if a is None or sim < a[3]:                  # (the sim clock restarts on a reset / a new world)
+                        perf["sim"] = [w, sim, a[2] if a else 0.0, sim, a[4] if a else 0.0, w]
+                    else:
+                        a[2] += sim - a[3]; a[4] += w - a[5]; a[3], a[5] = sim, w
             elif m.type == aiohttp.WSMsgType.BINARY:
                 bins[m.data[0]] = len(m.data)
         return st
@@ -51,21 +86,66 @@ async def main():
         tid = f"{action}-{time.time():.3f}"
         await ws.send_str(json.dumps({"type": "task", "id": tid, "action": action, **kw}))
         t0 = time.time()
-        while time.time() - t0 < wait:
+        deadline = t0 + wait
+        while time.time() < deadline:
             await pump(0.2)
-            if st.get("task") and st["task"]["id"] == tid and st["task"]["status"] != "planning":
+            cur = st.get("task") or {}
+            if cur.get("id") == tid and cur.get("status") != "planning":
                 break
+            if cur.get("id") == tid:              # still working out how (a pick search runs a slice per frame): its verdict
+                deadline = max(deadline, min(time.time() + 0.5, t0 + wait + 60))
         return st.get("task") or {}
 
     async def until_done(limit=25):
-        t0 = time.time()
-        while time.time() - t0 < limit:
+        """Wait for the task to end: `limit` seconds of the robot's own (sim) time when physics runs, so a loaded machine
+        running the plant slower than real time doesn't fail a check (capped at 4x the limit of wall time)."""
+        t0, sim, last = time.time(), 0.0, None
+        while time.time() - t0 < 4 * limit:
             await pump(0.3)
-            if st.get("task", {}).get("status") != "running":
+            if (st.get("task") or {}).get("status") not in ("running", "planning"):   # (planning: a pick search, one slice per frame)
+                break
+            ph = st.get("physics") or {}
+            if ph.get("mode") != "dynamic":
+                if time.time() - t0 >= limit:
+                    break
+                continue
+            now = float(ph.get("time") or 0.0)
+            sim += max(0.0, now - last) if last is not None and now >= last else 0.0   # (the clock restarts on a reset)
+            last = now
+            if sim >= limit:
                 break
         return st.get("task") or {}
 
     send = lambda **k: ws.send_str(json.dumps(k))
+
+    async def features():
+        """Feature checks: scripts/checks/*.py each define `async def run(t)` (UX 2.0 features add their own file)."""
+        import importlib.util
+        from types import SimpleNamespace
+        t = SimpleNamespace(send=send, pump=pump, task=task, until_done=until_done, check=check, http=s, base=BASE,
+                            state=lambda: st, frames=lambda: bins)
+        for f in sorted((ROOT / "scripts" / "checks").glob("*.py")):
+            if f.name.startswith("_") or (ONLY and f.stem not in ONLY):
+                continue
+            spec = importlib.util.spec_from_file_location(f"checks_{f.stem}", f)
+            mod = importlib.util.module_from_spec(spec); spec.loader.exec_module(mod)
+            t0 = time.time(); perf["fps"], perf["sim"] = [], None
+            try:
+                await mod.run(t)
+            except Exception as e:
+                check(f"checks/{f.name} ran", False, repr(e)[:120])
+            fps = sorted(x for x in perf["fps"] if x > 0) or [0.0]
+            sim = perf["sim"]
+            rtf = f", sim {sim[2] / sim[4]:.2f}x real time" if sim and sim[4] > 1.0 else ""
+            print(f"TIME  checks/{f.name}: {time.time() - t0:.0f} s, server {fps[len(fps) // 2]:.0f} fps "
+                  f"(10th percentile {fps[len(fps) // 10]:.0f}){rtf}", flush=True)
+            await task("reset_scene", 1)
+
+    if ONLY:                                    # PC_SELFTEST_CHECKS=gestures,handover: only those feature checks
+        await pump(1.0)
+        await features()
+        await ws.close(); await s.close()
+        return
 
     # --- serving
     async with s.get(BASE + "/static/app.js") as r:
@@ -84,12 +164,15 @@ async def main():
             check("https (phone mic)", r.status == 200)
     except Exception as e:
         check("https (phone mic)", False, str(e)[:60])
-    await pump(1.5)
-    check("frames: camera / robot view / full body", all(k in bins for k in (1, 2, 3)), str(sorted(bins)))
+    await send(type="streams", streams=["cam", "robot", "pip"]); await pump(1.5)
+    check("frames: camera / robot view / full body", all(k in bins for k in (1, 2, 3)), f"{sorted(bins)} server {st.get('fps')} fps")
+    await send(type="streams", streams=[]); await pump(0.3)
+    bins.clear(); await pump(0.6)
+    check("frames: nothing rendered for a client that shows no pictures", not bins, f"{sorted(bins)} server {st.get('fps')} fps")
     keys = ("mode", "view", "feasibility", "markers", "path", "task", "holding", "scene_objects", "skills", "teach", "geom_poses", "say", "mock")
     check("state fields", all(k in st for k in keys), ",".join(k for k in keys if k not in st))
     names = sorted(o["name"] for o in st["scene_objects"])
-    check("scene objects", names == ["blue block", "mug", "red block", "vase"], str(names))
+    check("scene objects", names == ["blue block", "green block", "mug", "red block", "vase"], str(names))
 
     # --- spatial: tap, draw, 3D path
     await send(type="tap", u=0.45, v=0.55); await pump(0.5)
@@ -178,7 +261,8 @@ async def main():
     await T(cmd="cancel"); await task("reset_scene", 1)
 
     # --- v3: phone frames, robot switch, spatial model, proxies, tts, demo autopilot
-    import cv2, numpy as np
+    import cv2
+    import numpy as np
     jpg = cv2.imencode(".jpg", np.full((360, 640, 3), 120, np.uint8))[1].tobytes()
     for _ in range(8):
         await ws.send_bytes(b"\x10" + jpg); await pump(0.15)
@@ -191,18 +275,35 @@ async def main():
     await send(type="spatial_model", name="mediapipe"); await pump(0.4)
     check("spatial model switch", st["spatial"]["model"] == "mediapipe")
     await send(type="spatial_model", name="yolo-seg"); await pump(0.3)
-    async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test."}) as r:
-        b = await r.read()
-        check("OpenAI TTS endpoint", r.status == 200 and len(b) > 1000, f"{r.status} {len(b)}B")
-    async def gemini_rest():
-        async with s.post(BASE + "/gemini/rest/gemini-3.8-flash:generateContent", json={"contents": [{"parts": [{"text": "Reply OK"}]}]}) as r:
-            return r.status, await r.text()
-    req = asyncio.ensure_future(gemini_rest())
-    while not req.done():          # keep reading the socket so the server heartbeat doesn't drop us (Google can take 35 s)
-        await pump(0.3)
-    status, txt = req.result()
-    check("Gemini REST proxy reaches Google", status in (200, 429) or "error" in txt, f"{status} {txt[:60]}")
-    check("server reports Gemini key", st.get("server_gemini") is True)
+    for _ in range(10):
+        await ws.send_bytes(b"\x10" + jpg); await pump(0.07)
+    ci = st.get("cam_in") or {}
+    check("state.cam_in: a browser camera streaming, with its fps", ci.get("fps", 0) > 3 and ci.get("mobile") is False, str(ci))
+    async with s.get(BASE + "/phone") as r:
+        body = await r.text()
+        check("/phone serves the phone camera page", r.status == 200 and "getUserMedia" in body, f"{r.status} {len(body)}B")
+    async with s.get(BASE + "/phone/info") as r:
+        info = await r.json()
+        check("/phone/info gives the https address for the QR code", info.get("https_port") == HTTPS and str(info.get("url", "")).startswith("https://"), str(info))
+    async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test, quiet fallback."}, headers={"X-OpenAI-Key": ""}) as r:
+        check("/tts never answers with an error status (204 = use the browser voice)", r.status in (200, 204), f"{r.status} {r.headers.get('X-TTS', '')}")
+    if OFFLINE:
+        for name in ("OpenAI TTS endpoint", "Gemini REST proxy reaches Google", "server reports Gemini key"):
+            skip(name, "offline: needs an API key and the network")
+    else:
+        async with s.get(BASE + "/tts", params={"voice": "coral", "text": "Self test."}) as r:
+            b = await r.read()
+            check("OpenAI TTS endpoint", r.status == 200 and len(b) > 1000, f"{r.status} {r.headers.get('X-TTS', '')} {len(b)}B")
+
+        async def gemini_rest():
+            async with s.post(BASE + "/gemini/rest/gemini-3.8-flash:generateContent", json={"contents": [{"parts": [{"text": "Reply OK"}]}]}) as r:
+                return r.status, await r.text()
+        req = asyncio.ensure_future(gemini_rest())
+        while not req.done():          # keep reading the socket so the server heartbeat doesn't drop us (Google can take 35 s)
+            await pump(0.3)
+        status, txt = req.result()
+        check("Gemini REST proxy reaches Google", status in (200, 429) or "error" in txt, f"{status} {txt[:60]}")
+        check("server reports Gemini key", st.get("server_gemini") is True)
     await send(type="demo", name="keyfeatures"); t0 = time.time(); kinds = set(); seen = None
     while time.time() - t0 < 120:
         await pump(0.3)
@@ -230,15 +331,20 @@ async def main():
         while st.get("video") is not None and time.time() - t0 < 20:
             await pump(0.5)
         check("video upload -> whole-body imitation -> skill", j["ok"] and playing and "selftest_clip" in st["skills"], j.get("name"))
+    elif OFFLINE:
+        skip("video upload -> whole-body imitation -> skill", "offline: no /tmp/pc_clip.mp4 test clip")
     else:
         check("video upload", False, "no /tmp/pc_clip.mp4 test clip")
 
+    await features()
     await ws.close(); await s.close()
 
 
 if __name__ == "__main__":
-    srv = subprocess.Popen([str(ROOT / ".venv/bin/python"), "-m", "pps.app", "--fake", "--https", "--port", str(PORT), "--https-port", str(HTTPS)],
-                           cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    log = open(os.environ["PC_SELFTEST_LOG"], "w") if os.environ.get("PC_SELFTEST_LOG") else subprocess.DEVNULL
+    srv = subprocess.Popen([str(ROOT / ".venv/bin/python"), "-m", "pps.app", "--fake", "--https", "--port", str(PORT),
+                            "--https-port", str(HTTPS)] + (["--byok"] if OFFLINE else []),
+                           cwd=ROOT, stdout=log, stderr=subprocess.STDOUT if log is not subprocess.DEVNULL else subprocess.DEVNULL)
     try:
         asyncio.run(main())
     finally:
@@ -248,6 +354,11 @@ if __name__ == "__main__":
                 os.remove(ROOT / "recordings" / "skills" / f"{f}.json")
             except OSError:
                 pass
+        for f in list((ROOT / "skills").glob("selftest_*.json")) + list((ROOT / "skills").glob("p4check_*.json")):
+            try:                         # P4: skills the checks' demonstrations became (skills/ is user data)
+                f.unlink()
+            except OSError:
+                pass
     bad = [r for r in results if not r[1]]
-    print(f"\n{len(results) - len(bad)}/{len(results)} passed")
+    print(f"\n{len(results) - len(bad)}/{len(results)} passed" + (f", {len(skipped)} skipped (offline)" if skipped else ""))
     sys.exit(1 if bad else 0)

@@ -5,9 +5,17 @@ robot view (MuJoCo, real Unitree G1 + table + scanned mug) <- tasks (pick_place,
 Browser talks to Gemini Live itself (key stays in the browser); intents arrive here as tasks, the physics verdict goes back.
 Protocol: docs/PROTOCOL.md.   Run: .venv/bin/python -m pps.app [--video clip.mp4] [--objects] [--fake] [--https]
 """
+import os
+# one BLAS / OpenMP thread (set before numpy loads): the IK's small matrices gain nothing from threads, and on a busy
+# machine BLAS threads thrash (an 8 ms IK solve took 120 ms), which made planning stall the loop far longer
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 import argparse
+import collections
+import copy
 import asyncio
 import json
+import re
 import socket
 import ssl
 import subprocess
@@ -27,16 +35,27 @@ from .protocol import LANDMARKS
 from .robot_runtime import HANDS, Runtime
 from .compile_other import compile_ur5e
 from .mock import MockBrain
-from .spatial import ER_MODEL, Spatial, gemini_key
+from .spatial import ER_MODEL, Spatial, byok, gemini_key, openai_key
 from .teach import Teacher
 from .demo import Demo
-from .tasks import REGIONS, Tasks, edit_skill, skills_meta
+from .tasks import REGIONS, Tasks, apply_surface, edit_skill, skills_meta
+from .world import packs as world_packs, profiles as world_profiles, scene as world_scene
+from .world.runtime import make_runtime
+from . import ext, i18n, physics, slicing
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
 IK_ITERS, IK_DT = 4, 1 / 120
+FRAME_TARGET = 0.40     # s: planning jobs keep a frame (render, physics, state, their slice) under this (pps/slicing.py)
+MAX_FPS = 60            # frames a second at most: nothing paces a synthetic person (no camera), and without pictures to
+                        # render the loop would spin a core at 100+ fps for nothing
 SIM_W, SIM_H = 640, 480
 ASPECT = SIM_W / SIM_H
+# The pictures the server streams, by first byte: your camera (0x01), the robot view (0x02), picture-in-picture (0x03).
+# A client says which it shows ({type: "hello" | "streams", streams: [...]}, default: all of them). The worker renders
+# and encodes only what some connected client shows: offscreen rendering is most of a frame on a machine without a GPU
+# (OSMesa: ~150 ms a frame on a 2-core CI runner), and nobody watching means nothing to draw.
+STREAMS = {"cam": b"\x01", "robot": b"\x02", "pip": b"\x03"}
 
 
 class Shared:
@@ -44,20 +63,40 @@ class Shared:
         self.lock = threading.Lock()
         self.cam = self.sim = self.pip = None
         self.phone = None          # (time, jpeg bytes) from a browser/phone camera
+        self.phone_ts = collections.deque(maxlen=64)   # arrival times of those frames (state.cam_in: fps)
+        self.phone_mobile = False  # the last sender was a phone / tablet (the /phone page or the app on a phone)
         self.state = "{}"
+        self.state_en = "{}"       # the same frame before localizing (pps/i18n.py): the agent reads English
         self.fid = 0
         self.cmds = []
         self.clients = set()
+        self.wants = {}            # ws -> the streams that client shows (STREAMS keys)
         self.running = True
+        self.scene = None          # (model, /scene.json payload, mesh key) of the current world, set by the worker
+        self.caps = ()             # current robot's capabilities (the upload endpoint checks imitate_video)
 
-    def put(self, cam, sim, state):
+    def put(self, cam, sim, state, pip=None):
+        """One frame: the state and the pictures rendered for it (None: nobody shows that stream)."""
         with self.lock:
-            self.cam, self.sim, self.state = cam, sim, state
+            self.cam, self.sim, self.pip, self.state = cam, sim, pip, state
             self.fid += 1
 
     def get(self):
         with self.lock:
-            return self.cam, self.sim, self.state, self.fid
+            return {"cam": self.cam, "robot": self.sim, "pip": self.pip}, self.state, self.fid
+
+    def want(self, ws, streams):
+        """{type: "hello" | "streams", streams: [...]}: what one client shows (unknown names are ignored)."""
+        with self.lock:
+            self.wants[ws] = {x for x in streams if x in STREAMS} if isinstance(streams, (list, tuple)) else set(STREAMS)
+
+    def wanted(self):
+        """The streams any connected client shows (a client that never said: all of them)."""
+        with self.lock:
+            out = set()
+            for ws in self.clients:
+                out |= self.wants.get(ws, set(STREAMS))
+            return out
 
     def push_cmd(self, c):
         with self.lock:
@@ -75,39 +114,61 @@ async def ws_handler(request):
     await ws.prepare(request)
     shared = request.app["shared"]
     shared.clients.add(ws)
+    mobile = bool(re.search(r"Android|iPhone|iPad|iPod|Mobile", request.headers.get("User-Agent", "")))
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
                 try:
-                    shared.push_cmd(json.loads(msg.data))
+                    c = json.loads(msg.data)
                 except ValueError:
-                    pass
+                    continue
+                if isinstance(c, dict) and c.get("type") in ("hello", "streams") and "streams" in c:
+                    shared.want(ws, c["streams"])      # per connection, so not a worker command
+                    if c["type"] == "streams":
+                        continue
+                shared.push_cmd(c)
             elif msg.type == WSMsgType.BINARY and msg.data[:1] == b"\x10":
                 shared.phone = (time.time(), msg.data[1:])
+                shared.phone_ts.append(shared.phone[0])
+                shared.phone_mobile = mobile
             elif msg.type == WSMsgType.ERROR:
                 break
     finally:
         shared.clients.discard(ws)
+        with shared.lock:
+            shared.wants.pop(ws, None)
     return ws
+
+
+async def _send_frame(shared, ws, msgs):
+    try:
+        for m in msgs:
+            await (ws.send_str(m) if isinstance(m, str) else ws.send_bytes(m))
+    except Exception:
+        shared.clients.discard(ws)
 
 
 async def broadcaster(shared):
     last = -1
+    sending = {}   # ws -> the task still sending it a frame
     while True:
         await asyncio.sleep(1 / 30)
-        cam, sim, state, fid = shared.get()
-        if fid == last or cam is None:
+        pics, state, fid = shared.get()
+        if fid == last:
             continue
         last = fid
+        pics = {k: STREAMS[k] + v for k, v in pics.items() if v is not None}
+        # Every client gets its own send task. A client that stops reading (a suspended phone tab, a page in the
+        # back/forward cache, a busy script) only skips frames until it reads again; it never holds up the others.
+        # (The websocket heartbeat closes the ones that never come back.)
         for ws in list(shared.clients):
-            try:
-                await ws.send_str(state)
-                await ws.send_bytes(b"\x01" + cam)
-                await ws.send_bytes(b"\x02" + sim)
-                if shared.pip is not None:
-                    await ws.send_bytes(b"\x03" + shared.pip)
-            except Exception:
-                shared.clients.discard(ws)
+            t = sending.get(ws)
+            if t is None or t.done():
+                want = shared.wants.get(ws, STREAMS)
+                msgs = (state,) + tuple(pics[k] for k in STREAMS if k in want and k in pics)
+                sending[ws] = asyncio.ensure_future(_send_frame(shared, ws, msgs))
+        for ws in [w for w, t in sending.items() if w not in shared.clients and t.done()]:
+            del sending[ws]
 
 
 async def upload(request):
@@ -117,6 +178,9 @@ async def upload(request):
         field = await reader.next()
     if field is None:
         return web.json_response({"ok": False, "message": "no 'video' field"}, status=400)
+    if "imitate_video" not in request.app["shared"].caps:
+        return web.json_response({"ok": False, "message": i18n.tr("Imitating a video needs a humanoid body (the Unitree G1). "
+                                                                  "Switch robots first.")}, status=409)
     from urllib.parse import unquote
     stem = "".join(ch for ch in Path(unquote(field.filename or "video")).stem.lower().replace(" ", "_") if ch.isalnum() or ch in "_-")[:28] or "video"
     ext = (Path(field.filename or "v.mp4").suffix or ".mp4").lower()
@@ -134,15 +198,68 @@ async def upload(request):
                 return web.json_response({"ok": False, "message": "video too large (300 MB max)"}, status=413)
             f.write(chunk)
     request.app["shared"].push_cmd({"type": "source", "path": str(path), "name": stem})
-    return web.json_response({"ok": True, "name": stem, "message": f"Imitating '{stem}'. It becomes a skill when the video ends."})
+    return web.json_response({"ok": True, "name": stem,
+                              "message": i18n.tr(f"Imitating '{stem}'. It becomes a skill when the video ends.")})
 
 
-def scene_payload(m):
+def scene_payload(m, world=None, key=None):
+    """/scene.json: every visible geom of the current world (+ the work surface, so the 3D view can raycast it)."""
+    if world is not None and not world.legacy:
+        out = world_payload(m, world, key)
+        if any(o.get("mesh") for o in world.spec["objects"]):   # objects imported from photos: vertex colours (pps/recon)
+            from .recon import sim as recon_sim
+            recon_sim.annotate_payload(m, out)
+    else:
+        out = legacy_payload(m)
+    s = world.surface if world is not None else world_scene.surface("table")
+    out["surface"] = {"z": s["top"], "x0": s["x"][0], "x1": s["x"][1], "y0": s["y"][0], "y1": s["y"][1]}
+    return out
+
+
+GEOM_KINDS = {int(k): v for k, v in {
+    mujoco.mjtGeom.mjGEOM_PLANE: "plane", mujoco.mjtGeom.mjGEOM_BOX: "box", mujoco.mjtGeom.mjGEOM_MESH: "mesh",
+    mujoco.mjtGeom.mjGEOM_CYLINDER: "cylinder", mujoco.mjtGeom.mjGEOM_SPHERE: "sphere",
+    mujoco.mjtGeom.mjGEOM_CAPSULE: "capsule", mujoco.mjtGeom.mjGEOM_ELLIPSOID: "ellipsoid"}.items()}
+
+
+def world_payload(m, world, key):
+    """Any robot / scene: visual geoms (groups 0-2, not the IK target ghosts); robot meshes are served per world."""
     geoms, meshes = [], {}
-    kinds = {mujoco.mjtGeom.mjGEOM_PLANE: "plane", mujoco.mjtGeom.mjGEOM_BOX: "box", mujoco.mjtGeom.mjGEOM_MESH: "mesh",
-             mujoco.mjtGeom.mjGEOM_CYLINDER: "cylinder", mujoco.mjtGeom.mjGEOM_SPHERE: "sphere",
-             mujoco.mjtGeom.mjGEOM_CAPSULE: "capsule", mujoco.mjtGeom.mjGEOM_ELLIPSOID: "ellipsoid"}
-    kinds = {int(k): v for k, v in kinds.items()}
+    d = mujoco.MjData(m)
+    if world.home_q is not None:
+        d.qpos[:len(world.home_q)] = world.home_q          # robot joints come first (physics: free objects follow)
+    mujoco.mj_forward(m, d)
+    helper = {b for b in range(m.nbody) if (mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or "").endswith("_target")}
+    for g in range(m.ngeom):
+        grp, typ, b = int(m.geom_group[g]), int(m.geom_type[g]), int(m.geom_bodyid[g])
+        if grp not in (0, 1, 2) or typ not in GEOM_KINDS or b in helper:
+            continue
+        rgba = m.geom_rgba[g].tolist()
+        mat = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_MATERIAL, m.geom_matid[g]) if m.geom_matid[g] >= 0 else None
+        if mat == "wood":
+            rgba = [0.66, 0.48, 0.31, 1.0]
+        elif mat == "pc_mug":
+            rgba = [0.70, 0.18, 0.20, 1.0]
+        elif mat is not None:
+            rgba = m.mat_rgba[m.geom_matid[g]].tolist()
+        if typ == int(mujoco.mjtGeom.mjGEOM_PLANE):
+            rgba = [0.92, 0.92, 0.94, 1.0]
+        if rgba[3] <= 0.01:
+            continue
+        name = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+        mid = int(m.geom_dataid[g]) if typ == int(mujoco.mjtGeom.mjGEOM_MESH) else None
+        if mid is not None:
+            meshes[str(mid)] = {"url": f"/mesh/{mid}.bin?w={key}"}
+        geoms.append({"id": int(g), "name": name, "kind": GEOM_KINDS[typ], "mesh": None if mid is None else str(mid),
+                      "size": [round(float(x), 5) for x in m.geom_size[g]], "rgba": [round(float(x), 3) for x in rgba],
+                      "pos": [round(float(x), 5) for x in d.geom_xpos[g]], "mat": [round(float(x), 6) for x in d.geom_xmat[g]],
+                      "dynamic": bool(b != 0)})
+    return {"geoms": geoms, "meshes": meshes, "world": key}
+
+
+def legacy_payload(m):
+    geoms, meshes = [], {}
+    kinds = GEOM_KINDS
     d = mujoco.MjData(m)
     mujoco.mj_forward(m, d)
     mug = m.body("mug").id
@@ -173,11 +290,18 @@ def scene_payload(m):
 
 
 async def scene_json(request):
-    return web.json_response(request.app["scene"])
+    cur = request.app["shared"].scene
+    return web.json_response(cur[1] if cur is not None else request.app["scene"])
 
 
 async def mesh_bin(request):
-    m = request.app["model"]
+    m = request.app["model"]                 # no ?w= key: the UX 2.0 world's meshes (cached by browsers for a day)
+    w = request.query.get("w")
+    if w:
+        cur = request.app["shared"].scene
+        if cur is None or cur[2] != w:
+            raise web.HTTPNotFound()         # a mesh of a world that's gone
+        m = cur[0]
     try:
         i = int(request.match_info["mid"])
         va, vn, fa, fn = m.mesh_vertadr[i], m.mesh_vertnum[i], m.mesh_faceadr[i], m.mesh_facenum[i]
@@ -186,7 +310,9 @@ async def mesh_bin(request):
     verts = np.ascontiguousarray(m.mesh_vert[va:va + vn], dtype="<f4")
     faces = np.ascontiguousarray(m.mesh_face[fa:fa + fn], dtype="<u4")
     body = np.array([vn, fn], dtype="<u4").tobytes() + verts.tobytes() + faces.tobytes()
-    return web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "max-age=3600"})
+    resp = web.Response(body=body, content_type="application/octet-stream", headers={"Cache-Control": "max-age=86400"})
+    resp.enable_compression()   # ~5 MB of meshes: compress for the public tunnel (upload bandwidth is the bottleneck)
+    return resp
 
 
 import certifi  # noqa: E402
@@ -252,39 +378,69 @@ async def gemini_rest_proxy(request):
 TTS_DIR = ROOT / "recordings" / "tts"
 
 
-def openai_key():
-    env = ROOT / ".env"
-    if env.exists():
-        for line in env.read_text().splitlines():
-            if line.startswith("OPENAI_API_KEY="):
-                return line.split("=", 1)[1].strip()
-    return None
+TTS_VOICES = {"alloy", "ash", "ballad", "coral", "echo", "fable", "nova", "onyx", "sage", "shimmer", "verse"}
+TTS_BAD_KEYS = set()   # sha1 of keys OpenAI rejected this run: don't ask again for every line
 
 
 async def tts_handler(request):
-    """OpenAI TTS with a disk cache; the browser plays the mp3 instead of the choppy built-in voice."""
+    """OpenAI TTS with a disk cache; the browser plays the mp3 instead of its built-in voice.
+    204 (not an error status) when there is no working key, so the browser falls back quietly to its own voice."""
     import hashlib
     text = (request.query.get("text") or "")[:600]
     voice = request.query.get("voice") or "coral"
-    if not text or not openai_key():
+    voice = voice if voice in TTS_VOICES else "coral"
+    if not text:
         raise web.HTTPNotFound()
     TTS_DIR.mkdir(parents=True, exist_ok=True)
     f = TTS_DIR / (hashlib.sha1((voice + "|" + text).encode()).hexdigest() + ".mp3")
+    # BYOK: the visitor's own key comes in a header; it is used for this one request and never stored or logged
+    key = (request.headers.get("X-OpenAI-Key") or "").strip() or openai_key()
+    kh = hashlib.sha1(key.encode()).hexdigest() if key else None
+    if not f.exists() and (not key or kh in TTS_BAD_KEYS):
+        return web.Response(status=204, headers={"X-TTS": "no-key" if not key else "key-rejected"})
     if not f.exists():
+        style = ("A friendly, natural humanoid robot assistant: warm, calm, clear and precise, at a relaxed conversational pace."
+                 if voice == "coral" else "A confident presenter giving a crisp product demo: warm and energetic.")
         body = {"model": "gpt-4o-mini-tts", "voice": voice, "input": text, "response_format": "mp3",
-                "instructions": "A friendly, natural humanoid robot assistant; calm, clear and precise." if voice == "coral"
-                else "A confident startup founder giving a crisp product demo; warm and energetic."}
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX)) as sess:
-            async with sess.post("https://api.openai.com/v1/audio/speech", json=body,
-                                 headers={"Authorization": "Bearer " + openai_key()}) as r:
-                if r.status != 200:
-                    raise web.HTTPBadGateway(text=(await r.text())[:200])
-                f.write_bytes(await r.read())
+                "instructions": style + " Speak in the language of the text (for Korean, natural standard Korean)."}
+        try:
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=SSL_CTX), timeout=aiohttp.ClientTimeout(total=30)) as sess:
+                async with sess.post("https://api.openai.com/v1/audio/speech", json=body,
+                                     headers={"Authorization": "Bearer " + key}) as r:
+                    if r.status != 200:
+                        if r.status in (401, 403):
+                            TTS_BAD_KEYS.add(kh)
+                        return web.Response(status=204, headers={"X-TTS": f"upstream-{r.status}"})
+                    f.write_bytes(await r.read())
+        except (aiohttp.ClientError, asyncio.TimeoutError):
+            return web.Response(status=204, headers={"X-TTS": "upstream-unreachable"})
     return web.FileResponse(f, headers={"Cache-Control": "max-age=86400", "Content-Type": "audio/mpeg"})
 
 
 async def index(request):
     return web.FileResponse(WEB / "index.html", headers={"Cache-Control": "no-store"})
+
+
+async def phone_page(request):
+    """A phone as the robot's camera: a light page that only streams the camera (web/phone.html)."""
+    return web.FileResponse(WEB / "phone.html", headers={"Cache-Control": "no-store"})
+
+
+async def phone_info(request):
+    """Where a phone should open /phone (the laptop shows it as a QR code). Phones only share a camera over https."""
+    a = request.app
+    return web.json_response({"ip": lan_ip(), "port": a["http_port"], "https_port": a["https_port"] or None,
+                              "url": f"https://{lan_ip()}:{a['https_port']}/phone" if a["https_port"] else None})
+
+
+def cam_in_state(shared, now=None):
+    """state.cam_in: a browser or phone camera streaming to this server (fps over the last 2 s), or None."""
+    now = time.time() if now is None else now
+    ts = [t for t in list(shared.phone_ts) if now - t < 2.0]
+    if not ts or now - ts[-1] > 1.0:
+        return None
+    fps = (len(ts) - 1) / max(1e-3, ts[-1] - ts[0]) if len(ts) > 1 else 1.0
+    return {"fps": round(fps, 1), "mobile": bool(shared.phone_mobile)}
 
 
 def lan_ip():
@@ -296,6 +452,12 @@ def lan_ip():
         return ip
     except OSError:
         return "127.0.0.1"
+
+
+async def ui_modules(request):
+    """Front-end feature modules (web/ui/*.js, core.js first) so features never edit index.html."""
+    names = sorted(p.name for p in (WEB / "ui").glob("*.js") if p.name != "core.js")
+    return web.json_response(["/static/ui/" + n for n in names])
 
 
 def ensure_cert():
@@ -322,6 +484,12 @@ def run_server(shared, port, https_port):
         app.router.add_post("/gemini/rest/{tail:.*}", gemini_rest_proxy)
         app.router.add_get("/scene.json", scene_json)
         app.router.add_get("/mesh/{mid}.bin", mesh_bin)
+        app.router.add_get("/ui/modules.json", ui_modules)
+        app.router.add_get("/phone", phone_page)
+        app.router.add_get("/phone/info", phone_info)
+        from .recon import http as recon_http        # real photos -> simulated objects and spaces (docs/RECON.md)
+        recon_http.add_routes(app)
+        app["http_port"], app["https_port"] = port, https_port
         sm = mujoco.MjModel.from_xml_path(str(ROOT / "assets" / "unitree_g1" / "scene_pc.xml"))
         app["model"], app["scene"] = sm, scene_payload(sm)
         app.router.add_static("/static", WEB)
@@ -329,7 +497,12 @@ def run_server(shared, port, https_port):
         await runner.setup()
         await web.TCPSite(runner, "0.0.0.0", port).start()
         if https_port:
-            await web.TCPSite(runner, "0.0.0.0", https_port, ssl_context=ensure_cert()).start()
+            try:
+                await web.TCPSite(runner, "0.0.0.0", https_port, ssl_context=ensure_cert()).start()
+            except (OSError, ssl.SSLError, subprocess.CalledProcessError) as e:   # no openssl / port taken: http still works
+                app["https_port"] = 0
+                print(f"  https on port {https_port} is off ({e}); phones need it for the camera. "
+                      "Install openssl or pick another --https-port.", flush=True)
         asyncio.create_task(broadcaster(shared))
         while True:
             await asyncio.sleep(3600)
@@ -338,9 +511,119 @@ def run_server(shared, port, https_port):
 
 
 # ------------------------------------------------------------------ worker (main thread: GL + camera)
+def world_target(c, world):
+    """{type:"world", op} -> (robot id, scene spec) to build, or raise ValueError."""
+    op = c.get("op", "set")
+    robot, spec = world.profile.id, copy.deepcopy(world.spec)
+    if op == "set":
+        if c.get("robot") is not None:
+            p = world_profiles.get(c.get("robot"))
+            if p is None:
+                raise ValueError(f"I don't know the robot '{c.get('robot')}'. I know: {', '.join(world_profiles.PROFILES)}.")
+            robot = p.id
+        if isinstance(c.get("scene"), dict):
+            spec = c["scene"]
+            if c.get("seed") is not None and world_scene.is_room(spec.get("template")):
+                spec = dict(spec, seed=c["seed"])
+        elif isinstance(c.get("template"), str) and world_scene.is_room(c["template"]):   # a generated world: fresh
+            spec = {"template": c["template"], "seed": c.get("seed", 0)}
+        elif isinstance(c.get("template"), str):
+            spec["template"] = c["template"]
+        elif c.get("seed") is not None and world_scene.is_room(spec.get("template")):     # shuffle: same world, new seed
+            spec = {"template": spec["template"], "seed": c["seed"]}
+        if world_scene.is_room(spec.get("template")) and spec.get("seed") is not None and \
+                spec.get("seed") != world.spec.get("seed") and isinstance(spec.get("fixtures"), list):
+            spec = {"template": spec["template"], "seed": spec["seed"]}                  # a new seed regenerates it
+    elif op == "add_object":
+        o = c.get("object") if isinstance(c.get("object"), dict) else {k: c[k] for k in ("name", "kind", "color", "size", "pos", "movable") if k in c}
+        if not o:
+            raise ValueError("add_object needs an object, e.g. {kind: 'cup', color: 'red'}.")
+        spec["objects"] = list(spec["objects"]) + [o]
+    elif op == "remove_object":
+        key = world_scene._slug(c.get("name"))
+        keep = [o for o in spec["objects"] if o["name"] != key]
+        if len(keep) == len(spec["objects"]):
+            keep = [o for o in spec["objects"] if key not in o["name"]] if key else keep
+        if len(keep) == len(spec["objects"]):
+            raise ValueError(f"There is no '{c.get('name')}' in the scene. Objects: {', '.join(o['name'] for o in spec['objects']) or 'none'}.")
+        spec["objects"] = keep
+    elif op == "reset":
+        robot, spec = world_profiles.DEFAULT_ROBOT, copy.deepcopy(world_scene.DEFAULT_SCENE)
+    elif op == "pack":                                   # P4 demo packs (pps/world/packs/): scene + body for one story
+        robot, spec = world_packs.target(c.get("name"), c.get("robot") or world.profile.id, c.get("seed"))
+    else:
+        raise ValueError(f"Unknown world op '{op}'. Use set, add_object, remove_object, pack or reset.")
+    return robot, spec
+
+
+def world_state(world, rev, tasks=None):
+    robot = world_profiles.physics_public(world.profile, world.physics)    # + what the physics can't do (yet)
+    out = {"rev": rev, "robot": robot, "scene": world.spec, "robots": world_profiles.listing(world.physics),
+           "templates": TEMPLATES[0], "surface": {"top": world.surface["top"], "x": list(world.surface["x"]),
+                                                  "y": list(world.surface["y"])},
+           "regions": {k: list(v) for k, v in world.regions.items()}, "notes": world.notes,
+           "packs": PACKS[0], "pack": world.spec.get("pack")}
+    fx = getattr(tasks, "fx", None) if tasks is not None else None
+    if fx is not None:                                 # issue #48: what opens (and how far), what holds things
+        out["fixtures"] = fx.state()
+        out["containers"] = container_state(tasks)
+        out["seed"] = world.spec.get("seed")
+    return out
+
+
+PACKS = [world_packs.listing()]                       # read once (the files ship with the code)
+TEMPLATES = [world_scene.templates()]
+_CONTAINERS = {"t": 0.0, "v": [], "id": None}
+
+
+def container_state(tasks):
+    """Containers and what is in each (refreshed twice a second: it tests every object against every box)."""
+    now = time.time()
+    if _CONTAINERS["id"] == id(tasks) and now - _CONTAINERS["t"] < 0.5:
+        return _CONTAINERS["v"]
+    fx, out = tasks.fx, []
+    for c in fx.containers:
+        g = tasks.guard_of(c)
+        e = {"name": c["name"], "label": c["label"], "kind": c.get("kind"), "objects": tasks.contents(c)}
+        if g is not None:
+            e["behind"] = g["name"]
+            e["open"] = round(fx.frac(g), 2)
+        out.append(e)
+    _CONTAINERS.update(t=now, v=out, id=id(tasks))
+    return out
+
+
+def world_message(world):
+    p = world.profile
+    objs = [o["name"].replace("_", " ") for o in world.spec["objects"]]
+    pack = world_packs.find(world.spec["pack"]) if world.spec.get("pack") else None
+    if pack:
+        msg = f"{pack.get('label')}: {p.label}" + (f" with a {p.tool['label']}" if p.tool else "") + f", {', '.join(objs)}."
+        if pack.get("physics"):
+            msg += " " + pack["physics"].split(".")[0] + "."
+    elif world_scene.is_room(world.spec["template"]):    # issue #48: a generated home / industrial site
+        room = world.spec.get("room") or {}
+        parts = [q["label"] for q in (world.fixtures.parts if world.fixtures else []) if q.get("handle")]
+        belts = [b["label"] for b in (world.fixtures.belts if world.fixtures else [])]
+        msg = (f"Now {p.label} in the {str(room.get('label') or world.spec['template']).lower()} (seed {world.spec.get('seed', 0)}): "
+               f"{len(objs)} objects, {len(parts)} things that open" + (f" ({', '.join(parts[:4])}{'…' if len(parts) > 4 else ''})" if parts else "")
+               + (f", {', '.join(belts)}" if belts else "") + ".")
+    else:
+        msg = f"Now {p.label} at the {world_scene.TEMPLATES[world.spec['template']]['label'].lower()}"
+        msg += f" with {', '.join(objs)}." if objs else ", nothing on it yet."
+    if p.experimental:
+        msg += " Experimental: " + p.note
+    if world.notes:
+        msg += " (" + "; ".join(world.notes) + ")"
+    return msg
+
+
 def worker(args, shared):
-    rt = Runtime(mirror=not args.no_mirror)
-    tasks = Tasks(rt)
+    world = world_scene.build(None, None)                # the UX 2.0 world: G1 + today's table (scene_pc.xml)
+    world_rev = [1]
+    apply_surface(world.surface, world.regions)
+    rt = make_runtime(world, mirror=not args.no_mirror)
+    tasks = Tasks(rt, {o["name"]: o["kind"] for o in world.spec["objects"]})
     spatial = Spatial()
     teacher = Teacher(tasks)
     TEACHER[0] = teacher
@@ -348,7 +631,12 @@ def worker(args, shared):
     brain.enabled = args.mock
     video_flag = [False]
     demo = Demo(tasks, teacher, brain, rt, push=shared.push_cmd, video_active=lambda: video_flag[0], er=lambda: spatial.er)
-    dyn_geoms = [g for g in range(rt.model.ngeom) if rt.model.geom_group[g] == 2 and rt.model.geom_bodyid[g] != 0]
+    ext.load()
+    ctx = ext.make_ctx(rt=rt, tasks=tasks, teacher=teacher, brain=brain, demo=demo, spatial=spatial, aspect=ASPECT, push=shared.push_cmd)
+    ctx.world = world
+    payload = scene_payload(rt.model, world, f"{world.profile.id}-{world_rev[0]}")
+    shared.scene, shared.caps = (rt.model, payload, f"{world.profile.id}-{world_rev[0]}"), tuple(rt.capabilities)
+    dyn_geoms = [gm["id"] for gm in payload["geoms"] if gm["dynamic"]]
     m, d = rt.model, rt.data
     renderer = mujoco.Renderer(m, SIM_H, SIM_W)
     pip_renderer = mujoco.Renderer(m, 300, 400)
@@ -368,6 +656,61 @@ def worker(args, shared):
     view = "robot"
     cam_params = None
 
+    def switch_world(robot, spec, tid="world"):
+        """Rebuild the world in place (robot and/or scene): runtime, tasks, teacher, demo, renderers, /scene.json."""
+        nonlocal world, rt, tasks, teacher, demo, m, d, renderer, pip_renderer, robot_cam, dyn_geoms, payload
+        if video_flag[0]:
+            tasks.set_task(tid, "world", "failed", "I'm imitating your video right now. Let it finish first.")
+            return False
+        try:
+            nw = world_scene.build(robot, spec)
+        except ValueError as e:
+            tasks.set_task(tid, "world", "failed", f"I couldn't build that world: {e}.")
+            return False
+        if demo.steps:
+            demo.stop()
+        apply_surface(nw.surface, nw.regions)
+        tasks.search = None                               # planning jobs in the old world end (pps/slicing.py)
+        old_job = (ctx.store.get("goal") or {}).get("job") if isinstance(ctx.store.get("goal"), dict) else None
+        if old_job is not None:
+            old_job.cancel()
+        old_keepout = tasks.keepout
+        world, world_rev[0] = nw, world_rev[0] + 1
+        rt = make_runtime(nw, mirror=not args.no_mirror)
+        tasks = Tasks(rt, {o["name"]: o["kind"] for o in nw.spec["objects"]})
+        tasks.keepout = old_keepout                       # the zones feature's hook keeps working (zones are cleared below)
+        teacher = Teacher(tasks)
+        TEACHER[0] = teacher
+        demo = Demo(tasks, teacher, brain, rt, push=shared.push_cmd, video_active=lambda: video_flag[0], er=lambda: spatial.er)
+        ctx.rt, ctx.tasks, ctx.teacher, ctx.demo, ctx.world = rt, tasks, teacher, demo, nw
+        for k in ("zones",):                              # scene-bound feature state: positions of the old world
+            if isinstance(ctx.store.get(k), list):
+                ctx.store[k].clear()
+        for k in ("plan", "choices"):
+            ctx.store.pop(k, None)
+        if isinstance(ctx.store.get("goal"), dict):
+            ctx.store.pop("goal", None)
+        m, d = rt.model, rt.data
+        renderer.close()
+        pip_renderer.close()
+        renderer = mujoco.Renderer(m, SIM_H, SIM_W)
+        pip_renderer = mujoco.Renderer(m, 300, 400)
+        robot_cam = m.camera("robot_view").id
+        key = f"{nw.profile.id}-{world_rev[0]}"
+        payload = scene_payload(m, nw, key)
+        shared.scene, shared.caps = (m, payload, key), tuple(rt.capabilities)
+        dyn_geoms = [gm["id"] for gm in payload["geoms"] if gm["dynamic"]]
+        tasks.set_task(tid, "world", "done", world_message(nw))
+        return True
+
+    def lacks(cap, tid, action, what):
+        """Humanoid-only features on other bodies: a clear refusal instead of a broken attempt."""
+        if cap in rt.capabilities:
+            return False
+        tasks.set_task(tid, action, "failed", f"{what} needs a humanoid body: the {world.profile.label} can't do that. "
+                       "Switch to the Unitree G1 for it.")
+        return True
+
     pose = None if args.fake else Pose(str(ROOT / args.model))
     objects = Objects(str(ROOT / args.objects_model)) if (args.objects and not args.fake) else None
     cap, video_dt, source = None, 0.0, "synthetic"
@@ -381,17 +724,52 @@ def worker(args, shared):
         source = "webcam"
 
     sim_jpg_last = [None]
-    robot_choice = ["g1"]
+
+    def render_view():
+        """The robot view (robot eye / orbit / stage, with overlays) as a JPEG, from the scene update_scene() made."""
+        renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+        renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+        rt.paint_overlays(renderer.scene, reset=False)
+        ext.paint_overlays(ctx, renderer.scene)
+        jpg = cv2.imencode(".jpg", cv2.cvtColor(renderer.render(), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82])[1].tobytes()
+        sim_jpg_last[0] = jpg
+        return jpg
     video_job = None   # {"name", "frames", "i", "prev_cap", "prev_dt", "prev_source", "prev_view"}
     grip_hist = {"l": [], "r": []}
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
-    t_phys = time.time()
+    t_phys = t_put = time.time()
+    # frame times (state.perf): planning jobs (pps/slicing.py) get what is left of FRAME_TARGET after the rest of a frame
+    # (rendering, physics, state) and after how far a slice may run past its budget (stretch: a busy machine keeps the
+    # planner's thread waiting for a CPU), so a long plan never stalls the stream; {type: "perf", op: "reset"} restarts
+    # the maxima
+    perf = {"last_ms": 0.0, "max_ms": 0.0, "plan_ms": 0.0, "plan_max_ms": 0.0, "plan_frame_max_ms": 0.0, "plan_stalls": 0,
+            "rest_ms": 100.0, "stretch_ms": 0.0, "budget_ms": 0.0, "frames": 0, "since": time.time()}
+    t_top = None
     ip = lan_ip()
-    print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}\n  phone : http://{ip}:{args.port}"
-          + (f"   (mic/camera on phone: https://{ip}:{args.https_port}, accept the certificate warning)" if args.https else ""),
-          flush=True)
+    if args.https:
+        print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}   (or https://127.0.0.1:{args.https_port})"
+              f"\n  LAN   : https://{ip}:{args.https_port}   (self-signed certificate: accept the warning once)"
+              f"\n  phone camera: https://{ip}:{args.https_port}/phone   (or scan the QR code: camera menu -> Use my phone)"
+              f"\n  Quest : https://{ip}:{args.https_port} in the Meta Quest browser -> Enter VR / Enter MR (docs/vr.md)",
+              flush=True)
+    else:
+        print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}\n  LAN   : http://{ip}:{args.port}"
+              "   (phones need https for the camera and mic: add --https, as `make run` does)", flush=True)
 
     while shared.running:
+        now = time.time()
+        if t_top is not None:                     # the last frame, and how much of it went to planning
+            fdt, pdt = (now - t_top) * 1000, slicing.used() * 1000
+            perf["rest_ms"] = max(fdt - pdt, perf["rest_ms"] * 0.95)   # (the recent worst, decaying: budgets err short)
+            perf.update(last_ms=fdt, plan_ms=pdt, max_ms=max(perf["max_ms"], fdt), plan_max_ms=max(perf["plan_max_ms"], pdt),
+                        frames=perf["frames"] + 1)
+            if pdt > 0:                           # frames planning ran in: the longest, and how many it pushed past 0.5 s
+                perf["plan_frame_max_ms"] = max(perf["plan_frame_max_ms"], fdt)
+                perf["plan_stalls"] += int(fdt >= 500.0 > fdt - pdt)
+        t_top = now
+        perf["stretch_ms"] = slicing.stretch() * 1000
+        perf["budget_ms"] = float(np.clip(FRAME_TARGET * 1000 - perf["rest_ms"] - perf["stretch_ms"], 10.0, 250.0))
+        slicing.new_frame(perf["budget_ms"] / 1000)
         # ---------------- your camera (a phone/browser camera wins while it streams)
         phone = shared.phone if (shared.phone and time.time() - shared.phone[0] < 1.0 and video_job is None) else None
         if phone is not None:
@@ -468,22 +846,42 @@ def worker(args, shared):
         rt.last_context = {"holding": hold, "scene": sorted({o[0] for o in scene}), "source": source}
 
         # ---------------- intents from the browser
+        ctx.cam_params, ctx.frame, ctx.view = cam_params, frame, view
+        ctx.lm, ctx.pts, ctx.source = lm, pts, source   # pose landmarks for features (gestures)
+        ctx.dispatch = lambda msg, _cp=cam_params: dispatch(tasks, rt, msg, _cp)
         for c in shared.pop_cmds():
             t = c.get("type")
             try:
-                if t == "tap" and cam_params is not None:
+                if t in ext.HANDLERS:
+                    ext.handle(ctx, c)
+                elif t == "tap" and cam_params is not None:
                     hit = tasks.raycast(cam_params, float(c["u"]), float(c["v"]), ASPECT)
                     if hit is not None:
                         mid = tasks.add_marker(hit)
                         rt.path_msg = f"Marker {mid} placed. Say 'put the mug on {mid}'."
                     else:
                         rt.path_msg = "That tap missed the scene."
+                elif t == "physics":
+                    physics_msg(rt, tasks, c)
+                elif t == "perf":                 # frame-time probe (scripts/checks/stalls.py): restart the maxima
+                    perf.update(max_ms=0.0, plan_max_ms=0.0, plan_frame_max_ms=0.0, plan_stalls=0, frames=0, since=time.time())
+                elif t == "world":
+                    try:
+                        robot, spec = world_target(c, world)
+                    except ValueError as e:
+                        tasks.set_task(str(c.get("id", "world")), "world", "failed", str(e))
+                        continue
+                    switch_world(robot, spec, str(c.get("id", "world")))
+                elif t == "teach" and c.get("cmd") == "start" and lacks("teach_by_showing", "teach", "teach", "Teaching by showing"):
+                    continue
                 elif t == "teach":
                     cmd = c.get("cmd")
                     if cmd == "start":
                         teacher.start()
                         brain.utter("I'm watching. Show me the task and tell me what you're doing.", "robot")
                     elif cmd == "utterance":
+                        if demo.steps:                    # the person is speaking: a running scripted demo stops
+                            demo.stop()
                         if teacher.phase == "recording":
                             teacher.utter(c.get("text"))
                         elif teacher.phase in ("confirm", "done"):
@@ -503,26 +901,38 @@ def worker(args, shared):
                 elif t == "demo":
                     if c.get("name") == "stop":
                         demo.stop()
+                    elif not world.legacy:
+                        tasks.set_task("demo", "demo", "failed", "The scripted demos run in the default world (the G1 at the "
+                                       "wooden table). Reset the world first.")
                     else:
-                        brain.enabled = True
-                        demo.start(c.get("name", "full"))
-                elif t == "robot":
-                    robot_choice[0] = "ur5e" if c.get("name") == "ur5e" else "g1"
-                    if robot_choice[0] == "ur5e":
+                        demo.start(c.get("name", "full"))   # (turns the mock brain on while it runs)
+                elif t == "robot":   # UX 2.0 robot switch: now a real switch of the body (the scene stays)
+                    p = world_profiles.get(c.get("name")) or world_profiles.get("g1")
+                    verdict = ""
+                    if p.id == "ur5e" and world.profile.id != "ur5e":   # first compile what this body just did for the arm
                         dispatch(tasks, rt, {"type": "task", "id": f"robot-{time.time():.0f}", "action": "compile_for", "robot": "ur5e"}, cam_params)
-                        brain.utter("Same task, different body: " + (tasks.task or {}).get("message", ""), "robot")
+                        verdict, vstatus = (tasks.task or {}).get("message", ""), (tasks.task or {}).get("status", "done")
+                    if p.id != world.profile.id:
+                        tid = f"robot-{time.time():.0f}"
+                        if switch_world(p.id, world.spec, tid) and verdict:
+                            tasks.set_task(tid, "compile_for", vstatus, f"{verdict} {tasks.task['message']}")
+                    if verdict:
+                        brain.utter("Same task, different body: " + verdict, "robot")
                 elif t == "spatial_model":
                     spatial.set_model(c.get("name"))
                 elif t == "spatial":
                     if c.get("target") == "robot":
+                        if "robot" not in shared.wanted():    # nobody watches it, so it isn't rendered every frame
+                            render_view()
                         spatial.ask_er(cv2.imdecode(np.frombuffer(sim_jpg_last[0], np.uint8), cv2.IMREAD_COLOR) if sim_jpg_last[0] else frame,
-                                       "robot", c.get("query"))
+                                       "robot", c.get("query"), key=c.get("key"))
                     else:
-                        spatial.ask_er(frame, "camera", c.get("query"), mirrored=True)
+                        spatial.ask_er(frame, "camera", c.get("query"), mirrored=True, key=c.get("key"))
                 elif t == "path3d":
                     tasks.set_path_world(c.get("points") or [], c.get("hand") if c.get("hand") in ("left", "right") else None)
                 elif t == "mock":
                     brain.enabled = bool(c.get("enabled"))
+                    demo.mock0 = None                       # the person's choice stays after a running demo ends
                     if tasks.task:
                         brain._last_task = (tasks.task.get("id"), tasks.task.get("status"))
                     if brain.enabled:
@@ -536,6 +946,8 @@ def worker(args, shared):
                     rt.path_msg = None
                 elif t == "view":
                     view = c.get("name") if c.get("name") in ("robot", "orbit", "stage") else "robot"
+                elif t == "source" and lacks("imitate_video", "video", "video", "Imitating a video"):
+                    continue
                 elif t == "source":
                     vc = cv2.VideoCapture(c["path"])
                     if not vc.isOpened():
@@ -562,16 +974,17 @@ def worker(args, shared):
                     tasks.follow_me("video", True)
                     tasks.set_task("video", "video", "running", f"Imitating '{video_job['name']}' from your video, whole body.")
                 elif t == "camera":
-                    if view == "stage":
-                        stage.azimuth += float(c.get("dazimuth", 0.0))
-                        stage.elevation = float(np.clip(stage.elevation + float(c.get("delevation", 0.0)), -85, 10))
-                        stage.distance = float(np.clip(stage.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
-                        continue
-                    orbit.azimuth += float(c.get("dazimuth", 0.0))
-                    orbit.elevation = float(np.clip(orbit.elevation + float(c.get("delevation", 0.0)), -85, 10))
-                    orbit.distance = float(np.clip(orbit.distance * float(c.get("zoom", 1.0)), 0.8, 6.0))
+                    # zoom: a proportional factor per message (the browser sums wheel deltas); same range as the 3D stage
+                    cam_ = stage if view == "stage" else orbit
+                    cam_.azimuth += float(c.get("dazimuth", 0.0))
+                    cam_.elevation = float(np.clip(cam_.elevation + float(c.get("delevation", 0.0)), -85, 10))
+                    zf = float(np.clip(float(c.get("zoom", 1.0) or 1.0), 0.25, 4.0))
+                    cam_.distance = float(np.clip(cam_.distance * zf, 0.35, 8.0))
                 elif t == "task":
-                    dispatch(tasks, rt, c, cam_params)
+                    if demo.steps and c.get("utterance"):   # said by the person (the browser attaches their words):
+                        demo.stop()                         # a running scripted demo stops
+                    if not ext.intercept_task(ctx, c):
+                        dispatch(tasks, rt, c, cam_params)
             except Exception as e:  # never let one bad intent kill the loop
                 tasks.set_task(c.get("id", "?"), c.get("action", t), "failed", f"Internal error: {e}")
 
@@ -579,17 +992,25 @@ def worker(args, shared):
         now = time.time()
         dt = float(np.clip(now - t_phys, 1 / 240, 1 / 12)) / IK_ITERS
         t_phys = now
+        if rt.plant is not None:                 # the plant may use ~40 % of a frame; heavier models run slower (rtf < 1)
+            rt.plant.budget(0.4 / max(fps, 10.0) / IK_ITERS)
+            dt = min(dt, rt.plant.sub_cap * physics.DT)   # plan and plant share one clock: under load the plan must not
+                                                          # run ahead of what the plant could simulate (grasps slip)
         for _ in range(IK_ITERS):
             rt.step(dt)
             tasks.tick()
         teacher.observe(pts if lm else None, grip, [o[0] for o in scene])
         teacher.tick()
         demo.tick()
-        brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None or bool(demo.steps)))
-        if not demo.steps:
+        ext.run_ticks(ctx)
+        brain.update(lm, rt, tasks, busy=(teacher.phase == "recording" or video_job is not None or bool(demo.steps)
+                                          or source == "synthetic"))   # no camera: the synthetic dancer is not a person gesturing
+        if not demo.steps and not ctx.store.get("llm_brain"):   # the real agent speaks for itself
             brain.narrate(tasks.task)
 
-        # ---------------- robot view
+        # ---------------- robot view (the camera always: taps and strokes are raycast through it; the pictures only for
+        # the streams some client shows, see STREAMS)
+        want = shared.wanted()
         rt.paint_model()
         if view == "robot":
             renderer.update_scene(d, camera=robot_cam)
@@ -600,23 +1021,21 @@ def worker(args, shared):
         gl = renderer.scene.camera[0]
         fwd, up = np.array(gl.forward, float), np.array(gl.up, float)
         cam_params = (np.array(gl.pos, float), fwd / np.linalg.norm(fwd), up / np.linalg.norm(up), fovy)
-        renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
-        renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
-        rt.paint_overlays(renderer.scene, reset=False)
-        sim = renderer.render()
-        sim_jpg = cv2.imencode(".jpg", cv2.cvtColor(sim, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 82])[1].tobytes()
-        sim_jpg_last[0] = sim_jpg
-        # picture-in-picture: the whole robot when the main view is its eye, otherwise the robot's eye
-        if view == "robot":
-            pip_renderer.update_scene(d, full)
-        else:
-            pip_renderer.update_scene(d, camera=robot_cam)
-        pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
-        pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
-        rt.paint_overlays(pip_renderer.scene, reset=False)
-        shared.pip = cv2.imencode(".jpg", cv2.cvtColor(pip_renderer.render(), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 78])[1].tobytes()
-        shown = cv2.resize(cv2.flip(frame, 1), (960, 540))
-        cam_jpg = cv2.imencode(".jpg", shown, [cv2.IMWRITE_JPEG_QUALITY, 72])[1].tobytes()
+        sim_jpg = render_view() if "robot" in want else None
+        pip_jpg = cam_jpg = None
+        if "pip" in want:   # picture-in-picture: the whole robot when the main view is its eye, otherwise the robot's eye
+            if view == "robot":
+                pip_renderer.update_scene(d, full)
+            else:
+                pip_renderer.update_scene(d, camera=robot_cam)
+            pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+            pip_renderer.scene.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+            rt.paint_overlays(pip_renderer.scene, reset=False)
+            ext.paint_overlays(ctx, pip_renderer.scene)
+            pip_jpg = cv2.imencode(".jpg", cv2.cvtColor(pip_renderer.render(), cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 78])[1].tobytes()
+        if "cam" in want:
+            shown = cv2.resize(cv2.flip(frame, 1), (960, 540))
+            cam_jpg = cv2.imencode(".jpg", shown, [cv2.IMWRITE_JPEG_QUALITY, 72])[1].tobytes()
 
         n += 1
         if n % 10 == 0:
@@ -627,17 +1046,38 @@ def worker(args, shared):
         st["teach"] = teacher.state()
         st["demo"] = demo.state()
         video_flag[0] = video_job is not None
-        st["robot"] = robot_choice[0]
-        st["robots"] = [{"id": "g1", "label": "Unitree G1 humanoid"}, {"id": "ur5e", "label": "UR5e arm (compile + reach check)"}]
+        st["robot"] = world.profile.id                     # UX 2.0 aliases of state.world
+        st["robots"] = world_profiles.listing(world.physics)
+        st["world"] = world_state(world, world_rev[0], tasks)
+        if st["world"].get("containers"):               # issue #48: which container each object is in
+            inmap = {o: c["name"] for c in st["world"]["containers"] for o in c["objects"]}
+            for so in st["scene_objects"]:
+                k = so["name"].replace(" ", "_")
+                if k in inmap:
+                    so["in"] = inmap[k]
         st["spatial"] = spatial.state()
         st["server_gemini"] = gemini_key() is not None
+        st["tts_server"] = openai_key() is not None     # the natural voice works without a browser key
+        st["byok"] = byok()
+        st["cam_in"] = cam_in_state(shared)
         st["geom_poses"] = {str(g): [round(float(x), 4) for x in d.geom_xpos[g]] + [round(float(x), 4) for x in d.geom_xmat[g]] for g in dyn_geoms}
+        st["physics"] = physics_state(rt, tasks)
+        st["perf"] = {k: (round(v, 1) if k != "since" else round(time.time() - v, 1)) for k, v in perf.items()}
         if st["path"] is not None:
             st["path"]["pts"] = [[round(float(x), 3) for x in p] for p in rt.path["pts"]]
+        st.update(ext.extra_state(ctx))
         st["video"] = None if video_job is None else {"name": video_job["name"], "progress": round(min(1.0, video_job["i"] / max(1, video_job["max_frames"])), 3)}
-        shared.put(cam_jpg, sim_jpg, json.dumps(st))
+        raw = json.dumps(st)
+        shared.state_en = raw
+        if i18n.get_lang() != "en":                      # messages in the person's language (copy on write)
+            raw = json.dumps(i18n.localize(st))
+        shared.put(cam_jpg, sim_jpg, raw, pip_jpg)
         if args.frames and n >= args.frames:
             shared.running = False
+        spare = t_put + 1.0 / MAX_FPS - time.time()
+        if spare > 0:
+            time.sleep(spare)
+        t_put = time.time()
     if cap is not None:
         cap.release()
 
@@ -645,15 +1085,101 @@ def worker(args, shared):
 TEACHER = [None]
 
 
+def physics_state(rt, tasks):
+    """state.physics (docs/V1.md P0)."""
+    held = {("left" if h.startswith("left") else "right"): o for h, o in tasks.holding.items()}
+    return rt.plant.state() if rt.plant is not None else physics.kinematic_state(held)
+
+
+def physics_msg(rt, tasks, c):
+    """{type: "physics", op: "set" | "reset" | "drop" | "place", params?, object?, height?, pos?}: plant parameters at run time."""
+    tid, op = str(c.get("id", "physics")), c.get("op", "set")
+    pl = rt.plant
+    quiet = c.get("id") is None and (tasks.task or {}).get("status") in ("running", "planning")
+
+    def report(status, message):          # a request without an id (P4 spotting) must not overwrite the running task's line
+        if not quiet:
+            tasks.set_task(tid, "physics", status, message)
+
+    if pl is None:
+        report("failed", "Physics is off (kinematic mode): restart without --kinematic / PC_PHYSICS=0.")
+        return
+    if op == "reset":
+        pl.reset_params()
+        report("done", "Physics back to the defaults.")
+    elif op == "set":
+        params = c.get("params") if isinstance(c.get("params"), dict) else {}
+        unknown = sorted(k for k in params if k not in physics.DEFAULTS)
+        try:
+            p = pl.set_params(params)
+        except (TypeError, ValueError):
+            report("failed", "Physics parameters must be numbers (impedance: true/false).")
+            return
+        shown = ", ".join(f"{k} {p[k]:g}" if not isinstance(p[k], bool) else f"{k} {'on' if p[k] else 'off'}" for k in params if k in p)
+        report("done", f"Physics: {shown or 'nothing changed'}." + (f" Unknown: {', '.join(unknown)}." if unknown else ""))
+    elif op == "drop":                    # a test probe: lift an object by `height` (m) and let it fall
+        name = tasks.obj_name(c.get("object")) if c.get("object") else tasks.cur
+        if name not in pl.objects:
+            report("failed", f"I can't find '{c.get('object')}' to drop.")
+            return
+        p = tasks.obj_pos(name) + np.array([0, 0, float(np.clip(float(c.get("height", 0.1)), 0.0, 0.5))])
+        tasks.set_obj_pose(name, p)
+        report("done", f"Dropped {tasks.pretty(name)} from {float(c.get('height', 0.1)) * 100:.0f} cm.")
+    elif op == "place":                   # a test probe: set an object down at rest at [x, y] (as if the person moved it)
+        name = tasks.obj_name(c.get("object")) if c.get("object") else None
+        try:
+            xy = [float(v) for v in (c.get("pos") or [])[:2]]
+        except (TypeError, ValueError):
+            xy = []
+        if name not in pl.objects or len(xy) != 2:
+            report("failed", "Say which object and where: {object, pos: [x, y]}.")
+            return
+        p = tasks.obj_pos(name)
+        p[0], p[1] = xy
+        tasks.set_obj_pose(name, p)
+        report("done", f"Put {tasks.pretty(name)} at ({xy[0]:.2f}, {xy[1]:.2f}).")
+    else:
+        report("failed", f"Unknown physics op '{op}'. Use set, reset, drop or place.")
+
+
 def SKILL_FILE(key):
     from .tasks import SKILL_DIR
     return SKILL_DIR / f"{key}.json"
 
 
+HUMANOID_ONLY = {"follow_me": ("follow_me", "Following you"), "learn_skill": ("follow_me", "Learning a motion skill"),
+                 "edit_skill": ("follow_me", "Editing a motion skill")}
+
+
 def dispatch(tasks, rt, c, cam):
     tid, a = str(c.get("id", "t?")), c.get("action")
+    caps = getattr(rt, "capabilities", ())
+    need = HUMANOID_ONLY.get(a)
+    if a == "play_skill":
+        key = str(c.get("name") or "").strip().lower().replace(" ", "_")
+        f = SKILL_FILE(key)
+        taught = f.exists() and json.load(open(f)).get("type") == "task"
+        need = ("teach_by_showing", "Replaying a task taught by showing") if taught else ("follow_me", "Replaying a motion skill")
+    if need and need[0] not in caps and not (a == "follow_me" and not c.get("enabled", True)):
+        label = getattr(getattr(rt, "profile", None), "label", "this robot")
+        tasks.set_task(tid, a, "failed", f"{need[1]} needs a humanoid body: the {label} can't do that. Switch to the Unitree G1 for it.")
+        return
     if a == "pick_place":
-        tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT)
+        tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT, sliced=True)
+    elif a == "handover":                         # between a two-armed robot's hands (to the person: pps/features/copresence.py)
+        tasks.handover_arms(tid, c.get("object"), c.get("to"), c.get("target"), cam, ASPECT)
+    elif a == "press":
+        tasks.press(tid, c.get("target"), c.get("target_uv"), cam, ASPECT, c.get("force", 10.0), c.get("hold_s", 1.5))
+    elif a in ("open", "close"):                  # issue #48: drawers, doors, lids (pps/manip.py)
+        tasks.operate(tid, a, c.get("fixture") or c.get("target") or c.get("object") or "", c.get("amount"), sliced=True)
+    elif a == "pick_from":                        # (planned across frames: pps/slicing.py)
+        tasks.run_sliced(tid, a, lambda: tasks.pick_from(tid, c.get("container") or c.get("target") or "", c.get("object")),
+                         "Checking reach for every waypoint.")
+    elif a == "place_in":
+        tasks.run_sliced(tid, a, lambda: tasks.place_in(tid, c.get("object"), c.get("container") or c.get("target") or ""),
+                         "Checking reach for every waypoint.")
+    elif a in ext.ACTIONS:                         # task actions a feature registers (e.g. "sequence": plan_steps)
+        ext.ACTIONS[a](c)
     elif a == "reach":
         tasks.reach(tid, c.get("target"), c.get("target_uv"), cam, ASPECT)
     elif a == "follow_path":
@@ -693,6 +1219,8 @@ def dispatch(tasks, rt, c, cam):
         tasks.set_task(tid, a, "planning", "Compiling for UR5e.")
         r = compile_ur5e(pts)
         tasks.set_task(tid, a, "done" if r["ok"] else "failed", r["message"])
+    elif a == "drive":
+        tasks.drive(tid, c.get("dx", 0.0), c.get("dy", 0.0), c.get("dyaw", 0.0))
     elif a == "stop":
         tasks.stop(tid)
     elif a == "home":
@@ -712,6 +1240,8 @@ def dispatch(tasks, rt, c, cam):
 def public_mode(rt, tasks):
     if rt.mode == "FOLLOW":
         return "TASK" if tasks.kind == "task" else "PATH"
+    if rt.mode == "PRESS":                       # physics: the force loop holds the hand on a surface
+        return "TASK"
     if rt.mode == "PREVIEW":
         return "PREVIEW"
     if rt.engaged and rt.mode in ("MIRROR", "REC"):
@@ -757,6 +1287,7 @@ def state(rt, tasks, view, cam, fps, source, pts, lm, scene, grip, hold):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--webcam", action="store_true", help="open this computer's webcam (off by default)")
+    ap.add_argument("--byok", action="store_true", help="public deployment: never use the server's API keys; visitors bring their own")
     ap.add_argument("--camera", type=int, default=0)
     ap.add_argument("--video", help="video file instead of the webcam (e.g. a dance clip)")
     ap.add_argument("--objects", action="store_true", help="detect objects in your camera for context")
@@ -769,7 +1300,15 @@ def main():
     ap.add_argument("--port", type=int, default=8777)
     ap.add_argument("--https-port", type=int, default=8443)
     ap.add_argument("--frames", type=int, default=0, help="exit after N frames (testing)")
+    ap.add_argument("--safety-config", help="JSON overrides of the safety distances (pps/safety.py Config; clamped, never off)")
+    ap.add_argument("--kinematic", action="store_true", help="no physics: IK poses the robot, picked objects ride the hand (PC_PHYSICS=0)")
     args = ap.parse_args()
+    if args.safety_config:
+        os.environ["PC_SAFETY_CONFIG"] = args.safety_config
+    if args.byok:
+        os.environ["PC_BYOK"] = "1"
+    if args.kinematic:
+        os.environ["PC_PHYSICS"] = "0"
     shared = Shared()
     threading.Thread(target=run_server, args=(shared, args.port, args.https_port if args.https else 0), daemon=True).start()
     try:

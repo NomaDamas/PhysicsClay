@@ -1,0 +1,17 @@
+{
+  "label": "UR5e",
+  "kind": "arm",
+  "tagline": "Industrial 6-joint arm: runs the same tasks you taught the humanoid.",
+  "examples": [
+    "Sort the blocks: red on the left, green on the right",
+    "Put the can in the box",
+    "Move the mug to marker B",
+    "Run the skill I taught the G1"
+  ],
+  "tools": [
+    "point",
+    "zone",
+    "goal",
+    "path"
+  ]
+}

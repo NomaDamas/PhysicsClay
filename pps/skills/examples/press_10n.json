@@ -1,0 +1,3 @@
+{"version": 1, "name": "press_10n", "kind": "press",
+ "params": {"target": null, "force": 10.0, "hold_s": 1.5},
+ "created": 1762732800.0, "source": {"demo": null, "note": "example"}, "measured": {}, "notes": []}

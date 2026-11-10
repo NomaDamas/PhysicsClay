@@ -9,7 +9,6 @@ import base64
 import json
 import os
 import subprocess
-import sys
 import time
 import urllib.request
 from pathlib import Path
@@ -49,6 +48,7 @@ def tts(text, voice, name, instructions=None):
     req = urllib.request.Request("https://api.openai.com/v1/audio/speech", data=json.dumps(body).encode(),
                                  headers={"Authorization": "Bearer " + env("OPENAI_API_KEY"), "Content-Type": "application/json"})
     import ssl
+
     import certifi
     with urllib.request.urlopen(req, timeout=60, context=ssl.create_default_context(cafile=certifi.where())) as r:
         path.write_bytes(r.read())

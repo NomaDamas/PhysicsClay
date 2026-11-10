@@ -1,0 +1,40 @@
+name: Feature request
+description: Suggest a feature, a robot, a scene or an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What do you want to do?
+      description: The task or situation, in the user's words. What is hard or impossible today?
+      placeholder: I want to show the robot a wiping motion with my hand and have it wipe the table the same way, with gentle force.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How it could work. Messages, state keys, UI and the robots it applies to, if you have ideas.
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind
+      options:
+        - New feature (server and/or UI)
+        - New robot
+        - New scene template / object kind
+        - Improvement to an existing feature
+        - Docs / developer experience
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to implement this myself (see CONTRIBUTING.md → Extension points).

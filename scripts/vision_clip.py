@@ -34,8 +34,8 @@ def main():
     ap.add_argument("--seconds", type=float, default=10)
     ap.add_argument("--er", action="store_true")
     args = ap.parse_args()
-    from ultralytics import SAM, YOLO
     import torch
+    from ultralytics import SAM, YOLO
     torch.set_num_threads(4)
     yolo = YOLO(str(ROOT / "models" / "yolo11n-seg.pt"))
     sam = SAM(str(ROOT / "models" / "sam2.1_t.pt"))
@@ -89,13 +89,7 @@ def main():
         if er_pts is None and n > fps * 2 and "--er" in sys.argv:
             sp = Spatial.__new__(Spatial)
             sp._busy_er, sp.er = False, None
-            import threading
-            done = threading.Event()
-            orig = Spatial.ask_er
-
-            def run():
-                sp.ask_er(img.copy(), "camera", "Point to the person's hands, head, and any object they interact with.")
-            run()
+            sp.ask_er(img.copy(), "camera", "Point to the person's hands, head, and any object they interact with.")
             for _ in range(60):
                 if sp.er is not None:
                     break

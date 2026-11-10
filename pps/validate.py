@@ -33,8 +33,10 @@ def pretty(name):
 
 
 class Validator:
-    def __init__(self, model, data, reach_tol=0.06, limit_margin=0.035, vmax=4.0, coll_dist=0.015, hist=60):
+    def __init__(self, model, data, reach_tol=0.06, limit_margin=0.035, vmax=4.0, coll_dist=0.015, hist=60, root_body=1,
+                 palm_sites=None):
         self.model, self.data = model, data
+        self.root_body = root_body
         self.reach_tol, self.limit_margin, self.vmax, self.coll_dist = reach_tol, limit_margin, vmax, coll_dist
         self.hist = collections.deque(maxlen=hist)
         self.joint_ids = [model.joint(n).id for n in ARM_JOINTS]
@@ -46,7 +48,7 @@ class Validator:
                 self.pairs.append((model.geom(a).id, model.geom(b).id, a, b))
             except KeyError:
                 pass
-        self.palm_sites = {"left_palm": model.site("left_palm").id, "right_palm": model.site("right_palm").id}
+        self.palm_sites = palm_sites or {"left_palm": model.site("left_palm").id, "right_palm": model.site("right_palm").id}
         self._vel_ema = 0.0
         self.foot_sites = [model.site("left_foot").id, model.site("right_foot").id]
         self.ground_z = None
@@ -80,7 +82,7 @@ class Validator:
         if self.ground_z is None:
             self.ground_z = float(fz.min())
         down = [s for s, z in zip(self.foot_sites, fz) if z < self.ground_z + 0.03]
-        com = d.subtree_com[1][:2]
+        com = d.subtree_com[self.root_body][:2]
         if not down:
             flags["balance"] = "balance"
             msgs.append("Would tip over: both feet are off the ground")

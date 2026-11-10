@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main, v1/integration]   # feature branches are covered by their pull request
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.10"
+
+jobs:
+  lint-test:
+    name: ruff + pytest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: System libraries (OpenCV / MuJoCo import)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends libgl1 libglib2.0-0t64
+
+      # the robot models too: the unit tests build worlds (Panda, UR5e, G1 ...) and run them for real
+      - name: Setup (core + dev + data, robot models)
+        uses: ./.github/actions/setup
+        with:
+          extras: dev,data
+          python: ${{ env.PYTHON_VERSION }}
+
+      - name: ruff check
+        run: .venv/bin/python -m ruff check pps scripts tests
+
+      - name: ruff format (tests)
+        run: .venv/bin/python -m ruff format --check tests
+
+      - name: pytest
+        run: .venv/bin/python -m pytest -ra
+
+  selftest:
+    # The end-to-end self test (scripts/selftest.py + scripts/checks/*) against a real server, headless and offline:
+    # synthetic person (--fake), the offline mock brain, no API keys (--byok), MuJoCo rendering through OSMesa.
+    # A hosted runner (2 cores, software rendering) can't run the whole suite with physics inside the time limit, so:
+    # every check in kinematic mode, and the physics-specific checks with physics on.
+    name: self test (headless, offline, ${{ matrix.mode }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - mode: kinematic, all checks
+            physics: "0"
+            checks: ""
+          - mode: physics, physics checks
+            physics: "1"
+            checks: "physics,grasp_bench,paths,handover,worlds,safety"
+    env:
+      MUJOCO_GL: osmesa
+      PYOPENGL_PLATFORM: osmesa
+      PC_SELFTEST_OFFLINE: "1"
+      PC_SELFTEST_PORT: "8935"
+      PC_SELFTEST_LOG: selftest-server.log
+      PC_PHYSICS: ${{ matrix.physics }}
+      PC_SELFTEST_CHECKS: ${{ matrix.checks }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: System libraries (OSMesa, OpenGL, MediaPipe, openssl)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libosmesa6 libgl1 libegl1 libgles2 libglib2.0-0t64 openssl
+
+      # dev too: the self test runs unit test files (checks/teleop.py runs tests/test_teleop.py with pytest)
+      - name: Setup (extras vision + data + dev, robot models)
+        uses: ./.github/actions/setup
+        with:
+          extras: vision,data,dev
+          python: ${{ env.PYTHON_VERSION }}
+
+      - name: Offscreen rendering works
+        timeout-minutes: 3
+        run: |
+          .venv/bin/python -c "import mujoco; m = mujoco.MjModel.from_xml_string('<mujoco><worldbody><geom size=\".1\"/></worldbody></mujoco>'); r = mujoco.Renderer(m, 64, 64); d = mujoco.MjData(m); mujoco.mj_forward(m, d); r.update_scene(d); print('render OK', r.render().shape)"
+
+      - name: Self test
+        timeout-minutes: 40
+        run: timeout --signal=INT --kill-after=30 2340 .venv/bin/python scripts/selftest.py
+
+      - name: Server log
+        if: failure()
+        run: tail -n 300 selftest-server.log || true
+
+      - name: Upload server log
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: selftest-server-log-${{ matrix.physics }}
+          path: selftest-server.log
+          if-no-files-found: ignore
+
+  secrets:
+    name: secret scan (gitleaks)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GITLEAKS_VERSION: "8.30.1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      # The gitleaks CLI (MIT) directly: gitleaks-action needs a license key for organisation repos.
+      - name: Install gitleaks
+        run: |
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" gitleaks
+
+      - name: Scan the full history
+        run: '"$RUNNER_TEMP/gitleaks" git . --redact --verbose --no-banner --log-opts="--all"'
