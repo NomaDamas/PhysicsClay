@@ -5,10 +5,10 @@ pps/i18n.py."""
 MESSAGES = {
     # key: (English template, Korean template)
     # ------------------------------------------------------------------ plan.py: the plan card
-    "features.plan_say_go": ("Say go, or tap Run.", "'go'(또는 '가자')라고 말하거나 Run을 누르세요."),
+    "features.plan_say_go": ("Say go, or tap Run.", "'go'(또는 '가자')라고 말하거나 실행을 누르세요."),
     "features.plan_intent_say_go": (
         "{intent} Say go, or tap Run.",
-        "{intent} 'go'(또는 '가자')라고 말하거나 Run을 누르세요.",
+        "{intent} 'go'(또는 '가자')라고 말하거나 실행을 누르세요.",
     ),
     "features.plan_waiting": ("waiting for you", "기다리는 중"),
     "features.plan_can": ("I can do this", "할 수 있어요"),
@@ -39,7 +39,7 @@ MESSAGES = {
     ),
     "features.plan_intent_pick_place_go": (
         "Pick up {what} with my {side} hand and put it on {label}. Say go, or tap Run.",
-        "{side} 손으로 {what|을} 집어서 {label}에 놓을게요. 'go'(또는 '가자')라고 말하거나 Run을 누르세요.",
+        "{side} 손으로 {what|을} 집어서 {label}에 놓을게요. 'go'(또는 '가자')라고 말하거나 실행을 누르세요.",
     ),
     "features.plan_step_reach_for": ("Reach for {what} with my {side} hand", "{side} 손을 {what} 쪽으로 뻗기"),
     "features.plan_step_grasp_top": ("Grasp it from the top", "위에서 잡기"),
@@ -56,7 +56,7 @@ MESSAGES = {
     "features.plan_intent_reach_over": ("Reach over {label} with my {side} hand.", "{side} 손을 {label} 위로 뻗을게요."),
     "features.plan_intent_reach_over_go": (
         "Reach over {label} with my {side} hand. Say go, or tap Run.",
-        "{side} 손을 {label} 위로 뻗을게요. 'go'(또는 '가자')라고 말하거나 Run을 누르세요.",
+        "{side} 손을 {label} 위로 뻗을게요. 'go'(또는 '가자')라고 말하거나 실행을 누르세요.",
     ),
     "features.plan_step_move_over": ("Move my {side} hand over {label}", "{side} 손을 {label} 위로 옮기기"),
     "features.plan_step_hold_there": ("Hold it there", "그 자리에서 멈추기"),
@@ -99,7 +99,7 @@ MESSAGES = {
     ),
     "features.plan_intent_trace_go": (
         "Trace your {n}-point route with my {side} hand. Say go, or tap Run.",
-        "{side} 손으로 경유점 {n}개짜리 경로를 따라갈게요. 'go'(또는 '가자')라고 말하거나 Run을 누르세요.",
+        "{side} 손으로 경유점 {n}개짜리 경로를 따라갈게요. 'go'(또는 '가자')라고 말하거나 실행을 누르세요.",
     ),
     "features.plan_step_to_start": ("Move my {side} hand to the start", "{side} 손을 시작점으로 옮기기"),
     "features.plan_step_trace": ("Trace {n} waypoints", "경유점 {n}개 따라가기"),
@@ -130,7 +130,7 @@ MESSAGES = {
     ),
     "features.plan_intent_play_go": (
         "Play '{skill}' ({dur} s) at x{speed} speed. Say go, or tap Run.",
-        "'{skill}' 스킬을 x{speed} 속도로 재생할게요 ({dur} s). 'go'(또는 '가자')라고 말하거나 Run을 누르세요.",
+        "'{skill}' 스킬을 x{speed} 속도로 재생할게요 ({dur} s). 'go'(또는 '가자')라고 말하거나 실행을 누르세요.",
     ),
     "features.plan_playing": ("Playing '{skill}' at x{speed} speed.", "'{skill}' 스킬을 x{speed} 속도로 재생하고 있어요."),
     "features.plan_step_replay": ("Replay '{skill}' with my whole body", "온몸으로 '{skill}' 재현하기"),
@@ -153,7 +153,7 @@ MESSAGES = {
     ),
     "features.plan_intent_pass_go": (
         "Pass {what} from my {g} hand to my {r} hand. Say go, or tap Run.",
-        "{what|을} {g} 손에서 {r} 손으로 건넬게요. 'go'(또는 '가자')라고 말하거나 Run을 누르세요.",
+        "{what|을} {g} 손에서 {r} 손으로 건넬게요. 'go'(또는 '가자')라고 말하거나 실행을 누르세요.",
     ),
     "features.plan_intent_pass_put": (
         "Pass {what} from my {g} hand to my {r} hand and put it on {target}.",
@@ -161,7 +161,7 @@ MESSAGES = {
     ),
     "features.plan_intent_pass_put_go": (
         "Pass {what} from my {g} hand to my {r} hand and put it on {target}. Say go, or tap Run.",
-        "{what|을} {g} 손에서 {r} 손으로 건넨 다음 {target}에 놓을게요. 'go'(또는 '가자')라고 말하거나 Run을 누르세요.",
+        "{what|을} {g} 손에서 {r} 손으로 건넨 다음 {target}에 놓을게요. 'go'(또는 '가자')라고 말하거나 실행을 누르세요.",
     ),
     "features.plan_con_contact": ("Held by contact the whole way", "내내 접촉으로 잡고 있기"),
     "features.plan_con_hands_meet": ("Hands meet {h} cm above the table", "테이블 위 {h} cm에서 두 손이 만나기"),
@@ -213,7 +213,7 @@ MESSAGES = {
     "features.goal_already_two": ("The {a} and {b} are already in place.", "{a|와} {b|은} 이미 제자리에 있어요."),
     "features.goal_still_arranging": (
         "I'm still arranging the last goal. Press Cancel first.",
-        "아직 지난 목표를 정리하고 있어요. 먼저 Cancel을 누르세요.",
+        "아직 지난 목표를 정리하고 있어요. 먼저 취소를 누르세요.",
     ),
     "features.goal_no_spot": (
         "I didn't get a goal spot for any object I can move.",
@@ -221,8 +221,8 @@ MESSAGES = {
     ),
     "features.goal_making_it_so": ("Making it so.", "그렇게 맞춰 볼게요."),
     "features.goal_making_it_so_msg": ("Making it so. {msg}", "그렇게 맞춰 볼게요. {msg}"),
-    "features.goal_press_make_it_so": ("Press Make it so.", "Make it so를 누르세요."),
-    "features.goal_msg_press_make_it_so": ("{msg} Press Make it so.", "{msg} Make it so를 누르세요."),
+    "features.goal_press_make_it_so": ("Press Make it so.", "그렇게 하기를 누르세요."),
+    "features.goal_msg_press_make_it_so": ("{msg} Press Make it so.", "{msg} 그렇게 하기를 누르세요."),
     "features.goal_move_put": ("Move {i} of {n}: putting {label} in its spot.", "{n}번 중 {i}번째 이동: {label|을} 제자리에 놓는 중이에요."),
     "features.goal_move_put_over": (
         "Move {i} of {n}: putting {label} in its spot (over the obstacle).",
@@ -286,7 +286,7 @@ MESSAGES = {
         "아직 목표가 없어요. 먼저 고스트를 배치하거나 사진을 보내 주세요.",
     ),
     "features.goal_cancelled": ("Cancelled. Objects stay where they are now.", "취소했어요. 물건은 지금 자리에 그대로 있어요."),
-    "features.goal_busy": ("I'm busy with the last goal. Press Cancel first.", "지난 목표를 진행 중이에요. 먼저 Cancel을 누르세요."),
+    "features.goal_busy": ("I'm busy with the last goal. Press Cancel first.", "지난 목표를 진행 중이에요. 먼저 취소를 누르세요."),
     "features.goal_photo_too_large": (
         "That photo is empty or too large (keep it under 1.5 MB).",
         "사진이 비어 있거나 너무 커요 (1.5 MB 이하로 보내 주세요).",

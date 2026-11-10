@@ -48,6 +48,9 @@ MESSAGES = {
     "core.robot_quadruped": ("{name} quadruped with an arm", "{name} 팔 달린 사족 보행 로봇"),
     # plan.py: a spot that was taken, moved beside what is there
     "core.label_beside": ("{label}, beside {who}", "{label} ({who} 바로 옆)"),
+    # "next to the bowl" whose spot was taken by the bowl itself: the free spot right beside it
+    "core.next_to_beside_same": ("next to {obj}, beside {obj}", "{obj} 바로 옆"),
+    "core.next_to_beside_same_tasks": ("next to {obj} (beside {obj}, which is there)", "{obj} 바로 옆"),
     # shared short lines
     "core.done": ("Done.", "완료했어요."),
     "core.stopped": ("Stopped.", "멈췄어요."),

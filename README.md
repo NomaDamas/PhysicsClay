@@ -153,7 +153,8 @@ plus LeRobot / ROS 2 stubs) is where real hardware would plug in. Guide: [docs/c
 
 English and Korean throughout: the offline parser understands both, the LLM agent and Gemini answer in the language you
 use, the in-app guide has both, and the server's messages (tasks, plans, safety, watch, skills, worlds, calibration…)
-follow **Settings → Language** (System / 한국어 / English). See [Voice and language](docs/USAGE.md#voice-and-language).
+and the UI's own labels follow **Settings → Language** (System / 한국어 / English). See
+[Voice and language](docs/USAGE.md#voice-and-language).
 
 ## Architecture
 

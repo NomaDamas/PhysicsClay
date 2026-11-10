@@ -752,8 +752,10 @@ writes, not one per connection: the last browser that says which language it wan
   message sentence by sentence by matching the catalog's English templates. A sentence that isn't in the catalog stays
   English, so a new message is never lost, only untranslated. The localized copy is made copy-on-write in
   `pps/app.py`; the LLM agent keeps reading the English frame (`Shared.state_en`).
-* Not covered: names in the scene (`red_block`, `kitchen_full`), the agent's and Gemini's own replies (they already
-  answer in the language you use) and the UI's own labels.
+* Not covered: names in the scene (`red_block`, `kitchen_full`) and the agent's and Gemini's own replies (they
+  already answer in the language you use). The UI's own labels are translated in the browser, not here:
+  `web/ui/i18n-ko.js` swaps the fixed English chrome (buttons, headings, placeholders, tooltips) for Korean while
+  Settings → Language is 한국어 and puts the English back when it isn't; the help sheet has its own Korean.
 * The self test sends `{type: "hello", lang: "en"}`, so checks that match English sentences keep working.
 * The catalog: `pps/locale/ko_<area>.py`, `MESSAGES = {key: (English template, Korean template)}`. `{obj|을}` adds
   the Korean particle that fits the value (을/를, 이/가, 은/는, 와/과, 으로/로); `{_s}`-style placeholders are

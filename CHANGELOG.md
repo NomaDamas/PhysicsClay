@@ -89,8 +89,9 @@ packages it so people can install, extend and trust it.
 
 ### Languages
 - Server messages (tasks, plans, safety, watch, skills, worlds, recon, calibration, the mock brain…) in English and
-  Korean through `pps/i18n.py`, following Settings → Language (System / 한국어 / English); the offline parser understands
-  Korean commands (this release).
+  Korean through `pps/i18n.py` and a catalog of about 1,800 messages (`pps/locale/`), following Settings → Language
+  (System / 한국어 / English); the UI's own labels follow it too (`web/ui/i18n-ko.js`, about 800 strings); the
+  offline parser understands Korean commands such as "빨간 컵을 그릇 옆으로 옮겨줘" (this release).
 
 ### Running
 - `make run` serves http on 8780 and https on 8781 by default (self-signed certificate), so phones and Quest work
