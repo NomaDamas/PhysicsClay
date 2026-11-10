@@ -270,7 +270,11 @@ def _render(key, lang, values):
         out.append(v)
         if mark:
             out.append(particle(v, mark))
-    return "".join(out)
+    return _HAND.sub(r"\1손", "".join(out))
+
+
+# "{side} 손" with side = 오른쪽 reads 오른손 (not before 잡이 / 가락 …: 오른쪽 손잡이 is the right handle)
+_HAND = re.compile(r"(오른|왼)쪽 손(?!잡|가락|목|바닥|등)")
 
 
 def _translate_sentence(s, lang, fragment=False):
