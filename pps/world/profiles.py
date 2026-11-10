@@ -203,8 +203,10 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         ("pick_place", "reach", "follow_path", "balance"),
         feet=(("FL", "site"), ("FR", "site"), ("HL", "site"), ("HR", "site")), root="body", ee_axis=(1, 0, 0),
         freeze=("f1x",), prompt="pps/world/prompts/spot.md",
-        physics={"payload": 5.0, "experimental": SPOT, "grip": {"right": _native("arm_f1x", -0.9, 0.0, ("arm_link_fngr",), ("arm_link_wr1",), 0.10, tcp=(0.03, 0, -0.02),
-                                                         approach=(1, 0, 0), axis=(0, 0, 1), boost=0.06, jaw=-0.013)}}),
+        physics={"payload": 5.0, "experimental": SPOT, "grip": {"right": dict(
+            _native("arm_f1x", -0.9, 0.0, ("arm_link_fngr",), ("arm_link_wr1",), 0.10, tcp=(0.03, 0, -0.02), approach=(1, 0, 0),
+                    axis=(0, 0, 1), boost=0.06, jaw=-0.013),
+            wide_open=-1.25, deep=0.05)}}),   # the mug: the finger comes down outside its far wall, holds 5 cm down
     RobotProfile(
         "h2", "Unitree H2 humanoid (experimental)", "humanoid", EX + "unitree_h2/h2_sharpa.xml",
         {"x": -0.05, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "right_wrist_site", "left": "left_wrist_site"}, None,

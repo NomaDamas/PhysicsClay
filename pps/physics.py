@@ -413,7 +413,11 @@ class Plant:
                                # side grasps: the hand's top side (TCP frame) and how far it hangs below the TCP (m)
                                "up": None if g.get("up") is None else np.array(g["up"], float), "pad_h": float(g.get("pad_h", 0.018)),
                                # side jaws: how far past the object's side they reach when they let go (free spots)
-                               "room": float(g.get("room", 0.0))}
+                               "room": float(g.get("room", 0.0)),
+                               # a claw whose finger arcs down (Spot): the opening for an object that nearly fills it, and
+                               # how far below its top to hold it
+                               "wide_open": None if g.get("wide_open") is None else float(g["wide_open"]),
+                               "deep": None if g.get("deep") is None else float(g["deep"]), "open_to": None}
             if g.get("build"):
                 self.grip[role]["close"] = float(g["width"]) / 2 + 0.03
         self.track, self.hold0, self.track_tendon = [], [], []
@@ -661,8 +665,10 @@ class Plant:
         for g in self.grip.values():                      # fingers take ~0.8 s to travel: no slamming into things
             if g["cmd"] == "hold" and g.get("ctrl") is not None:
                 v = g["ctrl"]                             # (stop where they are: opened as far as a release needs)
+            elif g["cmd"] == "open":
+                v = g["open"] if g.get("open_to") is None else g["open_to"]
             else:
-                v = g["open"] if g["cmd"] == "open" else g["close"]
+                v = g["close"]
             rate = abs(g["close"] - g["open"]) / 0.8 * DT
             g["ctrl"] = v if g.get("ctrl") is None else g["ctrl"] + float(np.clip(v - g["ctrl"], -rate, rate))
             for a in g["acts"]:
@@ -835,9 +841,13 @@ class Plant:
         o = self.objects.get(name)
         return 0.0 if o is None else float(self.m.body_mass[o["bid"]]) * abs(float(self.m.opt.gravity[2]))
 
-    def grip_cmd(self, role, cmd):
+    def grip_cmd(self, role, cmd, to=None):
+        """open | close | hold (stay where the jaws are). open: all the way, or to the command `to` (a grasp that needs
+        less room, e.g. straddling a mug's wall)."""
         if role in self.grip:
             self.grip[role]["cmd"] = cmd
+            if cmd == "open":
+                self.grip[role]["open_to"] = to
 
     def grasped(self):
         """role -> object held by contact on both sides (or None)."""

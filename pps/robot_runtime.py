@@ -239,23 +239,55 @@ class Runtime:
         targets = {b for b in range(mi.nbody) if (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_BODY, b) or "").endswith("_target")}
         geoms = [g for g in range(mi.ngeom) if mi.geom_contype[g] and mi.geom_bodyid[g] not in pl.robot_bodies
                  and mi.geom_bodyid[g] not in skip and mi.geom_bodyid[g] not in targets and mi.geom_bodyid[g] != 0]
-        if getattr(self, "_obstacle_limit", None) in self.limits:
-            self.limits.remove(self._obstacle_limit)
-        self._obstacle_limit = None
-        hand = [g for r, gr in pl.grip.items() for side in gr["pads"] for g in side]
-        near = set()                              # the gripper and the last links of each arm
-        for r, bodies in pl.ee_bodies.items():
-            near |= bodies
-            b = mi.site_bodyid[pl.site_ids[r]]
-            for _ in range(3):
-                b = mi.body_parentid[b]
-                if b in pl.robot_bodies:
-                    near.add(b)
-        hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and (mi.geom_contype[g] or mi.geom_conaffinity[g]) and g not in hand]
+        for lim in (getattr(self, "_obstacle_limit", None), getattr(self, "_arm_obstacle_limit", None)):
+            if lim in self.limits:
+                self.limits.remove(lim)
+        self._obstacle_limit = self._arm_obstacle_limit = None
+        hand, arm = self._obstacle_links()
         if geoms and hand:
             self._obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(hand, geoms)], minimum_distance_from_collisions=0.012,
                                                                 collision_detection_distance=0.08)
             self.limits.append(self._obstacle_limit)
+        if geoms and arm:                         # the rest of the arm (forearm, upper arm) keeps off them too, a little closer
+            self._arm_obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(arm, geoms)], minimum_distance_from_collisions=0.008,
+                                                                    collision_detection_distance=0.06)
+            self.limits.append(self._arm_obstacle_limit)
+
+    def _obstacle_links(self):
+        """Physics: collision geoms that keep clear of the objects: (the gripper and the last links of each arm, the rest
+        of each arm up to where it joins the body: the torso, the legged body, a mobile base). Cached per model."""
+        cache = getattr(self, "_obstacle_links_cache", None)
+        if cache is not None:
+            return cache
+        mi, pl = self.configuration.model, self.plant
+        hand = [g for r, gr in pl.grip.items() for side in gr["pads"] for g in side]
+        near, upper = set(), set()
+        prof = getattr(self, "profile", None)
+        base_j = set(getattr(prof, "base_joints", ()) or ())
+        root = getattr(prof, "root", None) or ("pelvis" if prof is None else None)
+        name = lambda b: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_BODY, b) or ""
+
+        def stop(b):                              # the arm ends where it meets the body
+            if b <= 0 or b not in pl.robot_bodies or name(b) == root or "torso" in name(b) or name(b) in ("body", "pelvis"):
+                return True
+            for k in range(mi.body_jntnum[b]):
+                j = mi.body_jntadr[b] + k
+                if mi.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE or (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_JOINT, j) or "") in base_j:
+                    return True
+            return False
+        for r, bodies in pl.ee_bodies.items():
+            near |= bodies
+            b = mi.site_bodyid[pl.site_ids[r]]
+            for k in range(12):
+                b = mi.body_parentid[b]
+                if stop(b):
+                    break
+                (near if k < 3 else upper).add(b)
+        col = lambda g: bool(mi.geom_contype[g] or mi.geom_conaffinity[g])
+        hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and col(g) and g not in hand]
+        arm = [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in upper - near and col(g)]
+        self._obstacle_links_cache = (hand, arm)
+        return hand, arm
 
     def hold_here(self):
         """Stop where the robot is: the planner takes the measured pose so q_des doesn't keep pulling the arm."""

@@ -685,6 +685,13 @@ class Tasks:
                 need = max(need, float(c[2]) + hb + margin + hh + float(off[2]))
         return need
 
+    def _pre_dz(self, name, palm, g):
+        """Physics, from above: how far over the grasp the hand stops before going down: 9 cm, or more for a long gripper
+        whose open fingertips would otherwise skim the object's top on the way there (Spot's claw reaches 7 cm past its
+        TCP and holds the mug 2 cm below the rim)."""
+        top = self.mug_center(name)[2] + self.objs[name]["half_h"]
+        return max(0.09, top + self._hang(palm, side=False) + 0.025 - float(g[2]))
+
     def _hang(self, palm, side=True):
         """Physics: how far the open hand reaches below its TCP (side grasps: the pads' half height; from above: the
         fingertips past the TCP)."""
@@ -798,7 +805,8 @@ class Tasks:
                 ph["still"] = (ph.get("still") or now) if (off < 0.005 and v < 0.02) else None
                 sup = obj in pl.objects and pl.support(obj, role) > 0.5 * pl.weight(obj)
                 if sup or (ph["still"] is not None and now - ph["still"] > 0.1) or (now - ph["t0"] > 2.5 and off < 0.06):
-                    pl.grip_cmd(role, "open")      # resting on the surface, or the hand has stopped just above it
+                    pl.grip_cmd(role, "open", to=pl.grip[role].get("open_to"))   # resting on the surface, or the hand has
+                    # stopped just above it (as wide as the grasp opened: a claw inside a mug would swing into its far wall)
                     self.held.pop(palm, None)       # letting go on purpose: no more slip watch
                     ph["phase"], ph["t0"] = "open", now
                 elif now - ph["t0"] > 2.5:
@@ -1325,7 +1333,7 @@ class Tasks:
             if n is None:
                 pre = g + (np.array([0, 0, 0.09]) if np.array_equal(off[:2], [0, 0]) else np.array([-0.08, 0, 0.07]))
             else:                                 # physics: come in along the approach axis with the jaws open
-                pre = g - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else g + np.array([0, 0, 0.09])
+                pre = g - nh * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else g + np.array([0, 0, self._pre_dz(name, palm, g)])
             kps += [pre, g]
             ev[len(kps) - 1] = "grasp"
             kps += [g + np.array([0, 0, LIFT if n is not None else 0.12])]
@@ -1355,7 +1363,7 @@ class Tasks:
             retreat = place_hand - nh_p * 0.10 + np.array([0, 0, 0.03]) if sidegrasp else place_hand + np.array([0, 0, 0.10])
             self.place_at = (name, place_c)
             if held is None:
-                self.plant.grip_cmd(self.role(palm), "open")
+                self.plant.grip_cmd(self.role(palm), "open", to=getattr(self, "grasp_open", None))
         kps += [retreat]
         if n is not None:                         # physics: backed off: from here the hand keeps clear of what it set down
             ev[len(kps) - 1] = "clear"
@@ -1427,7 +1435,7 @@ class Tasks:
                 break
             q_g = d.mocap_quat[mid].copy()
             g = c + off
-            pre = g - n * 0.10 + np.array([0, 0, 0.03]) if n[2] > -0.7 else g + np.array([0, 0, 0.09])
+            pre = g - n * 0.10 + np.array([0, 0, 0.03]) if n[2] > -0.7 else g + np.array([0, 0, self._pre_dz(name, palm, g)])
             kps = lift + [pre, g, g + np.array([0, 0, 0.12])]
             quats = [q_now] + [q_g] * len(kps)
             pts, qs, _ = self._dense([cur] + kps, quats)
@@ -1470,6 +1478,7 @@ class Tasks:
         role = self.role(palm)
         g = pl.grip.get(role)
         what = self.pretty(name)
+        self.grasp_open = None                    # how far the jaws open for this grasp (None: all the way)
         if g is None:
             return None, None, f"I have no gripper on my {self.limb(role)}: I can't pick up {what}."
         sid, mid = rt.palm_sid[palm], rt.hands_mid[palm]
@@ -1564,9 +1573,19 @@ class Tasks:
             sh = rt.retargeter.robot_shoulders[palm]
             side = -np.sign(np.dot(a, handle)) if abs(np.dot(a, handle)) > 0.5 else \
                 (1.0 if np.linalg.norm(body[:2] + a[:2] * 0.04 - sh[:2]) < np.linalg.norm(body[:2] - a[:2] * 0.04 - sh[:2]) else -1.0)
+            if g.get("jaw") is not None and side > 0:   # one fixed jaw: it goes outside the wall, the finger inside (a
+                q = np.zeros(4)                          # bulky jaw inside the mug hooks it on the way up): the same rim,
+                hm = rt.hands_mid[palm]                  # hand turned 180°
+                mujoco.mju_mulQuat(q, np.array([0.0, 0.0, 0.0, 1.0]), rt.data.mocap_quat[hm].copy())
+                rt.data.mocap_quat[hm] = q
+                a, side = -a, -side
             rim = body + side * a * (MUG["R"] - MUG["t"] / 2) * s
             p = np.array([rim[0], rim[1], self.obj_pos(name)[2] + MUG["z1"] * s - 0.02])
             ext = MUG["t"] * s
+        elif g.get("wide_open") is not None and style != "side" and ext > 0.7 * w:   # nearly fills a claw whose finger
+            self.grasp_open = g["wide_open"]      # swings down in an arc (Spot): open it wider, so it comes down outside
+            if g.get("deep") is not None:         # the far side instead of landing on the top, and hold lower on the body
+                p[2] = max(top_z - min(float(g["deep"]), 0.8 * o["half_h"]), TABLE_TOP + g["tip"] + 0.006)
         if ext > w - 0.006:
             return None, None, (f"{what.capitalize()} is {ext * 100:.0f} cm wide and my gripper opens {w * 100:.0f} cm, "
                                 "so I can't get a grip on it.")
