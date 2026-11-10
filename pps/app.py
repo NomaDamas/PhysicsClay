@@ -37,7 +37,7 @@ from .demo import Demo
 from .tasks import REGIONS, Tasks, apply_surface, edit_skill, skills_meta
 from .world import packs as world_packs, profiles as world_profiles, scene as world_scene
 from .world.runtime import make_runtime
-from . import ext, physics
+from . import ext, i18n, physics
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
@@ -54,6 +54,7 @@ class Shared:
         self.phone_ts = collections.deque(maxlen=64)   # arrival times of those frames (state.cam_in: fps)
         self.phone_mobile = False  # the last sender was a phone / tablet (the /phone page or the app on a phone)
         self.state = "{}"
+        self.state_en = "{}"       # the same frame before localizing (pps/i18n.py): the agent reads English
         self.fid = 0
         self.cmds = []
         self.clients = set()
@@ -142,8 +143,8 @@ async def upload(request):
     if field is None:
         return web.json_response({"ok": False, "message": "no 'video' field"}, status=400)
     if "imitate_video" not in request.app["shared"].caps:
-        return web.json_response({"ok": False, "message": "Imitating a video needs a humanoid body (the Unitree G1). Switch robots first."},
-                                 status=409)
+        return web.json_response({"ok": False, "message": i18n.tr("Imitating a video needs a humanoid body (the Unitree G1). "
+                                                                  "Switch robots first.")}, status=409)
     from urllib.parse import unquote
     stem = "".join(ch for ch in Path(unquote(field.filename or "video")).stem.lower().replace(" ", "_") if ch.isalnum() or ch in "_-")[:28] or "video"
     ext = (Path(field.filename or "v.mp4").suffix or ".mp4").lower()
@@ -161,7 +162,8 @@ async def upload(request):
                 return web.json_response({"ok": False, "message": "video too large (300 MB max)"}, status=413)
             f.write(chunk)
     request.app["shared"].push_cmd({"type": "source", "path": str(path), "name": stem})
-    return web.json_response({"ok": True, "name": stem, "message": f"Imitating '{stem}'. It becomes a skill when the video ends."})
+    return web.json_response({"ok": True, "name": stem,
+                              "message": i18n.tr(f"Imitating '{stem}'. It becomes a skill when the video ends.")})
 
 
 def scene_payload(m, world=None, key=None):
@@ -459,7 +461,12 @@ def run_server(shared, port, https_port):
         await runner.setup()
         await web.TCPSite(runner, "0.0.0.0", port).start()
         if https_port:
-            await web.TCPSite(runner, "0.0.0.0", https_port, ssl_context=ensure_cert()).start()
+            try:
+                await web.TCPSite(runner, "0.0.0.0", https_port, ssl_context=ensure_cert()).start()
+            except (OSError, ssl.SSLError, subprocess.CalledProcessError) as e:   # no openssl / port taken: http still works
+                app["https_port"] = 0
+                print(f"  https on port {https_port} is off ({e}); phones need it for the camera. "
+                      "Install openssl or pick another --https-port.", flush=True)
         asyncio.create_task(broadcaster(shared))
         while True:
             await asyncio.sleep(3600)
@@ -682,10 +689,15 @@ def worker(args, shared):
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
     t_phys = time.time()
     ip = lan_ip()
-    print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}\n  phone : http://{ip}:{args.port}"
-          + (f"   (mic/camera on phone: https://{ip}:{args.https_port}, accept the certificate warning)" if args.https else "")
-          + (f"\n  Quest : https://{ip}:{args.https_port} in the Meta Quest browser -> Enter VR / Enter MR (docs/vr.md)" if args.https else ""),
-          flush=True)
+    if args.https:
+        print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}   (or https://127.0.0.1:{args.https_port})"
+              f"\n  LAN   : https://{ip}:{args.https_port}   (self-signed certificate: accept the warning once)"
+              f"\n  phone camera: https://{ip}:{args.https_port}/phone   (or scan the QR code: camera menu -> Use my phone)"
+              f"\n  Quest : https://{ip}:{args.https_port} in the Meta Quest browser -> Enter VR / Enter MR (docs/vr.md)",
+              flush=True)
+    else:
+        print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}\n  LAN   : http://{ip}:{args.port}"
+              "   (phones need https for the camera and mic: add --https, as `make run` does)", flush=True)
 
     while shared.running:
         # ---------------- your camera (a phone/browser camera wins while it streams)
@@ -978,7 +990,11 @@ def worker(args, shared):
             st["path"]["pts"] = [[round(float(x), 3) for x in p] for p in rt.path["pts"]]
         st.update(ext.extra_state(ctx))
         st["video"] = None if video_job is None else {"name": video_job["name"], "progress": round(min(1.0, video_job["i"] / max(1, video_job["max_frames"])), 3)}
-        shared.put(cam_jpg, sim_jpg, json.dumps(st))
+        raw = json.dumps(st)
+        shared.state_en = raw
+        if i18n.get_lang() != "en":                      # messages in the person's language (copy on write)
+            raw = json.dumps(i18n.localize(st))
+        shared.put(cam_jpg, sim_jpg, raw)
         if args.frames and n >= args.frames:
             shared.running = False
     if cap is not None:

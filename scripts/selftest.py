@@ -50,6 +50,7 @@ async def main():
         except Exception:
             await asyncio.sleep(0.5)
     ws = await s.ws_connect(BASE + "/ws")
+    await ws.send_str(json.dumps({"type": "hello", "lang": "en", "client": "selftest"}))   # checks match English text
     st = {}
     bins = {}
 
