@@ -419,3 +419,25 @@ capsules: [[ax, ay, az, bx, by, bz, r, region] * 17], config: {...}, reply}`.
   `--safety-config file.json` / `PC_SAFETY_CONFIG`; every value is clamped to a floor.
 - Handover: the robot now offers the object 10 cm in front of the person's hand (`HANDOVER_GAP`), so it never has to
   touch them; they close the gap.
+
+## v8 · Datasets (v1 P1, `pps/data/`, `pps/features/dataset.py`, `web/ui/dataset.js`)
+Every task can become a LeRobot v2.1 episode (`docs/datasets.md` has the format and how to train on it).
+
+**Messages** (each answers in `dataset.reply = {id, op, ok, message}`):
+- `{type:"dataset", op:"start", name?, auto: true, fps?: 30, cameras?: ["front","wrist"] (+"robot"), size?: 256}`:
+  record every task that starts moving into `datasets/<name>/<robot>/` (an existing dataset of that name and robot is
+  appended to). `auto: false` keeps recording on but captures nothing.
+- `{type:"dataset", op:"stop"}`: end recording; an episode still running is dropped.
+- `{type:"dataset", op:"discard_last"}`: delete the last finished episode (files and metadata); asynchronous, the
+  result lands in `dataset.message`.
+- `{type:"dataset", op:"randomize", lighting?: 0..1, camera?: metres, seed?}`: per-episode randomization of the
+  dataset cameras only (light directions / intensity, camera position and angle); `{}` turns it off.
+- `{type:"dataset", op:"meta", data: {...}}`: JSON (≤ 4 kB) stored as `variation` in the following episodes' records.
+- Task messages may carry `utterance` (or `text`): the words that asked for the task, used as the episode's
+  language. The browser adds the user's last line (≤ 30 s old) to every task it sends.
+
+**State** (every frame): `dataset = {recording, name, auto, fps, size, cameras, episodes, succeeded, refused, frames,
+current: {task, frames, seconds} | null, last: {i, robot, task, success, outcome, seconds, frames} | null,
+list: [same, last 30], root, datasets: [LeRobot roots written], pending (frames waiting for the dataset thread),
+cost_ms: {snapshot, render}, randomize, error, message, reply}`. `outcome`: `done` | `failed` | `interrupted` |
+`world_changed` | `timeout` | `finished` (the motion ended but its status was superseded).
