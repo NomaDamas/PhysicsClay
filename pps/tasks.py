@@ -1213,6 +1213,8 @@ class Tasks(FixtureTasks):
             self.rt.set_obstacles(())
             return
         if self.plant is not None and name in ("aim", "hover"):   # stop over the spot until the arm has caught up
+            if name == "hover" and getattr(self, "fxop", None) is not None:
+                self._fx_obstacles(True)          # over a handle: the part is the hand's now (pps/manip.py)
             self.ph = {"phase": name, "palm": palm, "obj": self.holding.get(palm) or self.cur, "t0": float(self.plant.d.time)}
             self._hold_path(True)
             return
@@ -1389,7 +1391,7 @@ class Tasks(FixtureTasks):
         if self.fx is not None:                   # a generated world: what's near the pick and the drop (drawer walls too);
             # things in the same bin / drawer as the one being picked are not kept away from (the fingers go in among them)
             co = tuple(self.contents(self.container_of(name), skip=name)) if self.container_of(name) is not None else ()
-            self.rt.set_obstacles((name,) + co, near=[c] + ([dest] if dest is not None else []), fixtures=True)
+            self.rt.set_obstacles((name,) + co, near=[c] + ([dest] if dest is not None else []), fixtures=True, static_arm=True)
         else:
             self.rt.set_obstacles((name,))        # the planner keeps the gripper clear of everything else on the table
         palms = [palm] if held else [palm] + [h for h in self.hands if h != palm]   # two hands: the other one may get there

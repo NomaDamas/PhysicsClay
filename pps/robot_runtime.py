@@ -255,7 +255,7 @@ class Runtime:
                 di.mocap_pos[mid] = d.xpos[p["bid"]]
                 di.mocap_quat[mid] = d.xquat[p["bid"]]
 
-    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False, static=False):
+    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False, static=False, skip_geoms=(), static_arm=False):
         """Physics: the planner keeps the hand clear of the objects on the table (synced from the plant), except `exclude`
         (the one being picked). Objects are mocap bodies in the planner's model, so their poses are copied over.
         Generated worlds (issue #48): `fixtures` adds the walls of drawers / doors / bins nearby (their floors and the
@@ -264,7 +264,9 @@ class Runtime:
         (with `near`) also adds the static furniture there (a counter's edge, a cabinet's sides: world geoms `fx_*` and
         the work surface), and the whole arm keeps off the furniture there too: a hand reaching under a counter for a
         drawer's knob must not put its wrist through the counter's edge or its forearm on the knob of the drawer above
-        (the plant would stop it there)."""
+        (the plant would stop it there). `skip_geoms`: geom names that never count (a handle the hand is coming for).
+        `static_arm` (with `near`): the static furniture there for the arm links only, not the gripper (a pick reaching
+        into a machine: the forearm came to rest on the CNC's side wall, the hand 15 cm over the part)."""
         if self.plant is None:
             return
         mi, pl = self.configuration.model, self.plant
@@ -295,6 +297,9 @@ class Runtime:
             return True
         geoms = [g for g in range(mi.ngeom) if mi.geom_contype[g] and mi.geom_bodyid[g] not in pl.robot_bodies
                  and mi.geom_bodyid[g] not in skip and mi.geom_bodyid[g] not in targets and mi.geom_bodyid[g] != 0 and keep(g)]
+        if skip_geoms:
+            skipped = {mi.geom(n).id for n in skip_geoms if n}
+            geoms = [g for g in geoms if g not in skipped]
         if static and pts is not None:
             named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
             geoms += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] == 0 and mi.geom_contype[g]
@@ -313,6 +318,10 @@ class Runtime:
         # into (opening a drawer, a shelf): the gripper's own limit keeps the hand clear of those
         fxb = {b for b in range(mi.nbody) if (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_BODY, b) or "").startswith("fx_")}
         arm_geoms = geoms if static else [g for g in geoms if mi.geom_bodyid[g] not in fxb and mi.geom_bodyid[g] != 0]
+        if static_arm and not static and pts is not None:
+            named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            arm_geoms = arm_geoms + [g for g in range(mi.ngeom) if mi.geom_bodyid[g] == 0 and mi.geom_contype[g]
+                                     and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and named(g).startswith("fx_") and keep(g)]
         pairs = [(arm, arm_geoms)] if arm_geoms and arm else []
         if base and (fixtures or static) and fx is not None:
             # a mobile base keeps off the furniture around it (the IK drives it to reach: it drove into the cabinets

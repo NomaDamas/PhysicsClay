@@ -402,6 +402,8 @@ class FixtureTasks:
             ok = self._launch(tid, act, kps, palm, ev, "task", f"{verb} {lab}" + (f" to {amt * 100:.0f}%." if act == "open" else "."),
                               quats=quats, loose=loose)
             if ok:
+                self.fxop["near"] = [h0, samples[-1][0], pre] + kps[1:k_in]
+                self._fx_obstacles(False)
                 return
             self.fxop = None
             worst = max(getattr(rt, "last_precheck_dists", None) or [1e9])
@@ -646,6 +648,22 @@ class FixtureTasks:
                 ta |= o in a
                 tb |= o in b
         return ta, tb
+
+    def _fx_obstacles(self, whole):
+        """Physics: while the hand comes in, the part it is going to move is an obstacle but for its handle (a palm on
+        its way to the CNC door's knob swept the door open by its roof); from the hover over the knob on, the whole part
+        is the hand's (the jaws close next to its front, and the hand moves with it). The plan's reach check had the whole
+        part out of the way: the way in is transit, the hand only keeps a little further off it."""
+        op = getattr(self, "fxop", None)
+        if op is None or self.plant is None or op.get("near") is None:
+            return
+        p = op["part"]
+        if whole:
+            self.rt.set_obstacles((p["name"],), near=op["near"], radius=0.25, fixtures=True, static=True)
+        else:
+            m = self.rt.model
+            names = [mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_GEOM, g) for g in self._knob_geoms(p)]
+            self.rt.set_obstacles((), near=op["near"], radius=0.25, fixtures=True, static=True, skip_geoms=names)
 
     def _knob_geoms(self, p):
         """The handle's own geoms (the knob's stem and head), not the panel it stands on: a pad pressed on a drawer's

@@ -140,10 +140,13 @@ mobile base, quadruped) and stand clear of the furniture; their grasps are as re
 
 ## Limitations
 
-* Handles are grasped **from above**: a knob right under another one (the second drawer of a stack, a low door under a
-  drawer) is refused with that reason; reaching in from the front needs side grasps on handles (not yet).
-* Doors with a horizontal hinge (dishwasher door, centrifuge lid) turn the knob out of a top-down grasp's reach near the
-  end of their swing; they open as far as the arm can follow and say how far that was.
+* Handles are reached from above, from the front and above, or from the front; a knob blocked every way (a shelf right
+  over it and something in front) is refused with that reason. A handle held from the front turns with a door (a
+  dishwasher door ends with the hand over it); whether a low or far knob is reachable depends on the body: a fixed
+  arm at the counter reaches the top two drawers of a stack; the bottom drawer (knob ~45 cm off the floor) and the
+  dishwasher (1.1 m to the side) are out of reach for most arms and say by how much.
+* Reactive IK, not a motion planner: an arm whose links would have to thread between the drawers of a stack to push
+  the lowest one shut (the UR5e) says it can't get there (how far off) rather than leaving it ajar.
 * No cloth (towels are folded thin boxes), no liquids, no deformables; utensil handles are thicker than real ones so a
   parallel gripper can hold them.
 * The conveyor's photo-eye stops the belt for the robot; picking a moving part (tracking) is not implemented.
