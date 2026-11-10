@@ -10,18 +10,20 @@ pipeline, room → scene), `pps/features/teleop.py` (live teleoperation). Trajec
 
 ## Open it on a Quest
 
-1. Start the server with HTTPS (WebXR needs a secure page):
+1. Start the server with HTTPS (WebXR needs a secure page). `make run` does that by default:
    ```
-   .venv/bin/python -m pps.app --https            # add --fake for no camera
+   make run                                       # http 8780 + https 8781; ARGS="--fake" for no camera
+   .venv/bin/python -m pps.app --https            # or directly: https on 8443 (--https-port to change it)
    ```
-   It prints a `Quest :` line, `https://<your-computer's-LAN-IP>:8443` (`--https-port` to change it).
+   It prints a `Quest :` line, `https://<your-computer's-LAN-IP>:8781` (8443 when started directly).
 2. Put the Quest on the same Wi-Fi as the computer. Open the Quest browser and go to that address.
 3. The certificate is self-signed: choose **Advanced → Proceed to … (unsafe)** once.
 4. In the 3D stage, next to **3D / Robot eye**, press **Enter VR** or **Enter MR** (they only appear when the browser
    supports them). Allow hand tracking and spatial data when the Quest asks.
 
 Alternative without the certificate warning: connect the Quest over USB (developer mode) and run
-`adb reverse tcp:8777 tcp:8777`, then open `http://localhost:8777` in the Quest browser (localhost counts as secure).
+`adb reverse tcp:8780 tcp:8780` (8777 when started directly), then open `http://localhost:8780` in the Quest browser
+(localhost counts as secure).
 
 Hands work best (Settings → Movement tracking → Hand and body tracking). Controllers work too. For **MR room scans**, do
 Space Setup first (Settings → Physical space → Space setup) and mark your desk / table.
@@ -142,7 +144,7 @@ rebuilds the world and the 3D stage reloads (the robot stays).
 
 ### Manual, on a real Quest (not covered by emulation)
 
-1. Same Wi-Fi, `https://<mac-ip>:8443`, accept the certificate; **Enter VR** and **Enter MR** buttons are shown.
+1. Same Wi-Fi, `https://<mac-ip>:8781` (`make run`; 8443 with `python -m pps.app --https`), accept the certificate; **Enter VR** and **Enter MR** buttons are shown.
 2. Enter VR: the permission prompts appear; the table is in front of you at a comfortable height, standing and sitting
    (Recenter after you sit down). The frame rate is smooth (the G1 is ~350k triangles; if it stutters, try the Panda).
 3. Hands: pinch-and-move draws an orange line; on release the blue / red ghost appears with the server's reason on the
