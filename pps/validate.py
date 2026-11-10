@@ -33,7 +33,8 @@ def pretty(name):
 
 
 class Validator:
-    def __init__(self, model, data, reach_tol=0.06, limit_margin=0.035, vmax=4.0, coll_dist=0.015, hist=60, root_body=1):
+    def __init__(self, model, data, reach_tol=0.06, limit_margin=0.035, vmax=4.0, coll_dist=0.015, hist=60, root_body=1,
+                 palm_sites=None):
         self.model, self.data = model, data
         self.root_body = root_body
         self.reach_tol, self.limit_margin, self.vmax, self.coll_dist = reach_tol, limit_margin, vmax, coll_dist
@@ -47,7 +48,7 @@ class Validator:
                 self.pairs.append((model.geom(a).id, model.geom(b).id, a, b))
             except KeyError:
                 pass
-        self.palm_sites = {"left_palm": model.site("left_palm").id, "right_palm": model.site("right_palm").id}
+        self.palm_sites = palm_sites or {"left_palm": model.site("left_palm").id, "right_palm": model.site("right_palm").id}
         self._vel_ema = 0.0
         self.foot_sites = [model.site("left_foot").id, model.site("right_foot").id]
         self.ground_z = None
