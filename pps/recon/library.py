@@ -98,6 +98,15 @@ def listing(limit=60):
     return out
 
 
+def count():
+    """Number of entries (cheap: no meta.json is read; the state frame asks every few seconds)."""
+    r = root()
+    try:
+        return sum(1 for d in r.iterdir() if (d / "meta.json").exists()) if r.exists() else 0
+    except OSError:
+        return 0
+
+
 def delete(i):
     d = path(i)
     if d.exists():

@@ -41,6 +41,8 @@ def render(objects, lookat, distance, azimuth, elevation, w=640, h=480):
     cam = mujoco.MjvCamera()
     cam.type = mujoco.mjtCamera.mjCAMERA_FREE
     cam.lookat[:], cam.distance, cam.azimuth, cam.elevation = lookat, distance, azimuth, elevation
+    prev = mujoco.get_mju_user_warning()
+    mujoco.set_mju_user_warning(lambda msg: None)        # macOS GL: "ARB_clip_control unavailable" would land in MUJOCO_LOG.TXT
     r = mujoco.Renderer(m, h, w)
     try:
         r.update_scene(d, cam, scene_option=opt)
@@ -50,6 +52,7 @@ def render(objects, lookat, distance, azimuth, elevation, w=640, h=480):
         depth = r.render().copy()
     finally:
         r.close()
+        mujoco.set_mju_user_warning(prev)
     f = (h / 2) / math.tan(math.radians(float(m.vis.global_.fovy)) / 2)
     jpg = cv2.imencode(".jpg", cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, 92])[1].tobytes()
     png = cv2.imencode(".png", np.clip(depth * 1000, 0, 65535).astype(np.uint16))[1].tobytes()

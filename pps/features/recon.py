@@ -173,7 +173,7 @@ def recon_state(ctx):
     now = time.time()
     if now - _cache["t"] > 5.0:
         from ..recon.providers import listing
-        _cache.update(t=now, providers={p["id"]: p["ok"] for p in listing()}, library=len(library.listing(200)))
+        _cache.update(t=now, providers={p["id"]: p["ok"] for p in listing()}, library=library.count())
     s = _st(ctx)
     d = depthmod.status()
     return {KEY: {"jobs": jobs.recent(3), "providers": _cache["providers"], "depth": "ready" if d["ready"] else
