@@ -82,7 +82,8 @@ def reach_of(rt, palm):
     if "drive_base" in tuple(getattr(rt, "capabilities", ()) or ()) or "drive_base" in tuple(getattr(getattr(rt, "profile", None), "capabilities", ()) or ()):
         return c, REACH_MOBILE
     arm = getattr(getattr(rt, "retargeter", None), "robot_arm_len", None)
-    return c, (float(arm) * 1.02 if isinstance(arm, (int, float)) and arm > 0.2 else REACH)
+    tcp = float((getattr(rt, "tcp_reach", None) or {}).get(palm, 0.0))   # P0: the gripper's TCP is past the palm
+    return c, (float(arm) * 1.02 + tcp if isinstance(arm, (int, float)) and arm > 0.2 else REACH)
 
 
 def clamp_target(rt, tasks, palm, p):
@@ -178,9 +179,16 @@ def _stop_others(ctx):
         rt.mode = "MIRROR"
 
 
+def _orient(rt, on):
+    """P0 physics: the operator turns the gripper to grasp, so its orientation is tracked firmly (as in P0's picks)."""
+    if hasattr(rt, "orient"):
+        rt.orient(on)
+
+
 def op_start(ctx, s, msg):
     rt = ctx.rt
     _stop_others(ctx)
+    _orient(rt, True)
     palm = _palm(rt, msg.get("role") or s.get("role"))
     s.update(active=True, role=palm.replace("_palm", ""), src=str(msg.get("src") or "vr")[:16], last=time.time(), held=None,
              clamped=False)
@@ -191,6 +199,8 @@ def op_start(ctx, s, msg):
 
 def op_stop(ctx, s, msg):
     was = s["active"]
+    if was:
+        _orient(ctx.rt, False)
     s.update(active=False, held=None)
     s["applied"].clear()
     _reply(s, msg, True, "Teleop off. I'm holding this pose." if was else "Teleop was already off.")
@@ -214,6 +224,7 @@ def command(ctx, s, msg):
     s["last"], s["echo"] = now, msg.get("t")
     if not s["active"]:                                  # a bare command (P3 mirroring, scripts): implicit start
         s.update(active=True, src=str(msg.get("src") or "message")[:16])
+        _orient(rt, True)
     s["role"] = palm.replace("_palm", "")
     if rt.mode not in ("MIRROR", "REC"):               # REC: the runtime records what the hand does (P1 can too)
         s["held"] = "busy: I'm running a task (say stop, or start teleop again)"
@@ -264,6 +275,7 @@ def on_teleop(ctx, msg):
 def teleop_tick(ctx):
     s = _st(ctx)
     if s["active"] and s["last"] and time.time() - s["last"] > IDLE_S:
+        _orient(ctx.rt, False)
         s.update(active=False, held=None)
         s["applied"].clear()
 

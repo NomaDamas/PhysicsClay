@@ -96,6 +96,25 @@ async def run(t):
     mug = next((o["pos"] for o in t.state().get("scene_objects", []) if o["name"] == "mug"), None)
     if mug is None:
         t.check("teleop: grasp the mug", False, "no mug in this world")
+    elif (t.state().get("physics") or {}).get("mode") == "dynamic":
+        # P0 physics: the jaws must close *around* the mug (the kinematic grasp took it from anywhere within 7 cm). The
+        # operator turns the G1's palm gripper level, jaws across the table (approach forward), comes in from behind at
+        # the mug's middle, closes, lifts, puts it back and opens: what a person in VR does.
+        q = [0.7071, 0.0, 0.7071, 0.0]
+        at = [mug[0], mug[1], max(mug[2], 0.765)]
+        pre = [at[0] - 0.10, at[1], at[2] + 0.03]
+        cur = _hand(t).get("p") or pre
+        await _stream(t, "right", [cur[0], cur[1], 0.95], 1.6, grip=0.0, q=q)     # up first: a real hand would knock it over
+        await _stream(t, "right", [pre[0], pre[1], 0.95], 2.0, grip=0.0, q=q)
+        await _stream(t, "right", pre, 1.6, grip=0.0, q=q)
+        await _stream(t, "right", at, 2.0, grip=0.0, q=q)
+        await _stream(t, "right", at, 1.6, grip=1.0, q=q)
+        held = _hand(t).get("holding")
+        up = [at[0], at[1], at[2] + 0.12]
+        await _stream(t, "right", up, 2.0, grip=1.0, q=q)
+        mug_up = next((o["pos"] for o in t.state().get("scene_objects", []) if o["name"] == "mug"), mug)
+        await _stream(t, "right", at, 2.0, grip=1.0, q=q)
+        await _stream(t, "right", at, 1.6, grip=0.0, q=q)
     else:
         at = [mug[0], mug[1], mug[2] + 0.085]
         await _stream(t, "right", at, 2.6, grip=0.0)
@@ -106,6 +125,7 @@ async def run(t):
         mug_up = next((o["pos"] for o in t.state().get("scene_objects", []) if o["name"] == "mug"), mug)
         await _stream(t, "right", at, 1.6, grip=1.0)
         await _stream(t, "right", at, 0.4, grip=0.0)
+    if mug is not None:
         released = _hand(t).get("holding") is None
         mug_down = next((o["pos"] for o in t.state().get("scene_objects", []) if o["name"] == "mug"), mug)
         t.check("teleop: closing at the mug grasps it, lifting carries it, opening puts it down",

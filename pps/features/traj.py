@@ -26,6 +26,8 @@ from .. import traj as T
 
 KEY = "traj"
 MAX_GHOST = 160
+GRASP_HOLD = 1.2        # s: physics: the hand waits at a grip point while the jaws close / open (they ramp over 0.8 s)
+GRASP_SPEED = 0.05      # m/s: physics: the last stretch into a grasp is slow (the plant lags the plan)
 CHECKERS = []           # extra per-sample checks (P5 safety): fn(ctx, pts, quats, info) -> [reason | None]
 
 
@@ -104,6 +106,103 @@ def _poses(ctx):
     return out
 
 
+# ---------------------------------------------------------------------------- physics: real grasps (P0)
+class _Oriented:
+    """With physics a grasp needs the hand turned the right way: hold the orientation firmly (rt.orient, as P0's picks
+    do) inside the block and put the hand tasks' costs back afterwards. No-op in kinematic mode."""
+
+    def __init__(self, rt, on=True):
+        self.rt, self.on = rt, on and getattr(rt, "plant", None) is not None and hasattr(rt, "orient")
+
+    def __enter__(self):
+        if self.on:
+            self.saved = [float(np.max(t.orientation_cost)) for t in self.rt.hand_tasks]
+            self.rt.orient(True)
+        return self
+
+    def __exit__(self, *exc):
+        if self.on:
+            for t, v in zip(self.rt.hand_tasks, self.saved):
+                t.set_orientation_cost(v)
+
+
+def _grasp_pose(ctx, name, palm):
+    """P0's planned grasp of `name` with this hand: -> (TCP position, orientation wxyz, approach direction) or None.
+    Tries the planner's ways in (tasks.grasp_plan variants) and keeps the first the IK can reach."""
+    tasks, rt = ctx.tasks, ctx.rt
+    prof = getattr(rt, "profile", None)
+    style = ((getattr(prof, "physics", None) or {}).get("grasp") or getattr(prof, "grasp", "top")) if prof else "top"
+    d, mid = rt.data, rt.hands_mid[palm]
+    q_now, c, first = d.mocap_quat[mid].copy(), tasks.mug_center(name), None
+    try:
+        with _Oriented(rt):
+            for variant in range(len(tasks_mod.SIDE_WAYS) + 2):
+                d.mocap_quat[mid] = q_now
+                off, n, _why = tasks.grasp_plan(name, palm, style, None, variant)
+                if off is None:
+                    break
+                cand = (c + off, T.qnorm(d.mocap_quat[mid].copy()), np.asarray(n, float))
+                first = first or cand
+                if all(rt.precheck(np.array([cand[0] + np.array([0, 0, 0.06]), cand[0]]), palm, quats=[cand[1], cand[1]])):
+                    return cand
+    finally:
+        d.mocap_quat[mid] = q_now
+    return first
+
+
+def physical_grasps(ctx, w_tr, palm):
+    """P0 physics: a real gripper only holds what its jaws close around (the kinematic grasp took anything within reach of
+    the hand). A point that closes the gripper on an object becomes the planner's grasp of it (where the TCP goes, how
+    the hand is turned); the point before it, when it is the way in from above, lines up over the grasp. Points without an
+    orientation of their own take the grasp's (from the start, and after letting go the hand stays turned that way: it is
+    held firmly while the path runs). The hand comes in slowly and waits at the grip points for the jaws. The number of
+    points doesn't change (handles and edits keep their indices). Kinematic mode: the trajectory is unchanged."""
+    tasks = ctx.tasks
+    if getattr(tasks, "plant", None) is None or not hasattr(tasks, "grasp_plan"):
+        return w_tr
+    held = {v for v in tasks.holding.values() if v}
+    grip = 1.0 if tasks.holding.get(palm) else None
+    pts, q_carry, snapped, first_q = [], None, [], None
+    for p in w_tr["points"]:
+        p = dict(p)
+        g = p.get("grip")
+        own = any(p.get(k) is not None for k in ("q", "yaw", "tilt", "roll"))
+        if g is not None and g >= 0.5 and not (grip is not None and grip >= 0.5):
+            P = np.asarray(p["p"], float)
+            near = sorted((float(np.linalg.norm(tasks.mug_center(n) - P)), n) for n, o in tasks.objs.items()
+                          if n not in held and graspable(P, tasks.mug_center(n), o["r"], o["half_h"]))
+            pose = _grasp_pose(ctx, near[0][1], palm) if near else None
+            if pose is not None:
+                gp, qg, _n = pose
+                if pts:                                          # the way in from above: straight down onto the grasp
+                    prev = np.asarray(pts[-1]["p"], float)
+                    if prev[2] > gp[2] + 0.02 and float(np.hypot(*(prev[:2] - gp[:2]))) < 0.15:
+                        pts[-1]["p"] = _r([gp[0], gp[1], max(prev[2], gp[2] + 0.06)])
+                    if not any(pts[-1].get(k) is not None for k in ("q", "yaw", "tilt", "roll")):
+                        pts[-1]["q"] = _r(qg, 5)
+                p.update(p=_r(gp), q=_r(qg, 5), hold=max(float(p.get("hold") or 0.0), GRASP_HOLD),
+                         speed=min(float(p.get("speed") or GRASP_SPEED), GRASP_SPEED))
+                q_carry, first_q = qg, first_q if first_q is not None else qg
+                held.add(near[0][1])
+                snapped.append(near[0][1])
+        elif g is not None and g < 0.5 and q_carry is not None:
+            if not own:
+                p["q"] = _r(q_carry, 5)                          # let go the way it was held
+            p["hold"] = max(float(p.get("hold") or 0.0), GRASP_HOLD)
+        elif q_carry is not None and not own:
+            p["q"] = _r(q_carry, 5)                              # carry it (and go on) the way it was grasped
+        if g is not None:
+            grip = g
+        pts.append(p)
+    if not snapped:
+        return w_tr
+    for p in pts:                                                # before the first grasp: turned for it already
+        if p.get("q") is not None or any(p.get(k) is not None for k in ("yaw", "tilt", "roll")):
+            break
+        p["q"] = _r(first_q, 5)
+    return dict(w_tr, points=pts, meta=dict(w_tr.get("meta") or {}, grasps=snapped))
+
+
 # ---------------------------------------------------------------------------- checks
 def _checkers(ctx, palm, tr_world, dense, world):
     rt, tasks = ctx.rt, ctx.tasks
@@ -111,8 +210,11 @@ def _checkers(ctx, palm, tr_world, dense, world):
     tol_default = float(getattr(getattr(rt, "validator", None), "reach_tol", 0.06))
     tols = {k: p["tol"] for k, p in zip(dense["key"], tr_world["points"]) if p.get("tol")}
 
+    firm = bool((tr_world.get("meta") or {}).get("grasps"))     # physics grasps: checked as they run, hand turned firmly
+
     def reach(pts, qs, info):
-        rt.precheck(pts, palm, quats=qs)
+        with _Oriented(rt, firm):
+            rt.precheck(pts, palm, quats=qs)
         d = list(getattr(rt, "last_precheck_dists", []) or [0.0] * len(pts))
         na, idx = info["n_approach"], info["idx"]
         out = []
@@ -198,7 +300,7 @@ def prepare(ctx, tr, check=True):
     s = _st(ctx)
     palm = _palm(rt, tr["role"])
     world = world_of(ctx, palm)
-    w_tr = T.to_world(tr, _poses(ctx))
+    w_tr = physical_grasps(ctx, T.to_world(tr, _poses(ctx)), palm)
     q0 = s["qhome"].get(palm)
     kind = _kind(ctx)
     dense = T.densify(w_tr, q0=q0, kind=kind)
@@ -260,6 +362,7 @@ def _make_path(ctx, prep, path=None):
     timed = {"timed": True, "dense": {"t": dense["t"], "p": dense["p"], "q": dense["q"], "events": dense["events"], "di": di,
                                "didx": np.asarray(idx)},
              "traj_id": prep["traj"]["id"], "approach_speed": T.default_speed(prep["kind"]), "on_event": _on_event(ctx, palm),
+             "orient": bool((prep["world_traj"].get("meta") or {}).get("grasps")),     # physics: hold the grasp orientation
              "why": None if prep["ok"] else _why(prep)}
     if path is not None:                                # adopted drawn path: keep its points and verdicts
         path.update(timed, pts0=np.array(path["pts"], float).copy())

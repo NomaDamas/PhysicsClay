@@ -1191,6 +1191,7 @@ class Tasks:
             return
         self.events, self.fired, self.kind = {}, set(), "path"
         self._free_obstacles()                    # physics: the path may close the gripper on any object (P2 grip points)
+        rt.orient(bool(rt.path.get("orient")))    # physics: a trajectory's grasps hold the hand's orientation firmly
         rt.engaged, rt.mode, rt.follow_s, rt.path["i"], rt.follow_hold = False, "FOLLOW", 0.0, 0, False
         rt.recorder.start()
         self.done_msg = "Finished the path."

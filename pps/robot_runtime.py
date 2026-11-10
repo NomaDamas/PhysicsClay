@@ -126,6 +126,9 @@ class Runtime:
             + np.linalg.norm(di.site_xpos[m.site(f"{s}_palm").id] - di.xpos[m.body(f"{s}_elbow_link").id])
             for s in ("left", "right")])
         self.retargeter = Retargeter(sh, arm_len, mirror=mirror)
+        # how far the end effector (physics: the gripper's TCP) sits past the palm the arm length is measured to
+        # (teleop / skills widen their reach by it; 0 in kinematic mode)
+        self.tcp_reach = {h: float(np.linalg.norm(di.site_xpos[self.palm_sid[h]] - di.site_xpos[m.site(h).id])) for h in HANDS}
         self.body_rt = BodyRetargeter()
         self.body_home = {"com": d.mocap_pos[self.com_mid].copy(),
                           "feet": {f: d.mocap_pos[mid].copy() for f, mid in zip(FEET, self.feet_mid)},
