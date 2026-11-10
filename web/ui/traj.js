@@ -205,7 +205,7 @@
     }
     layer.add(tube);
     const a = arr(g.approach);
-    if (a.length === 2 && !tj.running) {    // dashed: how the hand gets to the start
+    if (a.length >= 2 && !tj.running) {     // dashed: how the hand gets to the start (lifted over what's in the way)
       const geo = new T.BufferGeometry().setFromPoints(a.map((q) => new T.Vector3(q[0], q[1], q[2])));
       const line = new T.Line(geo, new T.LineDashedMaterial({ color: g.approach_ok === false ? COL.bad : COL.approach, dashSize: 0.012, gapSize: 0.009, transparent: true, opacity: 0.85 }));
       line.computeLineDistances(); layer.add(line);

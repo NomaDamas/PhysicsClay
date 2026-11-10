@@ -533,10 +533,10 @@ MESSAGES = {
     "tasks.already_open": ("{label} is already open ({pct}%).", "{label|은} 이미 열려 있어요 ({pct}%)."),
     "tasks.already_closed": ("{label} is already closed.", "{label|은} 이미 닫혀 있어요."),
     "tasks.knob_blocked": (
-        "I can't get my fingers around the handle of {label}: {above} is right above it and my gripper only grasps "
-        "handles from above (a robot that reaches in from the front could).",
-        "{label} 손잡이에 손가락을 걸 수 없어요: 바로 위에 {above|이} 있는데 제 그리퍼는 손잡이를 위에서만 잡을 수 "
-        "있어요 (앞에서 손을 넣는 로봇이라면 할 수 있어요).",
+        "I can't get my fingers around the handle of {label}: {above} is right above it and in front of it, so my "
+        "gripper can't get in from above or from the front.",
+        "{label} 손잡이에 손가락을 걸 수 없어요: 바로 위와 앞에 {above|이} 있어서 그리퍼가 위에서도 앞에서도 들어갈 "
+        "수 없어요.",
     ),
     "tasks.no_gripper_handle": (
         "I have no gripper on my {hand} to hold {label}'s handle.",

@@ -106,3 +106,32 @@ async def run(t):
             ghost.get("ok") and not all(ghost["ok"]) and "would hit the mug" in (tj.get("why") or ""), (tj.get("why") or str(tj.get("reply")))[:100])
     await t.send(type="traj", op="clear"); await t.pump(0.4)
     await t.task("reset_scene", 1)
+
+    # language keypoints are lifted with the gripper's real extent (pps/traj.py hand_extent, lead_in): the default robot's
+    # (the G1's) gripper hangs ~10 cm below its TCP as its hand turns up over the table, so the old fixed 5 cm lift over
+    # the mug ran it through the mug and knocked it over; now the pass clears it and the mug stays standing
+    spec = {"label": "over the mug", "keypoints": [{"xyz": [0.24, -0.19, 0.92]}, {"via": "over", "of": "mug"}, {"xyz": [0.50, -0.19, 0.92]}]}
+    m0 = _obj(t, "mug")
+    await t.send(type="traj", id="p2-over", op="set", spec=spec, run=True)
+    tj, started = {}, False
+    for _ in range(80):
+        await t.pump(0.25)
+        tj = st().get("traj") or {}
+        started = started or bool(tj.get("running"))
+        if (tj.get("reply") or {}).get("id") == "p2-over" and (started or (tj.get("reply") or {}).get("ok") is False):
+            break
+    ghost = tj.get("ghost") or {}
+    mug = next((o["pos"] for o in st().get("scene_objects") or [] if o["name"] == "mug"), [0.33, -0.188, 0.811])
+    over = [q[2] for q in ghost.get("pts") or [] if math.hypot(q[0] - mug[0], q[1] - mug[1]) < 0.065]
+    low = (min(over) - (mug[2] + 0.071)) * 100 if over else -99.0
+    fin = await t.until_done(45) if started else (st().get("task") or {})
+    await t.pump(0.6)
+    m1 = _obj(t, "mug")
+    moved = math.hypot(m1["p"][0] - m0["p"][0], m1["p"][1] - m0["p"][1]) * 100 if m0 and m1 else 99
+    tilt = _tilt(m1.get("q", [1, 0, 0, 0])) if m1 else 99
+    t.check("paths: a keypoint pass over the mug lifts the gripper clear of it and leaves it standing (P2, gripper-aware lift)",
+            fin.get("status") == "done" and low > 6.0 and moved < 1.0 and tilt < 5,
+            f"{fin.get('status')}: {str(fin.get('message') or (tj.get('reply') or {}).get('message'))[:50]}; TCP {low:.1f} cm over the "
+            f"mug's top; mug moved {moved:.1f} cm, tilt {tilt:.0f}°")
+    await t.send(type="traj", op="clear"); await t.pump(0.4)
+    await t.task("reset_scene", 1)

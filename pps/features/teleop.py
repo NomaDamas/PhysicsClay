@@ -8,7 +8,12 @@
 
 Every command goes through the same runtime target path P3 mirroring uses (the hand's mocap target), after:
   * clamping: a sphere of the arm's reach around its shoulder, and above the work surface (plus what it carries);
-  * rate limiting: at most MAX_SPEED m/s and MAX_TURN rad/s, both multiplied by P5's `rt.safety_scale`;
+  * rate limiting: at most MAX_SPEED m/s and MAX_TURN rad/s of the robot's time (sim time with physics, so a loaded
+    machine running the plant slower than real time doesn't move the target faster than the arm can follow), both
+    multiplied by P5's `rt.safety_scale`; with physics the target also waits while the measured hand trails it by more
+    than LEAD and is still catching up (a real arm trails a fast target and cuts the corner through whatever is beside
+    the path: the G1's open 15 cm gripper knocked the mug over on a move across the table), so the hand goes the way
+    the operator points, at the pace the arm can follow;
   * safety: nothing moves during a protective stop (`rt.safety_scale <= 0` or `tasks.safety.stopped`), and a target
     inside the person's body zone (`tasks.safety.check_point`, P5) is not taken. There is no way to bypass this.
 `grip` goes to `rt.set_gripper(palm, g)` when the runtime has it (P0); otherwise closing the gripper next to an object
@@ -39,6 +44,8 @@ SURFACE_MARGIN = 0.015   # m the end effector stays above the work surface
 GRASP_R = 0.07           # m from an object's centre: closing the gripper there holds it (kinematic gripper)
 IDLE_S = 3.0             # s without a command -> teleop ends by itself
 STALE_S = 0.5            # s without a command -> reported as stale (the hand already holds still)
+LEAD = 0.05              # m: physics: how far the target may lead the measured end effector while the arm catches up
+CATCH_V = 0.03           # m/s: ... (the hand closing in on the target faster than this is still catching up)
 
 
 def _r(p, n=4):
@@ -122,9 +129,41 @@ def over_edge(rt, palm, want):
     ee = np.asarray(rt.data.site_xpos[rt.palm_sid[palm]], float)
     if not over or ee[2] >= top + 0.03:
         return want
-    if ee[0] > x0 - 0.04 and y0 - 0.04 <= ee[1] <= y1 + 0.04:   # under the table: back out from under the edge
-        return np.array([x0 - 0.08, ee[1], min(ee[2], top - 0.04)])
+    if ee[0] > x0 - 0.04 and y0 - 0.04 <= ee[1] <= y1 + 0.04:   # over the table's footprint:
+        if ee[2] >= top:                                         # on it (just above the surface): nothing in the way
+            return want
+        return np.array([x0 - 0.08, ee[1], min(ee[2], top - 0.04)])   # under it: back out from under the edge
     return np.array([ee[0], ee[1], top + 0.08])                 # beside it: straight up, then over
+
+
+def robot_clock(rt, now):
+    """The clock the hand target's speed limits run on: with physics the robot's own (sim) time, which runs slower
+    than the wall clock when a busy machine caps the plant's substeps (rtf < 1: plan and plant share that clock, P0);
+    a wall-clock limit would then move the target faster than the arm can follow in its time, so it trails, overshoots
+    and sweeps through what is near the path. Kinematic: the wall clock."""
+    pl = getattr(rt, "plant", None)
+    return float(pl.d.time) if pl is not None else float(now)
+
+
+def step_dt(rt, clock, last):
+    """Time since the last applied command on that clock (capped at 0.1 s). Physics: two commands in one server frame
+    share that frame's robot time (the second moves nothing more), and a scene reset (the clock restarts) gives 0."""
+    if getattr(rt, "plant", None) is not None:
+        return float(np.clip(clock - last, 0.0, 0.1)) if last is not None else 1 / 30
+    return float(np.clip(clock - (clock - 1 / 30 if last is None else last), 1 / 120, 0.1))
+
+
+def leash(ee, cur, new, closing, lead=LEAD, catching=CATCH_V):
+    """Physics: hold the target while the arm is still catching up with it. The target goes on from `cur` toward `new`
+    unless it already leads the measured end effector `ee` by more than `lead` and the hand is closing in on it faster
+    than `catching` m/s (a trailing arm: going on would make it cut the corner). A hand that has stopped short of the
+    target (an orientation or a joint limit the IK can't meet) doesn't hold it back, and moving the target back toward
+    the hand is always allowed. -> (target, held?)"""
+    ee, cur, new = (np.asarray(v, float) for v in (ee, cur, new))
+    lag = float(np.linalg.norm(cur - ee))
+    if lag > lead and closing is not None and closing > catching and float(np.linalg.norm(new - ee)) > lag:
+        return cur, True
+    return new, False
 
 
 def safety_hold(ctx, palm, p):
@@ -249,21 +288,35 @@ def command(ctx, s, msg):
         return
     want, clamped = clamp_target(rt, tasks, palm, p)
     why = safety_hold(ctx, palm, want)
+    clock = robot_clock(rt, now)
     if why:
         s["held"], s["clamped"] = why, clamped
-        s["applied"][palm] = now
+        s["applied"][palm] = clock
         return
     d, mid = rt.data, rt.hands_mid[palm]
     want = over_edge(rt, palm, want)
     scale = float(np.clip(float(getattr(rt, "safety_scale", 1.0)), 0.0, 1.0))
-    dt = float(np.clip(now - s["applied"].get(palm, now - 1 / 30), 1 / 120, 0.1))
-    s["applied"][palm] = now
+    dt = step_dt(rt, clock, s["applied"].get(palm))
+    s["applied"][palm] = clock
     cur = d.mocap_pos[mid].copy()
     delta = want - cur
     n = float(np.linalg.norm(delta))
     step = MAX_SPEED * dt * scale
-    d.mocap_pos[mid] = want if n <= step else cur + delta * (step / n)
+    new = want if n <= step else cur + delta * (step / n)
     limited = n > step
+    if getattr(rt, "plant", None) is not None:          # physics: on a leash to the real hand (see LEAD)
+        ee = np.asarray(d.site_xpos[rt.palm_sid[palm]], float).copy()
+        prev = s.setdefault("ee", {}).get(palm)
+        closing = None
+        if prev is not None and clock > prev[0]:
+            v = (ee - prev[1]) / (clock - prev[0])
+            u = cur - ee
+            closing = float(np.dot(v, u / (float(np.linalg.norm(u)) or 1.0)))
+        if prev is None or clock != prev[0]:
+            s["ee"][palm] = (clock, ee)
+        new, leashed = leash(ee, cur, new, closing)
+        limited = limited or leashed
+    d.mocap_pos[mid] = new
     if q is not None:
         q = T.qnorm(q)
         q0 = T.qnorm(d.mocap_quat[mid].copy())

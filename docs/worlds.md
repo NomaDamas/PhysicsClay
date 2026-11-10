@@ -100,11 +100,17 @@ or got wedged is left out. Results are cached per `(template, seed)`.
 
 Task actions (`docs/PROTOCOL.md` "v15 · Worlds"):
 
-* `open {fixture, amount 0..1 (default 0.8)}` / `close {fixture}`: the gripper comes down on the knob, closes, and
-  moves it along the drawer's slide or the door's arc (planned on the real joint geometry, every point reach-checked)
-  in the plant's impedance mode (compliance), then lets go and backs off. Honest failures: out of reach (with how far),
-  the knob is right under another one (grasps come from above), the jaws couldn't close on it, they slipped off, or it's
-  stuck (the hand falls behind the plan: "it's stuck at 5 % open").
+* `open {fixture, amount 0..1 (default 0.8)}` / `close {fixture}`: the gripper comes to the knob one of three ways
+  (from above, from the front and above at 50°, or straight from the front along the knob's outward direction, with
+  the jaws across the knob), closes on it, and moves it along the drawer's slide or the door's arc (planned on the
+  real joint geometry, the hand moving rigidly with the handle; every point reach-checked, the jaws within 1.5 cm of
+  the knob and within 3 cm of the handle's path, a close all the way to shut) in the plant's impedance mode
+  (compliance), then lets go and backs off. A way whose fingers would sweep into something (the knob of the drawer
+  above, a shelf) is skipped; while it works the gripper, the wrist, the arm and a mobile base keep off the furniture
+  nearby (a counter's edge, the other drawers), so a way the arm can't really trace is refused by its reach check; the
+  first way that works runs, one tried per server tick. A close pushes 1 cm (2°) past shut, so a compliant hand presses
+  it closed. Honest failures: out of reach (the way that came closest says how far), the jaws couldn't close on the
+  knob, they slipped off, or it's stuck (the hand falls behind the plan: "it's stuck at 5 % open").
 * `pick_from {container, object?}`: take it out and hold it, lifted clear (the drawer / door in front of it must be
   open at least 50–60 %, else it says so); things in the same bin aren't kept away from (the fingers go in among them).
 * `place_in {object?, container}`: a free spot inside (a rack picks a free slot), let go just above what is there,
@@ -117,27 +123,46 @@ Task actions (`docs/PROTOCOL.md` "v15 · Worlds"):
 Mobile bases move between stations with the existing `drive`. In kinematic mode (`--kinematic`) a grasped drawer or door
 follows the hand and what is inside rides along.
 
-## What works per robot (physics, headless runs and `scripts/checks/worlds.py`)
+## What works per robot (physics, `scripts/bench_worlds.py`, seeds 1–3, and `scripts/checks/worlds.py`)
 
-| Task | Panda | UR5e |
-|---|---|---|
-| kitchen: open the top drawer ≥ 60 % (to 78 %), take the spoon, put it in the sink, close it | seeds 1–3 | seeds 2–3 (seed 1: the spoon slides out of the jaws as it is lowered into the sink; reported as a slip) |
-| warehouse: pick the box out of the tote, put it in the empty tote | seeds 1–4 | seeds 1–3 |
-| assembly line: a part rides to the photo-eye, the arm picks it into the bin | seeds 1–3 | seeds 1–3 |
-| lab: a tube from the source rack into a free slot of the tube rack | seeds 1–3 | seeds 1–3 |
-| machine tending: open the CNC door, the part from the vise into the finished tray, close the door | seeds 1–3 | seed 1 |
-| a jammed drawer / a knob under another one | "stuck at 5 % open" / refused with the reason | same code |
+`scripts/bench_worlds.py <robots> -s 1 -s 2 -s 3` runs each scenario headless in sim time, the same task actions the
+server runs, and checks the outcome after every step (how far a drawer opened, which container an object is in). Cells:
+seeds that passed of 3; "refused" = the robot said it can't, before moving (with how far out of reach, or how far off
+the knob / the spot its jaws would be); the rest are physical failures it reported.
+
+| Scenario | Panda | UR5e | xArm7 | iiwa14 | TidyBot (mobile) |
+|---|---|---|---|---|---|
+| kitchen: open the top drawer, take the spoon, put it in the sink, close the drawer | **3/3** | **2/3** (s2: its arm couldn't follow the carry into the sink, 10 cm short; it says so, still holding the spoon) | **2/3** (s2 refused: the sink spot 5.9 cm off) | 0/3 (refused: the knob 2.4 cm off / 7 cm out of reach: it stands 12 cm further back) | 0/3 (the drawer opens; lifting the spoon clear of the counter is 10 cm out of reach; s2 the drawer 35 %) |
+| lower: open the second drawer (knob right under the top one's), close it | **3/3** | **3/3** | **2/3** (s2 refused, 5 cm) | 0/3 (refused, 12–19 cm) | **2/3** (s1: no grip on the knob closing it) |
+| bottom drawer (knob ~45 cm off the floor): open, close | 0/3 (refused, 10–15 cm) | **1/3** (s1, s3 refused: its arm can't push it shut past the drawers above, 2.7 cm off) | 0/3 (refused, 13–22 cm) | 0/3 (refused, 10–19 cm) | **3/3** |
+| dishwasher door (1.1 m to the side) | 0/3 (refused, 60 cm) | 0/3 (refused, 41 cm) | 0/3 (refused, 67 cm) | 0/3 (refused, 54 cm) | 0/3 (reaches it; the spring-loaded door pulls out of its grip) |
+| warehouse: the box out of the tote into the empty tote | **3/3** | **3/3** | **3/3** | **3/3** | 0/3 (refused: lifting over the tote's rim, 8–11 cm) |
+| assembly line: a part rides to the photo-eye, the arm puts it in the bin | **3/3** | **3/3** | **3/3** | **3/3** | 0/3 (slips, its arm trails the carry) |
+| lab: a tube from the source rack into a free slot of the tube rack | **3/3** | **3/3** | **3/3** | **3/3** | 0/3 (refused, 21–33 cm: the bench is high for its arm) |
+| machine tending: open the CNC door, the part from the vise into the finished tray, close the door | **1/3** (s2, s3 refused: the hand can't get under the machine's roof from that side) | **1/3** (s2, s3 refused, 11 cm: its forearm would rest on the machine's wall) | 0/3 (refused 12–44 cm; s2 slipped off the door's handle) | 0/3 (refused 12 cm; s1 no grip on the door's knob) | 0/3 (refused, 12–13 cm) |
+| a jammed drawer | "stuck at 0 % open" (`checks/worlds.py`) | same code | | | |
+
+Before this pass (the same benchmark at f06fbc2): Panda kitchen 2/3, lower 0/3 (refused: grasps came from above only),
+tending 0/3; UR5e kitchen 0/3 (no grip on the top drawer's knob: its wrist met the counter's edge in the plant), lower
+0/3, tending 1/3; xArm7 kitchen 0/3, assembly 0/3 (the spoon / blank pivoted out of its fingers); iiwa14 as now but
+lower refused as "knob under another"; TidyBot drawers 0/3 (it drove into the cabinets and swept the drawer shut).
+What changed: handles from the front (above), the planner keeping the arm, wrist and a mobile base off the furniture,
+the part being an obstacle but for its knob on the way in, a bow around the arm's own base for a carry it can't trace
+straight, furniture overhead (a machine's roof) kept off by the gripper, and the xArm7's flat fingertip pads.
 
 Other bodies build in every world they fit (`tests/test_worlds.py` checks one of each kind: arm, humanoid, two-arm rig,
 mobile base, quadruped) and stand clear of the furniture; their grasps are as reliable as on the table
-(`docs/V1.md` P0 table: the G1 picks, the experimental bodies don't yet).
+(`docs/V1.md` P0 table: every body picks, the H2 too since v1's final pass).
 
 ## Limitations
 
-* Handles are grasped **from above**: a knob right under another one (the second drawer of a stack, a low door under a
-  drawer) is refused with that reason; reaching in from the front needs side grasps on handles (not yet).
-* Doors with a horizontal hinge (dishwasher door, centrifuge lid) turn the knob out of a top-down grasp's reach near the
-  end of their swing; they open as far as the arm can follow and say how far that was.
+* Handles are reached from above, from the front and above, or from the front; a knob blocked every way (a shelf right
+  over it and something in front) is refused with that reason. A handle held from the front turns with a door (a
+  dishwasher door ends with the hand over it); whether a low or far knob is reachable depends on the body: a fixed
+  arm at the counter reaches the top two drawers of a stack; the bottom drawer (knob ~45 cm off the floor) and the
+  dishwasher (1.1 m to the side) are out of reach for most arms and say by how much.
+* Reactive IK, not a motion planner: an arm whose links would have to thread between the drawers of a stack to push
+  the lowest one shut (the UR5e) says it can't get there (how far off) rather than leaving it ajar.
 * No cloth (towels are folded thin boxes), no liquids, no deformables; utensil handles are thicker than real ones so a
   parallel gripper can hold them.
 * The conveyor's photo-eye stops the belt for the robot; picking a moving part (tracking) is not implemented.

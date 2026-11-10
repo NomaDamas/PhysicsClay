@@ -46,7 +46,8 @@ async def run(t):
 
     # 2. arranged swap: targets occupy each other -> set one aside, then place both, each within 3 cm
     await t.send(type="goal", op="set", targets={"mug": red, "red_block": mug}, run=True, source="arrange")
-    g = await _wait(t, lambda g: g.get("status") != "ready" and g.get("sequence"), 5)
+    # (the set-aside spots are reach-tested as a job across frames: status "planning" until the moves are worked out)
+    g = await _wait(t, lambda g: g.get("status") not in ("ready", "planning") and g.get("sequence"), 60)
     seq = [(s["kind"], s["object"]) for s in g.get("sequence") or []]
     t.check("goal: swap is ordered (set one aside first)", seq == [("aside", "red_block"), ("place", "mug"), ("place", "red_block")], str(seq))
     g = await _wait(t, lambda g: g.get("status") in ("done", "failed", "stopped"), 150)
@@ -63,7 +64,7 @@ async def run(t):
     cv2.circle(img, (544, 120), 30, (235, 235, 235), -1)                 # white mug at u=0.85, v=0.25
     jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])[1].tobytes()
     await t.send(type="goal", op="photo", jpg_b64=base64.b64encode(jpg).decode(), view="user", offline=True)
-    g = await _wait(t, lambda g: g.get("status") not in ("locating", "idle", "done") and (g.get("photo") or {}).get("source"), 15)
+    g = await _wait(t, lambda g: g.get("status") not in ("locating", "idle", "done", "planning") and (g.get("photo") or {}).get("source"), 30)
     ph = g.get("photo") or {}
     tg = g.get("targets") or {}
     t.check("goal: photo read offline (colour blobs)", ph.get("source") == "offline" and {"mug", "red_block"} <= set(tg),

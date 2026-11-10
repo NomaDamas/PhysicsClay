@@ -94,6 +94,70 @@ def test_rate_limited_and_converges():
     assert np.allclose(ctx.rt.data.mocap_pos[0], target, atol=1e-6)
 
 
+def test_physics_rate_limit_runs_on_the_robots_clock():
+    """With physics the target's speed is per second of the robot's (sim) time: a busy machine that runs the plant at a
+    third of real time gets a third of the motion per wall second, so the arm can follow it."""
+    ctx = make_ctx()
+    ctx.rt.plant = SimpleNamespace(d=SimpleNamespace(time=10.0))
+    d = ctx.rt.data
+
+    def follow():                                             # an arm that keeps up: the hand is where the target is
+        d.site_xpos[0] = d.mocap_pos[0]
+
+    send(ctx, op="start")
+    p0 = d.mocap_pos[0].copy()
+    target = (p0 + np.array([0.0, 0.3, 0.0])).tolist()
+    send(ctx, p=target)                                       # the first command: one frame's worth (1/30 s)
+    m1 = float(np.linalg.norm(d.mocap_pos[0] - p0))
+    assert 0 < m1 <= TP.MAX_SPEED / 30 + 1e-9
+    follow()
+    time.sleep(0.05)                                          # wall time passes, but no robot time: the target stays
+    send(ctx, p=target)
+    assert np.isclose(float(np.linalg.norm(d.mocap_pos[0] - p0)), m1)
+    ctx.rt.plant.d.time += 0.04                               # 40 ms of robot time: 4 cm more at 1 m/s
+    send(ctx, p=target)
+    assert np.isclose(float(np.linalg.norm(d.mocap_pos[0] - p0)), m1 + TP.MAX_SPEED * 0.04)
+    ctx.rt.plant.d.time = 0.0                                 # a scene reset restarts the clock: no jump
+    p1 = ctx.rt.data.mocap_pos[0].copy()
+    send(ctx, p=target)
+    assert np.allclose(ctx.rt.data.mocap_pos[0], p1)
+
+
+def test_physics_target_waits_while_the_arm_catches_up():
+    """With physics a trailing arm (still moving toward the target, more than LEAD behind) holds the target where it is,
+    so the hand goes the way it was pointed instead of cutting the corner; a hand that has stopped short (an IK limit)
+    doesn't hold it back, and back toward the hand is always allowed."""
+    ctx = make_ctx()
+    ctx.rt.plant = SimpleNamespace(d=SimpleNamespace(time=0.0))
+    d = ctx.rt.data
+    send(ctx, op="start")
+    ee0 = d.site_xpos[0].copy()
+    want = ee0 + np.array([0.0, 0.4, 0.0])
+
+    def tick(hand_dy=0.0):
+        ctx.rt.plant.d.time += 1 / 30
+        d.site_xpos[0] = d.site_xpos[0] + [0.0, hand_dy, 0.0]
+        send(ctx, p=want.tolist())
+        return d.mocap_pos[0].copy()
+
+    for _ in range(3):                                        # the hand hasn't moved yet: the target goes on
+        tick()
+    t1 = d.mocap_pos[0].copy()
+    assert t1[1] - ee0[1] > TP.LEAD
+    t2 = tick(0.01)                                           # the hand moves toward it (0.3 m/s): the target waits
+    assert np.allclose(t2, t1) and ctx.store[TP.KEY]["limited"]
+    for _ in range(3):
+        tick(0.01)
+    assert np.allclose(d.mocap_pos[0], t1)
+    t3 = tick(0.0)                                            # stopped short (lagging but not moving): it goes on
+    assert t3[1] > t1[1]
+    t4 = tick(0.02)
+    assert np.allclose(t4, t3)                                # moving again and still behind: waits again
+    ctx.rt.plant.d.time += 1 / 30                             # back toward the hand is always allowed
+    send(ctx, p=(t4 - [0.0, 0.03, 0.0]).tolist())
+    assert np.allclose(d.mocap_pos[0], t4 - [0.0, 0.03, 0.0])
+
+
 def test_clamped_to_reach_and_surface():
     ctx = make_ctx()
     send(ctx, op="start")

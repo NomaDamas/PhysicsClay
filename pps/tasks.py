@@ -9,6 +9,7 @@ import time
 import mujoco
 import numpy as np
 
+from . import slicing
 from .manip import FixtureTasks
 from .robot_runtime import HANDS, ROOT, slerp
 from .world import objects as wobj
@@ -22,6 +23,7 @@ REGIONS = {  # robot frame: x forward, y left
 }
 HOVER = 0.08
 PLACE_GAP = 0.004        # physics: the object's bottom this far above the surface when the hand stops to let go
+FX_TOL = 0.03                   # m: how far the planned hand may be off a handle's path while it holds it (open / close)
 CRIT_TOL = 0.015         # physics: the plan must bring the jaws this close to the grasp and the drop point
 RELEASE_OPEN = 0.35      # physics: letting go, the jaws open this fraction of their travel past where they came free
 LIFT = 0.08              # physics: lift this far off the surface (higher only to clear what it passes over)
@@ -74,12 +76,24 @@ def densify(pts, step=0.035):
 
 
 def _drain(gen):
-    """Run a resumable step (a generator that yields between slices of work) to the end -> its return value."""
+    """Run a resumable step (a generator that yields between slices of work) to the end -> its return value. Inside a
+    planning job (pps/slicing.py) each yield is a place to pause."""
     while True:
         try:
             next(gen)
         except StopIteration as e:
             return e.value
+        try:
+            slicing.point()
+        except BaseException:                     # dropped while paused here: unwind the step now, in the planner's state
+            gen.close()
+            raise
+
+
+def _gen(fn):
+    """A plain call as a resumable step (it pauses inside, at slicing.point(): between IK waypoints)."""
+    yield from ()
+    return fn()
 
 
 def _seg_dist(p, a, b):
@@ -202,7 +216,7 @@ class Tasks(FixtureTasks):
         self.held = {}           # physics: palm -> what the slip monitor knows about the object in that hand
         self.place_at = None     # physics: where the current pick & place should leave the object (checked at the end)
         self.seq, self.seq_tid = [], None   # the rest of a multi-step task (two-arm handover): run as each path ends
-        self.search = None       # a time-sliced pick search in progress: (task id, generator); search_tick() advances it
+        self.search = None       # a planning job in progress (a pick search, a dry run): search_tick() advances it
         self.task = None         # {"id","action","status","message","step"}
         self.events = {}         # waypoint index -> event name
         self.fired = set()
@@ -593,7 +607,14 @@ class Tasks(FixtureTasks):
                 ok[j] = dists[j] < 2 * rt.validator.reach_tol
             if self.plant is not None and k1 == len(keypoints) - 1 and k0 > 0:
                 ok[-1] = True                     # physics: going home after the work: wherever it ends up near home is fine
-        crit = [idx_map[k] for k, nm in events.items() if nm in ("grasp", "release")] if self.plant is not None else []
+        # (closing a drawer / door, the hand has to get all the way to where it is shut: else it stays ajar)
+        crit = [idx_map[k] for k, nm in events.items() if nm in ("grasp", "release", "grasp_fx") or (nm == "release_fx" and action == "close")
+                ] if self.plant is not None else []
+        fx_g = next((idx_map[k] for k, nm in events.items() if nm == "grasp_fx"), None)
+        fx_r = next((idx_map[k] for k, nm in events.items() if nm == "release_fx"), None)
+        if self.plant is not None and fx_g is not None and fx_r is not None:
+            for j in range(fx_g + 1, fx_r + 1):   # holding a handle: the hand has to follow the joint's path closely (a
+                ok[j] = ok[j] and dists[j] < FX_TOL   # hand that falls behind it pulls the knob out of its jaws)
         # dropping into a container (place_in) needs the object inside it, not exactly on a spot: the release may be a few cm
         # off (the container's walls keep the hand back); the check after the release says whether it ended up inside
         tol = {idx_map[k]: (0.05 if nm == "release" and action == "place_in" else CRIT_TOL) for k, nm in events.items()}
@@ -606,7 +627,7 @@ class Tasks(FixtureTasks):
             rt.path = {"pts": pts, "ok": ok, "palm": palm, "cum": np.concatenate([[0.0], np.cumsum(seg)]), "i": 0, "hand": side}
             rt.path_msg = None
             self.kind = None
-            where = "the grasp" if events.get(next(k for k in events if idx_map[k] == j)) == "grasp" else "the spot"
+            where = "the grasp" if events.get(next(k for k in events if idx_map[k] == j)) in ("grasp", "grasp_fx") else "the spot"
             self.set_task(tid, action, "failed", f"I can't: my {self.limb(side, 'arm')} can't get my {self.limb(side)} exactly to "
                                                  f"{where} ({dists[j] * 100:.1f} cm off: it is at the edge of my reach or something is in the way).")
             return False
@@ -731,6 +752,28 @@ class Tasks(FixtureTasks):
             out.append((clear + (0.02 if yaw == 0.0 else 0.0), yaw))   # keep the grasp's own heading unless turning helps
         return [y for _, y in sorted(out, key=lambda s: -s[0])]
 
+    def _around_base(self, a, b, palm, r=0.32):
+        """A fixed arm carrying across its station (a drawer on one side, the sink on the other): a straight line from a to
+        b may pass right over the arm's own base, where it can't bring its hand (the Panda carrying a spoon from the top
+        drawer to the sink: 5 waypoints 7 cm short, 15 cm in front of its shoulder). -> a waypoint r out from the shoulder
+        (horizontally, on the side the line passes) at the carry height, or None when the line keeps clear."""
+        sh = np.asarray(self.rt.retargeter.robot_shoulders[palm], float)[:2]
+        a, b = np.asarray(a, float), np.asarray(b, float)
+        ab = b[:2] - a[:2]
+        L2 = float(np.dot(ab, ab))
+        if L2 < 0.04:                             # short moves don't pass the base
+            return None
+        t = float(np.clip(np.dot(sh - a[:2], ab) / L2, 0.0, 1.0))
+        q = a[:2] + t * ab
+        d = float(np.linalg.norm(q - sh))
+        if d >= r or not 0.1 < t < 0.9:
+            return None
+        u = (q - sh) / d if d > 1e-6 else np.array([1.0, 0.0])
+        if np.dot(u, [1.0, 0.0]) < 0:             # out over the station, never back over the robot
+            u = np.array([-u[1], u[0]]) if np.dot([-u[1], u[0]], [1.0, 0.0]) >= 0 else np.array([u[1], -u[0]])
+        m = sh + u * r
+        return np.array([m[0], m[1], max(a[2], b[2])])
+
     def _carry_z(self, name, a, b, off, margin=0.03):
         """Physics: the hand height (TCP z) at which `name`, held with TCP offset `off` from its centre, clears the top of
         the other movable objects it passes over on the straight way from hand point a to b (with `margin`); -inf when
@@ -788,9 +831,8 @@ class Tasks(FixtureTasks):
     def tick(self):
         """Call after every rt.step: fire waypoint events, carry the mug, finish tasks."""
         rt, d = self.rt, self.rt.data
-        if self.search is not None and time.time() - getattr(self, "_search_t", 0.0) > 0.05:
-            self.search_tick()                    # (a slice of a pick search, about once a frame)
-            self._search_t = time.time()
+        if self.search is not None:
+            self.search_tick()                    # (a slice of a planning job, within this frame's planning time)
         if rt.path is not None and self.kind in ("task", "path") and (rt.mode == "FOLLOW" or self.plant is not None):
             i = rt.path["i"]                      # (physics: also an event on the last waypoint, fired as the path ends)
             for idx, name in sorted(self.events.items()):
@@ -1224,6 +1266,8 @@ class Tasks(FixtureTasks):
             self.rt.set_obstacles(())
             return
         if self.plant is not None and name in ("aim", "hover"):   # stop over the spot until the arm has caught up
+            if name == "hover" and getattr(self, "fxop", None) is not None:
+                self._fx_obstacles(True)          # over a handle: the part is the hand's now (pps/manip.py)
             self.ph = {"phase": name, "palm": palm, "obj": self.holding.get(palm) or self.cur, "t0": float(self.plant.d.time)}
             self._hold_path(True)
             return
@@ -1324,39 +1368,100 @@ class Tasks(FixtureTasks):
             held = next((h for h, o in self.holding.items() if o == name), None)
             c = self.mug_center()
             palm = held or self.hand_for(c)
-            self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, None, self.rt.data.mocap_quat[self.rt.hands_mid[palm]].copy())
-            return
-        search = self._pick_all(tid, name, dest, label, via, via_pts, grasp, fixed)
+            q_now = self.rt.data.mocap_quat[self.rt.hands_mid[palm]].copy()
+            search = _gen(lambda: self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, None, q_now))
+        else:
+            search = self._pick_all(tid, name, dest, label, via, via_pts, grasp, fixed)
         if not sliced:
             _drain(search)
             return
-        self.search = (tid, search)               # the server loop: one way in per tick, so a long search (a refusal tries
+        self.search = (tid, search)               # the server loop: a slice per frame, so a long search (a refusal tries
         self.set_task(tid, "pick_place", "planning", f"Working out how to pick up {self.pretty(name)}.")   # them all)
         self.search_tick()
-        self._search_t = time.time()
 
-    def search_tick(self, budget=0.25):
-        """Advance a time-sliced pick search (pick_place(..., sliced=True)): ways in until about `budget` s of wall time
-        is used, so the loop never stalls for a whole search. Dropped if another command took over."""
+    # ------------------------------------------------------------------ planning across server ticks (pps/slicing.py)
+    @property
+    def search(self):
+        """The planning job in progress: (task id, generator) as a task registers it, or (task id, slicing.Job, then)."""
+        return self.__dict__.get("_search")
+
+    @search.setter
+    def search(self, v):                          # a new one drops the one before (its stack unwinds, its thread ends)
+        old = self.__dict__.get("_search")
+        if old is not None and (v is None or v[1] is not old[1]) and not slicing.in_job():
+            if isinstance(old[1], slicing.Job):
+                old[1].cancel()
+            else:
+                old[1].close()
+        self.__dict__["_search"] = v
+
+    def run_sliced(self, tid, action, fn, message, keep=True, then=None):
+        """Plan across server ticks: fn() runs as a job that pauses between IK waypoints when this frame's planning time is
+        used up, while the task shows "planning" (message). keep: what it leaves (a task that starts, or its failure)
+        stands; else the loop's own state is put back and then(job) builds on job.result (a plan card's dry run).
+        A new command drops it."""
+        self.search = None
+        self.set_task(tid, action, "planning", message)
+        self.search = (tid, slicing.Job(fn, self._swap(), keep=keep, name=action), then)
+        self.search_tick()
+
+    def search_tick(self, budget=None):
+        """Advance the planning job (a registered generator runs as a job too): until about `budget` s of wall time (by
+        default what is left of this frame's planning time) is used, pausing between IK waypoints, so the loop never
+        stalls for a whole search. Dropped if another command took over (the task is no longer this one, planning)."""
         if self.search is None:
             return
-        tid, gen = self.search
+        tid, job, then = (tuple(self.search) + (None,))[:3]
+        if not isinstance(job, slicing.Job):      # (tid, generator): pick_place, operate, ...
+            gen = job
+            job = slicing.Job(lambda: _drain(gen), self._swap(), keep=True, name=(self.task or {}).get("action") or "plan")
+            self.__dict__["_search"] = (tid, job, None)
         if not self.task or self.task.get("id") != tid or self.task.get("status") != "planning":
-            gen.close()
             self.search = None
             return
-        t0 = time.time()
-        while True:
-            try:
-                next(gen)
-            except StopIteration:
-                self.search = None
-                return
-            if time.time() - t0 > budget:
-                self.set_task(tid, "pick_place", "planning", self.task.get("message") if self.task.get("status") == "planning"
-                              else f"Working out how to pick up {self.pretty(self.cur)}.")
+        if not job.step(budget):                  # (by default: what is left of this frame's planning time)
+            if job.keep:                          # a new task: the old motion doesn't go on while it is worked out
                 self.rt.path = None
-                return
+            return
+        self.__dict__["_search"] = None
+        action = (self.task or {}).get("action") or "plan"
+        try:
+            if then is not None:
+                then(job)
+            elif job.error is not None:           # (as the server loop reports an exception in a command)
+                self.set_task(tid, action, "failed", f"Internal error: {job.error}")
+        except Exception as e:                    # (never let a plan's follow-up kill the loop)
+            import traceback
+            traceback.print_exc()
+            self.set_task(tid, action, "failed", f"Internal error: {e}")
+
+    def _swap(self, task=True):
+        """What a planning job and the server loop each keep their own copy of while the job is paused: the hand targets
+        and how firmly they hold orientation, the IK obstacles, the gripper commands, and (task) the task and its path and
+        a dry run's stand-ins (pps/features/plan.py)."""
+        rt, d = self.rt, self.rt.data
+        mids = [rt.hands_mid[h] for h in self.hands]
+        sw = slicing.Swap()
+        sw.attrs(rt, ("_obstacle_limit", "_arm_obstacle_limit"))
+        if task:
+            sw.attrs(rt, ("path", "path_msg", "mode", "engaged", "follow_s", "follow_hold"))
+            sw.attrs(self, ("task", "kind", "events", "fired", "done_msg", "cur", "cur_off", "fail_reason", "hit_obstacle",
+                            "stopped_task", "place_at", "fxop", "place_z", "transit_z", "place_check", "place_drop", "cur_action",
+                            "release_z", "approach_z", "ph", "_launch", "carry_hits_vase"))
+            sw.attrs(rt.recorder, ("start",))
+
+        def put_hands(v):
+            d.mocap_pos[mids], d.mocap_quat[mids] = v
+        sw.add(lambda: (d.mocap_pos[mids].copy(), d.mocap_quat[mids].copy()), put_hands)
+        tasks_ = list(getattr(rt, "hand_tasks", ()))
+        sw.add(lambda: [np.copy(t.cost) for t in tasks_], lambda v: [t.cost.__setitem__(slice(None), c) for t, c in zip(tasks_, v)])   # (orient)
+        limits = getattr(rt, "limits", None)
+        if limits is not None:
+            sw.add(lambda: list(limits), lambda v: limits.__setitem__(slice(None), v))
+        grip = self.plant.grip if self.plant is not None else {}
+        sw.add(lambda: {r: (g.get("cmd"), g.get("open_to")) for r, g in grip.items()},
+               lambda v: [grip[r].update(cmd=c, open_to=o) for r, (c, o) in v.items()])
+        return sw
 
     def _reach_bound(self, palm):
         """A hand's reach can't exceed its arm stretched out: the sum of the link lengths from the shoulder to the hand
@@ -1400,7 +1505,8 @@ class Tasks(FixtureTasks):
         if self.fx is not None:                   # a generated world: what's near the pick and the drop (drawer walls too);
             # things in the same bin / drawer as the one being picked are not kept away from (the fingers go in among them)
             co = tuple(self.contents(self.container_of(name), skip=name)) if self.container_of(name) is not None else ()
-            self.rt.set_obstacles((name,) + co, near=[c] + ([dest] if dest is not None else []), fixtures=True)
+            self.rt.set_obstacles((name,) + co, near=[c] + ([dest] if dest is not None else []), fixtures=True, static_arm=True,
+                                  overhead=(float(c[2] + self.vertical_half(name) + 0.01), c))
         else:
             self.rt.set_obstacles((name,))        # the planner keeps the gripper clear of everything else on the table
         palms = [palm] if held else [palm] + [h for h in self.hands if h != palm]   # two hands: the other one may get there
@@ -1454,7 +1560,8 @@ class Tasks(FixtureTasks):
             for p, q in quats.items():            # dropped half way (another command): the hands' targets as they were
                 d.mocap_quat[self.rt.hands_mid[p]] = q
 
-    def _pick_plan(self, tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=True, yaw=None, lifts=True):
+    def _pick_plan(self, tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=True, yaw=None, lifts=True,
+                   bow=False):
         """Keypoints of a pick & place (approach, grasp, carry, release, retreat) -> _launch. plan: (offset, approach) with
         physics, None for the kinematic grasp. Physics, from above: the hand may turn about the vertical to set it down
         (yaw; tried in the order that leaves the hand most room). lifts: the way in and the way home go over the other
@@ -1562,6 +1669,17 @@ class Tasks(FixtureTasks):
                 elif zt > cur[2] + 0.01:
                     kps.append(np.array([cur[0], cur[1], zt]))
                 above = np.array([above[0], above[1], zt])
+        bowable = False
+        if n is not None and via is None and self.fx is not None and getattr(getattr(self.rt, "profile", None), "base", "") == "fixed":
+            a0 = kps[-1]                                    # generated worlds: a long carry across the station that the
+            mid = self._around_base(a0, above, palm)        # arm can't trace straight bows out around its own base (it
+            bowable = mid is not None                       # can't fold its hand onto it), high enough for what it passes
+            if mid is not None and bow:                     # over on the new way
+                zt = max(self._carry_z(name, a0, mid, off), self._carry_z(name, mid, above, off), a0[2], above[2])
+                if zt > a0[2] + 0.005:
+                    kps.append(np.array([a0[0], a0[1], zt]))
+                kps.append(np.array([mid[0], mid[1], zt]))
+                above = np.array([above[0], above[1], zt])
         ia = len(kps)                             # from here on the hand has the place orientation
         kps += [above, place_hand]
         if n is not None:                         # physics: look where it really sits in the hand before setting it down
@@ -1617,7 +1735,12 @@ class Tasks(FixtureTasks):
             self.place_at = None
         if not ok and lifted and getattr(self, "fail_reason", "reach") == "reach":   # the waypoints over the others are
             self.fail_reason = "reach"                                                 # what it can't do: the plain way
-            return self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last, yaw=yaw, lifts=False)
+            return self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last, yaw=yaw, lifts=False,
+                                   bow=bow)
+        if not ok and bowable and not bow and getattr(self, "fail_reason", "reach") == "reach":   # straight across failed:
+            self.fail_reason = "reach"                                                              # around the base
+            return self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last, yaw=yaw, lifts=lifts,
+                                   bow=True)
         if not ok and last and getattr(self, "fail_reason", "reach") == "reach" and via is None and not into:
             self.suggest(tid, dest, palm, off)
         reason = getattr(self, "fail_reason", "reach")
@@ -2181,7 +2304,7 @@ class Tasks(FixtureTasks):
             cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()   # holds an obstacle for the planner
             rt.set_obstacles(tuple(o for o in self.holding.values() if o))
             pts = np.asarray(rt.path["pts"], float)
-            if np.linalg.norm(pts[0] - cur) > 0.03:
+            if np.linalg.norm(pts[0] - cur) > 0.03 and not rt.path.get("lead_in"):   # (a P2 trajectory leads in itself)
                 lead = [cur] + ([np.array([cur[0], cur[1], TABLE_TOP + 0.10])] if cur[2] < TABLE_TOP + 0.06 and cur[0] < TABLE_X[0] + 0.05 else [])
                 head = densify(lead + [pts[0]])
                 head = self.lift_over(head, palm, carrying=self.carrying(palm))[0][:-1]

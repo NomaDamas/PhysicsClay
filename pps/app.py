@@ -5,10 +5,14 @@ robot view (MuJoCo, real Unitree G1 + table + scanned mug) <- tasks (pick_place,
 Browser talks to Gemini Live itself (key stays in the browser); intents arrive here as tasks, the physics verdict goes back.
 Protocol: docs/PROTOCOL.md.   Run: .venv/bin/python -m pps.app [--video clip.mp4] [--objects] [--fake] [--https]
 """
+import os
+# one BLAS / OpenMP thread (set before numpy loads): the IK's small matrices gain nothing from threads, and on a busy
+# machine BLAS threads thrash (an 8 ms IK solve took 120 ms), which made planning stall the loop far longer
+os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
+os.environ.setdefault("OMP_NUM_THREADS", "1")
 import argparse
 import collections
 import copy
-import os
 import asyncio
 import json
 import re
@@ -37,11 +41,12 @@ from .demo import Demo
 from .tasks import REGIONS, Tasks, apply_surface, edit_skill, skills_meta
 from .world import packs as world_packs, profiles as world_profiles, scene as world_scene
 from .world.runtime import make_runtime
-from . import ext, i18n, physics
+from . import ext, i18n, physics, slicing
 
 ROOT = Path(__file__).resolve().parents[1]
 WEB = ROOT / "web"
 IK_ITERS, IK_DT = 4, 1 / 120
+FRAME_TARGET = 0.40     # s: planning jobs keep a frame (render, physics, state, their slice) under this (pps/slicing.py)
 MAX_FPS = 60            # frames a second at most: nothing paces a synthetic person (no camera), and without pictures to
                         # render the loop would spin a core at 100+ fps for nothing
 SIM_W, SIM_H = 640, 480
@@ -665,6 +670,10 @@ def worker(args, shared):
         if demo.steps:
             demo.stop()
         apply_surface(nw.surface, nw.regions)
+        tasks.search = None                               # planning jobs in the old world end (pps/slicing.py)
+        old_job = (ctx.store.get("goal") or {}).get("job") if isinstance(ctx.store.get("goal"), dict) else None
+        if old_job is not None:
+            old_job.cancel()
         old_keepout = tasks.keepout
         world, world_rev[0] = nw, world_rev[0] + 1
         rt = make_runtime(nw, mirror=not args.no_mirror)
@@ -729,6 +738,13 @@ def worker(args, shared):
     grip_hist = {"l": [], "r": []}
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
     t_phys = t_put = time.time()
+    # frame times (state.perf): planning jobs (pps/slicing.py) get what is left of FRAME_TARGET after the rest of a frame
+    # (rendering, physics, state) and after how far a slice may run past its budget (stretch: a busy machine keeps the
+    # planner's thread waiting for a CPU), so a long plan never stalls the stream; {type: "perf", op: "reset"} restarts
+    # the maxima
+    perf = {"last_ms": 0.0, "max_ms": 0.0, "plan_ms": 0.0, "plan_max_ms": 0.0, "plan_frame_max_ms": 0.0, "plan_stalls": 0,
+            "rest_ms": 100.0, "stretch_ms": 0.0, "budget_ms": 0.0, "frames": 0, "since": time.time()}
+    t_top = None
     ip = lan_ip()
     if args.https:
         print(f"PhysicsClay  source={source}\n  laptop: http://127.0.0.1:{args.port}   (or https://127.0.0.1:{args.https_port})"
@@ -741,6 +757,19 @@ def worker(args, shared):
               "   (phones need https for the camera and mic: add --https, as `make run` does)", flush=True)
 
     while shared.running:
+        now = time.time()
+        if t_top is not None:                     # the last frame, and how much of it went to planning
+            fdt, pdt = (now - t_top) * 1000, slicing.used() * 1000
+            perf["rest_ms"] = max(fdt - pdt, perf["rest_ms"] * 0.95)   # (the recent worst, decaying: budgets err short)
+            perf.update(last_ms=fdt, plan_ms=pdt, max_ms=max(perf["max_ms"], fdt), plan_max_ms=max(perf["plan_max_ms"], pdt),
+                        frames=perf["frames"] + 1)
+            if pdt > 0:                           # frames planning ran in: the longest, and how many it pushed past 0.5 s
+                perf["plan_frame_max_ms"] = max(perf["plan_frame_max_ms"], fdt)
+                perf["plan_stalls"] += int(fdt >= 500.0 > fdt - pdt)
+        t_top = now
+        perf["stretch_ms"] = slicing.stretch() * 1000
+        perf["budget_ms"] = float(np.clip(FRAME_TARGET * 1000 - perf["rest_ms"] - perf["stretch_ms"], 10.0, 250.0))
+        slicing.new_frame(perf["budget_ms"] / 1000)
         # ---------------- your camera (a phone/browser camera wins while it streams)
         phone = shared.phone if (shared.phone and time.time() - shared.phone[0] < 1.0 and video_job is None) else None
         if phone is not None:
@@ -834,6 +863,8 @@ def worker(args, shared):
                         rt.path_msg = "That tap missed the scene."
                 elif t == "physics":
                     physics_msg(rt, tasks, c)
+                elif t == "perf":                 # frame-time probe (scripts/checks/stalls.py): restart the maxima
+                    perf.update(max_ms=0.0, plan_max_ms=0.0, plan_frame_max_ms=0.0, plan_stalls=0, frames=0, since=time.time())
                 elif t == "world":
                     try:
                         robot, spec = world_target(c, world)
@@ -849,6 +880,8 @@ def worker(args, shared):
                         teacher.start()
                         brain.utter("I'm watching. Show me the task and tell me what you're doing.", "robot")
                     elif cmd == "utterance":
+                        if demo.steps:                    # the person is speaking: a running scripted demo stops
+                            demo.stop()
                         if teacher.phase == "recording":
                             teacher.utter(c.get("text"))
                         elif teacher.phase in ("confirm", "done"):
@@ -872,8 +905,7 @@ def worker(args, shared):
                         tasks.set_task("demo", "demo", "failed", "The scripted demos run in the default world (the G1 at the "
                                        "wooden table). Reset the world first.")
                     else:
-                        brain.enabled = True
-                        demo.start(c.get("name", "full"))
+                        demo.start(c.get("name", "full"))   # (turns the mock brain on while it runs)
                 elif t == "robot":   # UX 2.0 robot switch: now a real switch of the body (the scene stays)
                     p = world_profiles.get(c.get("name")) or world_profiles.get("g1")
                     verdict = ""
@@ -900,6 +932,7 @@ def worker(args, shared):
                     tasks.set_path_world(c.get("points") or [], c.get("hand") if c.get("hand") in ("left", "right") else None)
                 elif t == "mock":
                     brain.enabled = bool(c.get("enabled"))
+                    demo.mock0 = None                       # the person's choice stays after a running demo ends
                     if tasks.task:
                         brain._last_task = (tasks.task.get("id"), tasks.task.get("status"))
                     if brain.enabled:
@@ -948,6 +981,8 @@ def worker(args, shared):
                     zf = float(np.clip(float(c.get("zoom", 1.0) or 1.0), 0.25, 4.0))
                     cam_.distance = float(np.clip(cam_.distance * zf, 0.35, 8.0))
                 elif t == "task":
+                    if demo.steps and c.get("utterance"):   # said by the person (the browser attaches their words):
+                        demo.stop()                         # a running scripted demo stops
                     if not ext.intercept_task(ctx, c):
                         dispatch(tasks, rt, c, cam_params)
             except Exception as e:  # never let one bad intent kill the loop
@@ -1027,6 +1062,7 @@ def worker(args, shared):
         st["cam_in"] = cam_in_state(shared)
         st["geom_poses"] = {str(g): [round(float(x), 4) for x in d.geom_xpos[g]] + [round(float(x), 4) for x in d.geom_xmat[g]] for g in dyn_geoms}
         st["physics"] = physics_state(rt, tasks)
+        st["perf"] = {k: (round(v, 1) if k != "since" else round(time.time() - v, 1)) for k, v in perf.items()}
         if st["path"] is not None:
             st["path"]["pts"] = [[round(float(x), 3) for x in p] for p in rt.path["pts"]]
         st.update(ext.extra_state(ctx))
@@ -1135,11 +1171,13 @@ def dispatch(tasks, rt, c, cam):
     elif a == "press":
         tasks.press(tid, c.get("target"), c.get("target_uv"), cam, ASPECT, c.get("force", 10.0), c.get("hold_s", 1.5))
     elif a in ("open", "close"):                  # issue #48: drawers, doors, lids (pps/manip.py)
-        tasks.operate(tid, a, c.get("fixture") or c.get("target") or c.get("object") or "", c.get("amount"))
-    elif a == "pick_from":
-        tasks.pick_from(tid, c.get("container") or c.get("target") or "", c.get("object"))
+        tasks.operate(tid, a, c.get("fixture") or c.get("target") or c.get("object") or "", c.get("amount"), sliced=True)
+    elif a == "pick_from":                        # (planned across frames: pps/slicing.py)
+        tasks.run_sliced(tid, a, lambda: tasks.pick_from(tid, c.get("container") or c.get("target") or "", c.get("object")),
+                         "Checking reach for every waypoint.")
     elif a == "place_in":
-        tasks.place_in(tid, c.get("object"), c.get("container") or c.get("target") or "")
+        tasks.run_sliced(tid, a, lambda: tasks.place_in(tid, c.get("object"), c.get("container") or c.get("target") or ""),
+                         "Checking reach for every waypoint.")
     elif a in ext.ACTIONS:                         # task actions a feature registers (e.g. "sequence": plan_steps)
         ext.ACTIONS[a](c)
     elif a == "reach":

@@ -149,21 +149,34 @@ def propose(ctx, msg):
             "steps": [{"text": t, "at": round(i / len(steps), 3)} for i, t in enumerate(texts)],
             "run": {"type": "task", "action": "sequence", "id": tid, "steps": steps, "text": msg.get("text")}}
     bad = next(((i, w) for i, w in ((i, check_step(tasks, s)) for i, s in enumerate(steps)) if w), None)
-    if bad is None:                           # the first step for real (reach, grasp, what's in the way)
-        try:
-            from .plan import _dry_run
-            first = dict(steps[0], id=tid)
-            if first["action"] in FIXTURE_ACTIONS + ("pick_place", "reach"):
-                verdict, cap = _dry_run(ctx, first)
+    first = dict(steps[0], id=tid)
+    if bad is None and first["action"] in FIXTURE_ACTIONS + ("pick_place", "reach"):   # the first step for real (reach,
+        from .plan import _decimate, _dry_run  # grasp, what's in the way), as a job that pauses between IK waypoints
+
+        def checked(job):                     # (pps/slicing.py), the card when it is checked
+            b = None
+            if job.cancelled:
+                return
+            if job.error is not None:         # a plan card must never run anything unconfirmed
+                b = (0, f"I couldn't check the first step ({job.error}).")
+            else:
+                verdict, cap = job.result
                 if verdict.get("status") == "failed":
-                    bad = (0, verdict.get("message"))
+                    b = (0, verdict.get("message"))
                 elif cap.get("path"):
-                    from .plan import _decimate
                     pts = np.asarray(cap["path"].get("pts", []), float)
                     if len(pts):
                         plan["waypoints"], plan["wp_ok"] = _decimate(pts, list(cap["path"].get("ok", [])) or [True] * len(pts))
-        except Exception as e:                # a plan card must never run anything unconfirmed
-            bad = (0, f"I couldn't check the first step ({e}).")
+            _card(ctx, plan, steps, texts, b, tid)
+        tasks.run_sliced(tid, steps[0]["action"] if len(steps) == 1 else "sequence", lambda: _dry_run(ctx, first),
+                         "Checking reach for every waypoint.", keep=False, then=checked)
+        return
+    _card(ctx, plan, steps, texts, bad, tid)
+
+
+def _card(ctx, plan, steps, texts, bad, tid):
+    """The plan card, once the first step is checked: ready to confirm, or blocked at the step that can't be done."""
+    tasks = ctx.tasks
     if bad is None:
         plan.update(ok=True, phase="proposing", verdict="I can do this",
                     reasons=["The first step is within reach; I'll check each next step when I get to it."] if len(steps) > 1 else

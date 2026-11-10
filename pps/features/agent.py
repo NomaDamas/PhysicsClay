@@ -43,12 +43,22 @@ def _get(ctx):
     return a
 
 
+def _stop_demo(ctx):
+    """The person is talking to the agent (or the agent answers): a running scripted demo stops, so its captions and
+    scripted lines don't talk over the conversation (pps/demo.py)."""
+    demo = getattr(ctx, "demo", None)
+    if demo is not None and getattr(demo, "steps", None):
+        demo.stop()
+
+
 @ext.handler("agent")
 def on_agent(ctx, msg):
     a = _get(ctx)
     if msg.get("op") == "reset":
         a.reset()
         return
+    if str(msg.get("text") or "").strip():
+        _stop_demo(ctx)
     a.submit(msg.get("text"), llm=msg.get("llm"), confirm=msg.get("confirm", True) is not False)
 
 
@@ -66,8 +76,10 @@ def agent_tick(ctx):
         a.snap.fallback = {"task": dict(t.task) if t.task else None, "robot": "g1",
                            "markers": [{"id": m["id"], "pos": [float(x) for x in m["pos"]]} for m in t.markers],
                            "scene_objects": [{"name": n.replace("_", " "), "pos": [float(x) for x in t.mug_center(n)]} for n in t.objs]}
-    a.watch(ctx.tasks.task, speak=not ctx.brain.enabled)      # the mock brain already narrates task results
+    # the mock brain narrates task results only while no LLM brain is in charge (app.py): otherwise the agent says its own
+    a.watch(ctx.tasks.task, speak=not (ctx.brain.enabled and not ctx.store["llm_brain"]))
     for line in a.drain():
+        _stop_demo(ctx)
         ctx.brain.utter(line, "robot")
 
 

@@ -18,6 +18,7 @@ P5 and other features add checks with register_checker(fn(ctx, pts, quats, info)
 """
 import time
 
+import mujoco
 import numpy as np
 
 from .. import ext
@@ -91,7 +92,69 @@ def world_of(ctx, palm=None):
             c = tasks.mug_center(h)
             w["carry_drop"] = max(0.0, float(w["hand"][2] - (c[2] - tasks.objs[h]["half_h"])))
             w["carrying"] = h
+        shape = hand_shape(ctx, palm)
+        if shape is not None:        # physics: keypoint lifts and the move to the start clear the gripper, not its TCP
+            w["hand_shape"], w["edge"] = shape, float(tasks_mod.TABLE_X[0])
     return w
+
+
+def posture_points(ctx, palm, pts, quats=None):
+    """Physics: the gripper as points around its TCP (world axes, like tasks.hand_points: the corners of its collision
+    geoms) in the planner's posture at each of `pts`, traced in order from where the arm is (rt.precheck, as the run will
+    go); points it doesn't reach are left out. Not the wrist links above it: they swing far behind and below the TCP as a
+    humanoid reaches up, and a radial extent of those would lift a path absurdly high. -> (N, 3) array (empty without
+    physics)."""
+    rt, tasks = ctx.rt, ctx.tasks
+    pl = getattr(tasks, "plant", None)
+    if pl is None or not len(pts) or not hasattr(rt, "configuration"):
+        return np.zeros((0, 3))
+    ok = rt.precheck(np.asarray(pts, float), palm, quats=None if quats is None else [np.asarray(q, float) for q in quats])
+    qs = getattr(rt, "last_precheck_q", None) or []
+    if len(qs) != len(ok):
+        return np.zeros((0, 3))
+    m = rt.configuration.model
+    s = _st(ctx)
+    info = s.setdefault("hand_ik", {}).get(palm)
+    if info is None:                              # the gripper's bodies in the planner's model
+        bids = set()
+        for n in (mujoco.mj_id2name(pl.m, mujoco.mjtObj.mjOBJ_BODY, x) for x in pl.ee_bodies.get(tasks.role(palm), ())):
+            try:
+                bids.add(m.body(n).id)
+            except KeyError:
+                pass
+        geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] in bids and (m.geom_contype[g] or m.geom_conaffinity[g])]
+        sid = m.site(mujoco.mj_id2name(pl.m, mujoco.mjtObj.mjOBJ_SITE, rt.palm_sid[palm])).id
+        info = s["hand_ik"][palm] = (mujoco.MjData(m), geoms, sid)
+    d, geoms, sid = info
+    corners = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)], float)
+    out = []
+    for q, good in zip(qs, ok):
+        if not good:
+            continue
+        d.qpos[:] = q
+        mujoco.mj_kinematics(m, d)
+        for g in geoms:
+            c, h = m.geom_aabb[g, :3], m.geom_aabb[g, 3:]
+            out.append(d.geom_xpos[g] + (c + h * corners) @ d.geom_xmat[g].reshape(3, 3).T - d.site_xpos[sid])
+    return np.vstack(out) if out else np.zeros((0, 3))
+
+
+def hand_shape(ctx, palm):
+    """Physics: the hand as points around its TCP (world axes) for keypoint lifts and the move to the start
+    (traj.hand_extent): its collision geoms with the wrist links it hangs from as held now and as turned to the
+    trajectory's default orientation (tasks.hand_points), and the gripper as the pick planner sees it (its reach below
+    the TCP, tasks.grip_reach). None in kinematic mode (the hand is a point there)."""
+    tasks, rt = ctx.tasks, ctx.rt
+    if getattr(tasks, "plant", None) is None or not hasattr(tasks, "hand_points") or not hasattr(tasks, "grip_reach"):
+        return None
+    H = np.asarray(tasks.hand_points(palm), float).reshape(-1, 3)
+    parts = [H, np.asarray(tasks.grip_reach(palm), float).reshape(-1, 3)]
+    q = _st(ctx)["qhome"].get(palm)
+    if q is not None and hasattr(rt, "palm_sid"):
+        Rn = np.asarray(rt.data.site_xmat[rt.palm_sid[palm]], float).reshape(3, 3)
+        Rt = np.column_stack([T.qrot(q, e) for e in np.eye(3)])
+        parts.append(H @ (Rt @ Rn.T).T)
+    return np.vstack(parts).round(4).tolist()
 
 
 def _poses(ctx):
@@ -306,7 +369,8 @@ def prepare(ctx, tr, check=True):
     dense = T.densify(w_tr, q0=q0, kind=kind)
     idx = _ghost_idx(dense)
     hand = np.asarray(world["hand"], float)
-    approach = T.approach_points(hand, dense["p"][0])
+    via = lead_in(ctx, palm, hand, dense["p"][0], dense["q"][0], world)
+    approach = T.approach_points(hand, dense["p"][0], via=via)
     if check:
         res = T.check(dense, _checkers(ctx, palm, w_tr, dense, world), idx=idx, n_points=len(tr["points"]), approach=approach)
     else:
@@ -315,7 +379,35 @@ def prepare(ctx, tr, check=True):
     tr = dict(tr, check={"ok": res["ok"], "why": res["why"], "duration": res["duration"]})
     ok = all(res["sample_ok"]) and all(res["approach_ok"])
     return {"traj": tr, "world_traj": w_tr, "dense": dense, "idx": idx, "res": res, "palm": palm, "world": world,
-            "approach": approach, "ok": ok, "kind": kind}
+            "approach": approach, "via": via, "hand": hand, "ok": ok, "kind": kind}
+
+
+def lead_in(ctx, palm, start, goal, q_goal, world=None):
+    """Physics: the move from the hand to the start, lifted with the gripper's real extent (traj.lead_in: up off an object
+    it is over or over the surface's edge, then over what is in the way) when the arm reaches those points; else, or in
+    kinematic mode, straight (as before: the checks then judge the straight move). -> via points ([] = straight)."""
+    world = world_of(ctx, palm) if world is None else world
+    if world.get("hand_shape") is None:
+        return []
+    extra = posture_points(ctx, palm, [goal], [q_goal])          # and as the arm will hold it at the start
+    if len(extra):
+        world = dict(world, hand_shape=list(world["hand_shape"]) + np.round(extra, 4).tolist())
+    via = T.lead_in(start, goal, world)
+    if via and not all(ctx.rt.precheck(np.array(via), palm, quats=[np.asarray(q_goal, float)] * len(via))):
+        return []
+    return via
+
+
+def _lead_fn(ctx, prep):
+    """path["lead_in"] for follow_step: the way to the start from where the hand is when the run starts (the prepared
+    one when it hasn't moved since)."""
+    palm, goal, q_goal = prep["palm"], prep["dense"]["p"][0], prep["dense"]["q"][0]
+
+    def fn(p0):
+        if np.linalg.norm(np.asarray(p0, float) - prep["hand"]) < 0.01:
+            return list(prep["via"])
+        return lead_in(ctx, palm, p0, goal, q_goal)
+    return fn
 
 
 # ---------------------------------------------------------------------------- install into the path follower
@@ -364,6 +456,8 @@ def _make_path(ctx, prep, path=None):
              "traj_id": prep["traj"]["id"], "approach_speed": T.default_speed(prep["kind"]), "on_event": _on_event(ctx, palm),
              "orient": bool((prep["world_traj"].get("meta") or {}).get("grasps")),     # physics: hold the grasp orientation
              "why": None if prep["ok"] else _why(prep)}
+    if prep["world"].get("hand_shape") is not None:    # physics: the move to the start clears the gripper (pps/traj.py)
+        timed["lead_in"] = _lead_fn(ctx, prep)
     if path is not None:                                # adopted drawn path: keep its points and verdicts
         path.update(timed, pts0=np.array(path["pts"], float).copy())
         return path
@@ -469,6 +563,27 @@ def _new_id(s, prefix="t"):
     return f"{prefix}{s['seq']}"
 
 
+def _from_keypoints(ctx, spec, palm):
+    """Language keypoints -> trajectory (traj.from_keypoints). Physics: lifted with the hand's real extent: as held now,
+    then also the gripper in the planner's posture at each point of that first version (the G1's hand turns up as it
+    reaches over the table and its gripper hangs ~10 cm below the TCP), compiled again when that hangs lower or reaches
+    further."""
+    world = world_of(ctx, palm)
+    tr, _ = T.from_keypoints(spec, world)
+    if world.get("hand_shape") is None:
+        return tr
+    dense = T.densify(T.to_world(tr, _poses(ctx)), q0=_st(ctx)["qhome"].get(palm), kind=_kind(ctx))
+    keys = list(dense["key"])
+    extra = posture_points(ctx, palm, dense["p"][keys], dense["q"][keys])
+    if not len(extra):
+        return tr
+    w2 = dict(world, hand_shape=list(world["hand_shape"]) + np.round(extra, 4).tolist())
+    (b0, f0), (b1, f1) = T.hand_extent(world), T.hand_extent(w2)
+    if b1 > b0 + 0.005 or f1 > f0 + 0.005:
+        tr, _ = T.from_keypoints(spec, w2)
+    return tr
+
+
 def _compile(ctx, s, msg):
     """propose / set payload -> normalized trajectory."""
     rt = ctx.rt
@@ -476,13 +591,13 @@ def _compile(ctx, s, msg):
         spec = dict(msg["spec"])
         role = str(spec.get("role") or "auto").lower()
         palm = _palm(rt, role if role in ("left", "right") else "right")
-        tr, _ = T.from_keypoints(dict(spec, role=palm.replace("_palm", "")), world_of(ctx, palm))
+        tr = _from_keypoints(ctx, dict(spec, role=palm.replace("_palm", "")), palm)
         if role not in ("left", "right") and len(rt.hands) > 1:      # auto: the hand on the path's side (like tasks.hand_for)
             y = float(np.mean([p["p"][1] for p in T.to_world(tr, _poses(ctx))["points"]]))
             other = "left_palm" if y > 0 else "right_palm"
             if other != palm and other in rt.hands:
                 palm = other
-                tr, _ = T.from_keypoints(dict(spec, role=palm.replace("_palm", "")), world_of(ctx, palm))
+                tr = _from_keypoints(ctx, dict(spec, role=palm.replace("_palm", "")), palm)
     elif msg.get("demo") is not None:
         from ..human import demo as demo_mod
         d = demo_mod.load(str(msg["demo"]))
@@ -769,6 +884,8 @@ def _ghost(ctx, s):
     d, idx, res = prep["dense"], prep["idx"], prep["res"]
     key_pos = {k: j for j, k in enumerate(idx)}
     hand = rt.data.mocap_pos[rt.hands_mid[prep["palm"]]]
+    near = np.linalg.norm(hand - prep.get("hand", hand)) < 0.01
+    via = list(prep.get("via") or []) if near else []          # the way to the start, lifted over what's in the way
     w = prep["world_traj"]
     qs = d["q"][idx]
     turns = len(qs) > 1 and float(np.max(np.abs(qs @ qs[0]))) > 0 and float(np.min(np.abs(qs @ qs[0]))) < 0.99996   # > ~1 degree
@@ -778,7 +895,7 @@ def _ghost(ctx, s):
          "key": [key_pos.get(k, 0) for k in d["key"]], "keys": [_r(p["p"], 4) for p in w["points"]],
          "kq": [_r(d["q"][k], 4) for k in d["key"]],
          "grip": [None if not np.isfinite(d["grip"][k]) else round(float(d["grip"][k]), 2) for k in d["key"]],
-         "approach": [_r(hand, 3), _r(d["p"][0], 3)], "approach_ok": all(res["approach_ok"]),
+         "approach": [_r(hand, 3)] + [_r(v, 3) for v in via] + [_r(d["p"][0], 3)], "approach_ok": all(res["approach_ok"]),
          "origin": _r(T.frame_origin(prep["traj"]["frame"], _poses(ctx)), 4) if T.frame_object(prep["traj"]["frame"]) else None,
          "surface": round(float(tasks_mod.TABLE_TOP), 4), "duration": round(float(d["duration"]), 2),
          "speed": T.default_speed(prep["kind"]), "hand": "right" if prep["palm"].startswith("right") else "left",

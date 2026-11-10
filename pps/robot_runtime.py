@@ -22,6 +22,7 @@ from .ir import IntentRecorder
 from .protocol import PERCEIVE_TO_ROBOT, ROBOT_TO_PERCEIVE, make_receiver, make_sender
 from .body import BodyRetargeter
 from .retarget import Retargeter
+from .slicing import point as pause_point
 from .traj import follow_step
 from .validate import ARM_JOINTS, Validator
 
@@ -255,12 +256,22 @@ class Runtime:
                 di.mocap_pos[mid] = d.xpos[p["bid"]]
                 di.mocap_quat[mid] = d.xquat[p["bid"]]
 
-    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False):
+    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False, static=False, skip_geoms=(), static_arm=False,
+                      overhead=None):
         """Physics: the planner keeps the hand clear of the objects on the table (synced from the plant), except `exclude`
         (the one being picked). Objects are mocap bodies in the planner's model, so their poses are copied over.
         Generated worlds (issue #48): `fixtures` adds the walls of drawers / doors / bins nearby (their floors and the
         conveyor never count; a fixture part named in `exclude` is the one being operated); `near` (points) keeps only
-        what is within `radius` of them, so a cluttered room doesn't cost the IK a thousand distance checks."""
+        what is within `radius` of them, so a cluttered room doesn't cost the IK a thousand distance checks. `static`
+        (with `near`) also adds the static furniture there (a counter's edge, a cabinet's sides: world geoms `fx_*` and
+        the work surface), and the whole arm keeps off the furniture there too: a hand reaching under a counter for a
+        drawer's knob must not put its wrist through the counter's edge or its forearm on the knob of the drawer above
+        (the plant would stop it there). `skip_geoms`: geom names that never count (a handle the hand is coming for).
+        `static_arm` (with `near`): the static furniture there for the arm links only, not the gripper (a pick reaching
+        into a machine: the forearm came to rest on the CNC's side wall, the hand 15 cm over the part). `overhead` (a
+        height, with `near`): static furniture there whose underside is above it counts for the gripper too (a machine's
+        roof over the part in its vise: the Panda's hand came to rest on it), never what things stand on or beside.
+        `overhead` may be (height, point): only what is over that point (the pick, not where it is set down)."""
         if self.plant is None:
             return
         mi, pl = self.configuration.model, self.plant
@@ -291,11 +302,30 @@ class Runtime:
             return True
         geoms = [g for g in range(mi.ngeom) if mi.geom_contype[g] and mi.geom_bodyid[g] not in pl.robot_bodies
                  and mi.geom_bodyid[g] not in skip and mi.geom_bodyid[g] not in targets and mi.geom_bodyid[g] != 0 and keep(g)]
+        if skip_geoms:
+            skipped = {mi.geom(n).id for n in skip_geoms if n}
+            geoms = [g for g in geoms if g not in skipped]
+        if overhead is not None and not static and pts is not None:
+            named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            over_p = None
+            if isinstance(overhead, (tuple, list)):
+                overhead, over_p = float(overhead[0]), np.asarray(overhead[1], float)
+            near_p = (lambda g: True) if over_p is None else (
+                lambda g: float(np.linalg.norm(self.ik_data.geom_xpos[g] - over_p)) - mi.geom_rbound[g] < radius)
+            for g in range(mi.ngeom):
+                if mi.geom_bodyid[g] == 0 and mi.geom_contype[g] and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and named(g).startswith("fx_"):
+                    R = self.ik_data.geom_xmat[g].reshape(3, 3)
+                    if self.ik_data.geom_xpos[g][2] - float((np.abs(R) @ mi.geom_size[g])[2]) > overhead and keep(g) and near_p(g):
+                        geoms.append(g)
+        if static and pts is not None:
+            named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            geoms += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] == 0 and mi.geom_contype[g]
+                      and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and (named(g).startswith("fx_") or named(g) == "table") and keep(g)]
         for lim in (getattr(self, "_obstacle_limit", None), getattr(self, "_arm_obstacle_limit", None)):
             if lim in self.limits:
                 self.limits.remove(lim)
         self._obstacle_limit = self._arm_obstacle_limit = None
-        hand, arm = self._obstacle_links()
+        hand, arm, base = self._obstacle_links()
         if geoms and hand:
             self._obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(hand, geoms)], minimum_distance_from_collisions=0.012,
                                                                 collision_detection_distance=0.08)
@@ -304,15 +334,31 @@ class Runtime:
         # generated world's furniture (fx_ bodies: counters, cabinets, drawer walls), which the arm reaches in front of and
         # into (opening a drawer, a shelf): the gripper's own limit keeps the hand clear of those
         fxb = {b for b in range(mi.nbody) if (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_BODY, b) or "").startswith("fx_")}
-        arm_geoms = [g for g in geoms if mi.geom_bodyid[g] not in fxb]
-        if arm_geoms and arm:
-            self._arm_obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=[(arm, arm_geoms)], minimum_distance_from_collisions=0.008,
+        arm_geoms = geoms if static else [g for g in geoms if mi.geom_bodyid[g] not in fxb and mi.geom_bodyid[g] != 0]
+        if static_arm and not static and pts is not None:
+            named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            arm_geoms = arm_geoms + [g for g in range(mi.ngeom) if mi.geom_bodyid[g] == 0 and mi.geom_contype[g]
+                                     and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX and named(g).startswith("fx_") and keep(g)]
+        pairs = [(arm, arm_geoms)] if arm_geoms and arm else []
+        if base and (fixtures or static) and fx is not None:
+            # a mobile base keeps off the furniture around it (the IK drives it to reach: it drove into the cabinets
+            # going home after opening a drawer, and pushed the drawer shut again)
+            bp = np.array([self.ik_data.xpos[mi.geom_bodyid[g]] for g in base]).mean(axis=0)
+            named = lambda g: mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or ""
+            furn = [g for g in range(mi.ngeom) if mi.geom_contype[g] and mi.geom_type[g] == mujoco.mjtGeom.mjGEOM_BOX
+                    and ((mi.geom_bodyid[g] == 0 and named(g).startswith("fx_")) or (mi.geom_bodyid[g] in fx_bodies and "_floor" not in named(g)))
+                    and float(np.linalg.norm(self.ik_data.geom_xpos[g][:2] - bp[:2])) - mi.geom_rbound[g] < 0.6]
+            if furn:
+                pairs.append((base, furn))
+        if pairs:
+            self._arm_obstacle_limit = mink.CollisionAvoidanceLimit(model=mi, geom_pairs=pairs, minimum_distance_from_collisions=0.008,
                                                                     collision_detection_distance=0.06)
             self.limits.append(self._arm_obstacle_limit)
 
     def _obstacle_links(self):
         """Physics: collision geoms that keep clear of the objects: (the gripper and the last links of each arm, the rest
-        of each arm up to where it joins the body: the torso, the legged body, a mobile base). Cached per model."""
+        of each arm up to where it joins the body: the torso, the legged body, a mobile base; a mobile base's chassis,
+        which keeps off the furniture). Cached per model."""
         cache = getattr(self, "_obstacle_links_cache", None)
         if cache is not None:
             return cache
@@ -343,8 +389,12 @@ class Runtime:
         col = lambda g: bool(mi.geom_contype[g] or mi.geom_conaffinity[g])
         hand += [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in near and col(g) and g not in hand]
         arm = [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in upper - near and col(g)]
-        self._obstacle_links_cache = (hand, arm)
-        return hand, arm
+        base = []                                 # a mobile base: the rest of the robot (its chassis)
+        if prof is not None and getattr(prof, "base", "") == "mobile":
+            base = [g for g in range(mi.ngeom) if mi.geom_bodyid[g] in pl.robot_bodies and mi.geom_bodyid[g] not in near | upper
+                    and col(g) and g not in hand]
+        self._obstacle_links_cache = (hand, arm, base)
+        return hand, arm, base
 
     def hold_here(self):
         """Stop where the robot is: the planner takes the measured pose so q_des doesn't keep pulling the arm."""
@@ -495,6 +545,17 @@ class Runtime:
         self.path_msg = (f"{side} hand path: {len(pts)} waypoints, all reachable. Press F to follow."
                          if bad == 0 else f"{side} hand path: {bad}/{len(pts)} waypoints out of reach (red). Redraw or press F.")
 
+    def _trace(self, cfg, task, target, n, dt):
+        """n IK steps of a scratch configuration toward target. A planning job may hand the server loop a frame between
+        them (pps/slicing.py; the loop's own step sets the hand targets meanwhile, so the target is set again after)."""
+        pause_point()
+        task.set_target(target)
+        for i in range(n):
+            if i and i % 2 == 0:
+                pause_point()
+                task.set_target(target)
+            cfg.integrate_inplace(self.solve(cfg, dt), dt)
+
     def precheck(self, pts, palm, iters=10, dt=0.03, quats=None):
         """Trace the path with IK on a scratch configuration; a waypoint is ok if the hand gets within reach_tol.
         quats: an orientation per waypoint (wxyz: grasps, P2 trajectories); default: the hand target's current one."""
@@ -506,31 +567,28 @@ class Runtime:
         saved = task.transform_target_to_world
         mid = self.hands_mid[palm]
         quat = self.data.mocap_quat[mid].copy()
-        ok, dists = [], []
+        ok, dists, poses = [], [], []
         if quats is not None:
             quats = [np.asarray(q, float) for q in quats]
         start = cfg.data.site_xpos[self.palm_sid[palm]].copy()     # far first waypoint: lead in from the hand (unscored),
         n_lead = int(np.linalg.norm(np.asarray(pts[0]) - start) / 0.035)   # the IK moves joints no faster than the robot
         for j in range(1, n_lead):
-            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[0]),
-                                                                   start + (np.asarray(pts[0]) - start) * j / n_lead))
-            for _ in range(iters):
-                cfg.integrate_inplace(self.solve(cfg, dt), dt)
+            self._trace(cfg, task, mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[0]),
+                                                                          start + (np.asarray(pts[0]) - start) * j / n_lead), iters, dt)
         for k, p in enumerate(pts):
-            task.set_target(mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[k]), p))
             n = iters
             if quats is not None and k > 0:       # the hand turns slower than it moves: more time where it turns a lot
                 ang = 2 * np.arccos(min(1.0, abs(float(np.dot(quats[k - 1], quats[k])))))
                 n = iters * (1 + int(ang / 0.25))
-            for _ in range(n):
-                v = self.solve(cfg, dt)
-                cfg.integrate_inplace(v, dt)
+            self._trace(cfg, task, mink.SE3.from_rotation_and_translation(mink.SO3(quat if quats is None else quats[k]), p), n, dt)
             dist = float(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p))
             dists.append(dist)
             ok.append(dist < self.validator.reach_tol)
+            poses.append(cfg.q.copy())
         if saved is not None:
             task.set_target(saved)
         self.last_precheck_dists = dists
+        self.last_precheck_q = poses           # the planner's posture at each waypoint (P2: the hand's real extent there)
         return ok
 
     # ------------------------------------------------------------- whole body

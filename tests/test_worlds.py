@@ -239,4 +239,51 @@ def test_find_parts_and_containers_by_what_people_say():
     T.apply_surface(w2.surface, w2.regions)
     tk2 = T.Tasks(make_runtime(w2), w2.kinds)
     c, _ = tk2.find_container("the tube rack")
-    assert c["kind"] == "slot" and c["fixture"] == "rack" and not tk2.contents(c)  # a free slot of the right rack
+    assert c["kind"] == "slot" and c["fixture"] == "rack" and not tk2.contents(c)   # a free slot of the right rack
+
+
+def test_lower_drawer_knob_is_reached_from_the_front():
+    """The second drawer's knob sits right under the top drawer's: from above the fingers would sweep into it, from the
+    front they don't; the plan to open it is made the way that works (physics: the planner keeps the arm off the
+    furniture and the jaws must reach the knob), and the hand comes in along the knob's outward direction."""
+    import math
+
+    from pps import tasks as T
+    from pps.manip import HANDLE_PITCHES
+    from pps.world.runtime import make_runtime
+    w = built("kitchen_full", 1, "panda", physics=True)
+    T.apply_surface(w.surface, w.regions)
+    rt = make_runtime(w)
+    tk = T.Tasks(rt, w.kinds)
+    p = tk.fx.by_name["drawer_2"]
+    h, out = tk.fx.handle_now(p)
+    o = np.array([out[0], out[1], 0.0]) / np.hypot(out[0], out[1])
+    a = np.cross([0.0, 0.0, 1.0], o)
+    assert tk._handle_blocked(p, h, np.array([0.0, 0.0, -1.0]), a) == "the top drawer"     # from above: the knob above
+    assert tk._handle_blocked(p, h, -o, a) is None                                          # from the front: clear
+    up = tk.fx.by_name["drawer_1"]
+    hu, _ = tk.fx.handle_now(up)
+    assert tk._handle_blocked(up, hu, np.array([0.0, 0.0, -1.0]), a) is None                # the top drawer: from above
+    tk.operate("t", "open", "the second drawer", 0.8)
+    assert tk.task["status"] == "running", tk.task["message"]
+    pitch = tk.fxop["pitch"]
+    assert pitch in HANDLE_PITCHES and pitch < 90
+    k = next(i for i, e in tk.events.items() if e == "grasp_fx")
+    pre, grasp = np.asarray(rt.path["pts"][k - 3]), np.asarray(rt.path["pts"][k])
+    d = (grasp - pre) / np.linalg.norm(grasp - pre)                                         # the way in: along -out, pitched
+    assert float(np.dot(d[:2], -o[:2])) == pytest.approx(math.cos(math.radians(pitch)), abs=0.15)
+    knob = tk._knob_geoms(p)
+    assert knob and all(rt.model.geom_type[g] == mujoco.mjtGeom.mjGEOM_CYLINDER for g in knob)
+
+
+def test_kinematic_mode_plans_the_same_ways():
+    """Kinematic mode (no plant: the drawer follows the hand) reaches a lower drawer's knob the same way."""
+    from pps import tasks as T
+    from pps.world.runtime import make_runtime
+    w = built("kitchen_full", 1, "panda", physics=False)
+    T.apply_surface(w.surface, w.regions)
+    rt = make_runtime(w)
+    tk = T.Tasks(rt, w.kinds)
+    tk.operate("k", "open", "the second drawer", 0.8)
+    assert tk.task["status"] == "running", tk.task["message"]
+    assert tk.fxop["pitch"] < 90

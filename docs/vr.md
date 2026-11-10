@@ -92,7 +92,9 @@ by exactly as much as your hand moves (and turns as your wrist turns), in the sh
 hand drives its left hand (a mirror, like P3's mirror mode); on its side, right drives right. The server:
 
 * clamps every target to the arm's reach (a sphere around the shoulder) and above the work surface;
-* moves the target at most 1 m/s and 3 rad/s, both multiplied by P5's `rt.safety_scale`;
+* moves the target at most 1 m/s and 3 rad/s of the robot's time (sim time with physics, which runs slower than real
+  time on a busy machine), both multiplied by P5's `rt.safety_scale`; with physics the target also stays within 5 cm of
+  the measured hand, so a trailing arm goes the way you point instead of cutting the corner through what is beside it;
 * ignores commands during a protective stop (`rt.safety_scale <= 0` or `tasks.safety.stopped`) and targets inside the
   person's body zone (`tasks.safety.check_point`): VR cannot bypass safety;
 * holds still when commands stop (they are absolute targets), and ends teleop after 3 s without one;

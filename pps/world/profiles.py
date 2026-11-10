@@ -34,6 +34,7 @@ class RobotProfile:
     note: str = ""
     # --- runtime details (not part of the public state)
     home_xml: str | None = None        # take the home keyframe from this file instead (G1: scene_pc.xml)
+    stand: dict | None = None          # legged model without a home keyframe: compute one (pps/world/stand.py): {"drop": m}
     feet: tuple = ()                   # legged: foot frames, (name, "site"|"geom"|"body")
     root: str | None = None            # legged / free base: the floating body (orientation task)
     torso: str | None = None           # humanoid torso body (orientation task)
@@ -83,7 +84,8 @@ LEGGED_NOTE = ("Physics: manipulation runs with the base welded in place and the
 
 # bodies whose contact pick & place isn't reliable yet with physics on are listed as experimental (physics only), with
 # why: physics={"experimental": "<reason>"}. None today: xArm7, iiwa14 and Apollo left the list in v1 P0b; Stretch 3,
-# TidyBot and Spot in v1 P0c (>= 9/10 on both tasks in scripts/bench_grasp.py).
+# TidyBot and Spot in v1 P0c; the H2 (a computed stand, palm grippers) in v1's final pass (>= 9/10 on both tasks in
+# scripts/bench_grasp.py).
 
 
 def _built(width, approach=(0, 0, 1), axis=(0, 1, 0), length=0.06, base=0.0):
@@ -120,6 +122,17 @@ def _sg3_grip():
                 room=0.04)   # pad (0.8 cm) + the finger strip outside it (~1.5 cm) + 1.5 cm to open: a spot needs that beside it
 
 
+def _xarm_grip():
+    """uFactory xArm gripper: the model collides with each finger's convex hull, a single contact point on a thin handle
+    (a spoon lying in a drawer), about which a held long thing pivots and creeps out of the jaws. The real finger has a
+    flat rubber tip (3.2 x 0.8 cm, from the finger mesh: its inner face at 2.6 cm from the finger's axis, the last 8 mm);
+    that tip is the pad (box: a line contact across a handle, which holds it square), the hulls don't touch things."""
+    pads = {"a": [{"body": "left_finger", "pos": (0.0, -0.0235, 0.057), "size": (0.015, 0.0025, 0.0045)}],
+            "b": [{"body": "right_finger", "pos": (0.0, 0.0235, 0.057), "size": (0.015, 0.0025, 0.0045)}]}
+    return dict(_native("gripper", 0, 255, ("left_finger",), ("right_finger",), 0.085, tcp=(0, 0, -0.03), boost=0.62, pads=pads),
+                nocollide_mesh=True)
+
+
 def _aloha_grip(r):
     """ViperX 300 fingers (ALOHA): the model's finger capsule sits ~1 cm inside the finger mesh near the tips, so a flat
     3.6 x 1.4 cm pad on each fingertip's inner face (from the mesh) does the grasping; open = 0.041 (6.8 cm at the pads)."""
@@ -153,7 +166,7 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         "xarm7", "uFactory xArm7", "arm", EX + "ufactory_xarm7/xarm7.xml",
         {"x": 0.02, "y": 0.0, "yaw": 0, "on": "surface", "pedestal": True}, {"right": "link_tcp"}, "home", "fixed",
         ARM_CAPS, freeze=("driver", "finger", "knuckle"), prompt="pps/world/prompts/xarm7.md",
-        physics={"payload": 3.5, "grip": {"right": _native("gripper", 0, 255, ("left_finger",), ("right_finger",), 0.085, tcp=(0, 0, -0.03), boost=0.62)}}),
+        physics={"payload": 3.5, "grip": {"right": _xarm_grip()}}),
     RobotProfile(
         "iiwa14", "KUKA LBR iiwa 14", "arm", EX + "kuka_iiwa_14/iiwa14.xml",
         {"x": -0.10, "y": 0.0, "yaw": 0, "on": "surface", "pedestal": True}, {"right": "attachment_site"}, "home", "fixed",
@@ -206,15 +219,30 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
                     axis=(0, 0, 1), boost=0.06, jaw=-0.013),
             wide_open=-1.25, deep=0.05)}}),   # the mug: the finger comes down outside its far wall, holds 5 cm down
     RobotProfile(
-        "h2", "Unitree H2 humanoid (experimental)", "humanoid", EX + "unitree_h2/h2_sharpa.xml",
-        {"x": -0.05, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "right_wrist_site", "left": "left_wrist_site"}, None,
-        "legged", ("reach", "follow_path", "balance"),
+        "h2", "Unitree H2 humanoid", "humanoid", EX + "unitree_h2/h2_sharpa.xml",
+        {"x": -0.05, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "right_wrist_site", "left": "left_wrist_site"}, "stand",
+        "legged", ("pick_place", "reach", "follow_path", "balance"),
+        stand={"drop": 0.05},       # the model has no keyframe: a stand computed from it (pps/world/stand.py), knees ~0.69 rad
         feet=(("left_ankle_roll_link", "body"), ("right_ankle_roll_link", "body")), root="pelvis", grasp="side",
-        ee_down=False, hand_cost=(5.0, 0.0), camera={"pos": [0.16, 0.0, 1.86]},
-        freeze=("thumb", "index", "middle", "ring", "pinky", "head"), experimental=True,
-        physics={"payload": 3.0},
-        note="The model ships without a standing keyframe and its dexterous hands are not driven: it starts from the "
-             "zero pose, reaches with whole-body IK and keeps its feet planted, but pick & place is not supported.",
+        ee_down=False, hand_cost=(5.0, 0.05), camera={"pos": [0.16, 0.0, 1.86]},
+        freeze=("thumb", "index", "middle", "ring", "pinky", "head"),
+        physics={"payload": 3.0, "grasp": "side",
+                 # the model collides with its hands and feet only: boxes around the body's and arms' meshes (add_hulls)
+                 "hulls": ("pelvis", "torso", "hip_yaw", "shoulder", "elbow", "wrist_roll", "wrist_pitch"),
+                 # its joints have no actuators in the model; the servos physics adds are the G1-sized defaults (kp 150,
+                 # 30 N m): 3x stiffer for its heavier arms (the hand trailed the plan by 1.5 cm setting the mug down; the
+                 # effort caps stay, well inside the model's 60-130 N m shoulder / elbow limits)
+                 "stiffer": [(("shoulder", "elbow", "waist"), 3.0), (("wrist",), 3.0)],
+                 # arms down beside the body, grippers 9 cm out from the hips (the model's own ready pose holds them 20 cm
+                 # over the work surface at chest height: into a bench-top machine's enclosure)
+                 "home": {"right_shoulder_pitch_joint": 0.3, "right_shoulder_roll_joint": -0.3, "right_elbow_joint": 0.8,
+                          "left_shoulder_pitch_joint": 0.3, "left_shoulder_roll_joint": 0.3, "left_elbow_joint": 0.8},
+                 # the Sharpa hands' 22 joints aren't driven: a two-pad gripper on each palm, jaws across the palm (thumb
+                 # up), the fingers neither collide nor are drawn
+                 "grip": {r: dict(_built(0.15, approach=(0, 0, 1), axis=(1, 0, 0), length=0.09, base=0.06), hide_hand=True,
+                                  up=(-1, 0, 0), hide_fingers=("thumb", "index", "middle", "ring", "pinky")) for r in ("right", "left")}},
+        note="Whole-body IK with balance; the model ships without a standing pose, so one is computed from it (knees slightly "
+             "bent). Its dexterous hands aren't driven: with physics a two-pad gripper on each palm does the grasping.",
         prompt="pps/world/prompts/h2.md"),
 ]}
 
