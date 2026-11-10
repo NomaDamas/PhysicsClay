@@ -68,7 +68,8 @@ weave along a seam or 2, wiping?"); the answer resumes the extraction.
 **Accuracy** (`tests/test_skills.py`, sine weaves 4–15 mm at 1.2–4.5 Hz, 5–30 mm/s, 0.5–1 mm noise, 30 fps, three
 seeds each): width, frequency and travel speed within 15 % (frequency and speed within ~1 %, width typically within
 5 %). Through the live server (synthetic person → co-presence → person model → demo file): 5 mm at 2 Hz and 2 cm/s
-came back as 4.4–4.7 mm, 2.00 Hz, 20.0 mm/s. A triangular weave whose 3rd harmonic is buried in noise above ~1 mm reads
+came back as 5.0–5.3 mm, 2.00 Hz, 20.0 mm/s over runs (4.4 mm when the smoothing gain was computed from the median
+tick instead of the actual tick times; P3's own 1.5 cm demo: 13.7 mm, raw 11.4 mm). A triangular weave whose 3rd harmonic is buried in noise above ~1 mm reads
 up to 19 % narrow (its fundamental); a square-ish weave with long dwells at the edges is underestimated more.
 
 ### The weave false positive (real-camera finding, PR #40)
