@@ -809,6 +809,10 @@ class Tasks(FixtureTasks):
             self.kind = None                      # a multi-step task (two-arm handover): on to its next step
             self.seq.pop(0)()
             return
+        if self.kind and not active and self.plant is not None:   # a gripper left part-open by a release opens fully
+            for r, g in self.plant.grip.items():                  # now the hand is away (teleop, mirroring and the
+                if g["cmd"] == "hold":                              # next pick expect it open)
+                    self.plant.grip_cmd(r, "open")
         if self.kind and not active:
             rt.orient(False)                      # the next reach / mirroring moves the hand freely again
             self._free_obstacles()
