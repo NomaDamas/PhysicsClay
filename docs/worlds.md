@@ -132,7 +132,7 @@ the knob / the spot its jaws would be); the rest are physical failures it report
 
 | Scenario | Panda | UR5e | xArm7 | iiwa14 | TidyBot (mobile) |
 |---|---|---|---|---|---|
-| kitchen: open the top drawer, take the spoon, put it in the sink, close the drawer | **3/3** | **3/3** | **2/3** (s2 refused: the sink spot 5.9 cm off) | 0/3 (refused: the knob 2.4 cm off / 7 cm out of reach: it stands 12 cm further back) | 0/3 (the drawer opens; lifting the spoon clear of the counter is 10 cm out of reach; s2 the drawer 35 %) |
+| kitchen: open the top drawer, take the spoon, put it in the sink, close the drawer | **3/3** | **2/3** (s2: its arm couldn't follow the carry into the sink, 10 cm short; it says so, still holding the spoon) | **2/3** (s2 refused: the sink spot 5.9 cm off) | 0/3 (refused: the knob 2.4 cm off / 7 cm out of reach: it stands 12 cm further back) | 0/3 (the drawer opens; lifting the spoon clear of the counter is 10 cm out of reach; s2 the drawer 35 %) |
 | lower: open the second drawer (knob right under the top one's), close it | **3/3** | **3/3** | **2/3** (s2 refused, 5 cm) | 0/3 (refused, 12–19 cm) | **2/3** (s1: no grip on the knob closing it) |
 | bottom drawer (knob ~45 cm off the floor): open, close | 0/3 (refused, 10–15 cm) | **1/3** (s1, s3 refused: its arm can't push it shut past the drawers above, 2.7 cm off) | 0/3 (refused, 13–22 cm) | 0/3 (refused, 10–19 cm) | **3/3** |
 | dishwasher door (1.1 m to the side) | 0/3 (refused, 60 cm) | 0/3 (refused, 41 cm) | 0/3 (refused, 67 cm) | 0/3 (refused, 54 cm) | 0/3 (reaches it; the spring-loaded door pulls out of its grip) |
