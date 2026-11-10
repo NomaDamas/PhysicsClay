@@ -7,7 +7,9 @@ Runs inside scripts/selftest.py (async def run(t))."""
 import math
 import os
 
-THROUGH_MUG = [[0.26, -0.24, 0.82], [0.33, -0.18, 0.82], [0.40, -0.12, 0.82]]   # hand height, straight through the mug
+# from the table's near right corner, down to hand height straight through the mug, and on past it (the start is away
+# from the mug: on the P2 line the move to a stroke's start is traj.py's own straight approach)
+THROUGH_MUG = [[0.23, -0.30, 0.95], [0.33, -0.18, 0.82], [0.44, -0.18, 0.95]]
 BY_VASE = [[0.28, -0.12, 0.84], [0.30, -0.02, 0.84], [0.30, 0.10, 0.84]]        # hand height, 1.5 cm past the vase
 
 
@@ -74,8 +76,9 @@ async def run(t):
     if not isinstance(st().get("traj"), dict):
         return
     top = next((o["pos"][2] for o in st().get("scene_objects") or [] if o["name"] == "mug"), 0.811) + 0.071
-    spec = {"label": "skim the mug", "keypoints": [{"xyz": [0.24, -0.18, top + 0.02]}, {"xyz": [0.42, -0.18, top + 0.02]}]}
-    await t.send(type="traj", id="p0c-skim", op="propose", spec=spec, task_id="p0c-skim-plan")
+    tr = {"role": "right", "frame": "world", "source": "keyframes", "label": "skim the mug",     # raw points (language
+          "points": [{"p": [0.24, -0.18, top + 0.02]}, {"p": [0.42, -0.18, top + 0.02]}]}       # keypoints get lifted)
+    await t.send(type="traj", id="p0c-skim", op="propose", traj=tr, task_id="p0c-skim-plan")
     tj = {}
     for _ in range(40):
         await t.pump(0.25)
