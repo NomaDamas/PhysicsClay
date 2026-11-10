@@ -439,6 +439,9 @@ class Tasks(FixtureTasks):
             r_me = max(r_me, min(g.get("depth", 0.0) for g in self.plant.grip.values()) + 0.01)
             room = min(g.get("room", 0.0) for g in self.plant.grip.values())
             prof = getattr(self.rt, "profile", None)
+            if prof is not None and (prof.physics or {}).get("transit_over"):   # an arm that trails its plan by ~3 cm
+                r_me += 0.03                      # (TidyBot) sets things down that much off: a spot needs the room (it
+                                                  # pressed the block against the mug beside the spot and it slipped)
             if room and moving in self.objs and prof is not None and (prof.physics or {}).get("grasp", prof.grasp) == "side":
                 sh = self.rt.retargeter.robot_shoulders[self.picker(moving)]   # side jaws close level, across the heading
                 hd = self.mug_center(moving)[:2] - np.asarray(sh, float)[:2]  # they took it with (kept to set it down):
