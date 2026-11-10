@@ -838,9 +838,10 @@ def _top(o):
 
 
 def hand_extent(world):
-    """The hand's real size for lifts: (how far it reaches below its TCP, the radius around the TCP of what hangs at or
+    """The hand's real size as a disc: (how far it reaches below its TCP, the radius around the TCP of what hangs at or
     below it), from world["hand_shape"] (points relative to the TCP, world axes: a gripper's collision corners, open
-    fingertips, a side gripper's pads; set by the server with physics). Without one the hand is a sphere of
+    fingertips, a side gripper's pads; set by the server with physics), for passing around an object and coming up over
+    the surface's edge (lifts over objects use the points themselves). Without one the hand is a sphere of
     world["hand_r"] around the TCP, as before: (0, hand_r)."""
     hand_r = float(world.get("hand_r", HAND_R))
     shape = world.get("hand_shape")
@@ -850,6 +851,32 @@ def hand_extent(world):
     low = H[H[:, 2] <= 1e-6]
     foot = float(np.hypot(low[:, 0], low[:, 1]).max()) if len(low) else 0.0
     return max(0.0, -float(H[:, 2].min())), max(hand_r, foot)
+
+
+def _shape(world):
+    """world["hand_shape"] as a point set for the lifts -> (H (N, 3) relative to the TCP, horizontal margin per point) or
+    None. The TCP keeps the old hand_r sphere (+ 2 cm), every other point 2 cm; what the hand carries hangs carry_drop
+    below the TCP (the same sphere). Points within 5 mm are merged."""
+    shape = world.get("hand_shape")
+    H = np.asarray(shape if shape is not None else [], float).reshape(-1, 3)
+    if not len(H):
+        return None
+    H = np.unique(np.round(H / 0.005) * 0.005, axis=0)
+    drop = float(world.get("carry_drop", 0.0))
+    core = np.array([[0.0, 0.0, 0.0]] + ([[0.0, 0.0, -drop]] if drop > 0 else []))
+    hand_r = float(world.get("hand_r", HAND_R))
+    return np.vstack([core, H]), np.concatenate([np.full(len(core), hand_r + 0.02), np.full(len(H), 0.02)])
+
+
+def _need(o, P, shape, clr):
+    """The TCP height each of the points P (K, >=2: x, y) needs so that every part of the hand over object o clears its
+    top by clr (the parts that aren't over it don't count); -inf where none is."""
+    H, M = shape
+    P = np.asarray(P, float).reshape(-1, np.shape(P)[-1])
+    c = np.asarray(o["pos"], float)
+    d = np.hypot(P[:, None, 0] + H[None, :, 0] - c[0], P[:, None, 1] + H[None, :, 1] - c[1])
+    over = d < float(o.get("r", 0.03)) + M[None, :]
+    return np.where(over, _top(o) + clr - H[None, :, 2], -np.inf).max(axis=1)
 
 
 def _resolve_kp(kp, i, world, prev, notes):
@@ -915,7 +942,8 @@ def _resolve_kp(kp, i, world, prev, notes):
         clr = float(kp["clearance"]) if kp.get("clearance") is not None else float(world.get("clearance", CLEARANCE))
         below, foot = hand_extent(world)
         if via == "over":
-            z = top + clr + max(float(world.get("carry_drop", 0.0)), below)     # what hangs lowest clears it by clr
+            shape = _shape(world)                 # what hangs lowest over it clears it by clr
+            z = top + clr + float(world.get("carry_drop", 0.0)) if shape is None else float(_need(o, c[None, :2], shape, clr)[0])
             notes.append(f"over the {name.replace('_', ' ')} with {clr * 100:.0f} cm to spare")
             return [(finish([c[0], c[1], z]), attrs)]
         side = 1.0 if via == "around_left" else -1.0
@@ -1009,24 +1037,63 @@ def _bridge(a, b, o, R, need, need_at=lambda p: 0.0):
     return (u0, ins) if ins else None
 
 
+def _bridge_shaped(a, b, o, shape, clr, need_at):
+    """_bridge for a hand given as points (_shape): where along a->b some part of the hand would be over o lower than clr
+    over its top (sampled every cm), raised flat to the highest that asks for, from one sample before to one after.
+    -> (u, points to insert) or None."""
+    if math.hypot(b[0] - a[0], b[1] - a[1]) < 1e-4:
+        return None           # a vertical move doesn't pass over anything
+    n = max(2, int(math.ceil(float(np.linalg.norm(b - a)) / 0.01)))
+    u = np.linspace(0.0, 1.0, n + 1)
+    P = a + (b - a) * u[:, None]
+    need = _need(o, P, shape, clr)
+    low = P[:, 2] < need - 0.005
+    if not low.any():
+        return None
+    c, r = np.asarray(o["pos"], float), float(o.get("r", 0.03))
+    for k in (0, n):          # going down onto it (touch, grasp, place) on purpose
+        if math.hypot(P[k][0] - c[0], P[k][1] - c[1]) < r + 0.01 and P[k][2] < need[k]:
+            return None
+    i0, i1 = int(np.argmax(low)), int(n - np.argmax(low[::-1]))
+    span = need[i0:i1 + 1]
+    top = float(span[np.isfinite(span)].max())
+    ins = []
+    if i0 > 0:
+        E = P[i0 - 1]
+        ins.append(np.array([E[0], E[1], max(E[2], top, need_at(E))]))
+    elif a[2] < top:          # starts low with part of the hand over it: rise first
+        ins.append(np.array([a[0], a[1], max(top, need_at(a))]))
+    if i1 < n:
+        X = P[i1 + 1]
+        ins.append(np.array([X[0], X[1], max(X[2], top, need_at(X))]))
+    elif b[2] < top:          # ends low with part of the hand over it: arrive from above
+        ins.append(np.array([b[0], b[1], max(top, need_at(b))]))
+    ins = [p for p in ins if np.linalg.norm(p - a) > 1e-3 and np.linalg.norm(p - b) > 1e-3]
+    return (float(u[max(0, i0 - 1)]), ins) if ins else None
+
+
 def lift_over_obstacles(pts, attrs, world, start=None, passes=16):
     """Automatic clearance: a segment that would pass through or too low over an object is raised where it enters and
-    leaves the object's footprint (inflated by the hand), so that the lowest part of the hand (or what it carries) is
-    clearance over the top: with world["hand_shape"] the gripper's real reach below the TCP and its footprint
-    (hand_extent), else the TCP itself with a hand_r sphere. A segment that ends on the object itself (going down to
-    touch, grasp or place) is left alone for that object. One object per segment per pass, nearest first, so overlapping
-    footprints still give a clean bridge.
+    leaves the object's footprint (inflated by the hand), to top + clearance (+ carry_drop for what the hand carries).
+    With world["hand_shape"] (points around the TCP: the real gripper) it is raised wherever any part of the hand would be
+    over the object, so that the lowest part over it clears the top by `clearance` (_bridge_shaped); a part that isn't
+    over it (a gripper reaching back from the TCP) doesn't count. A segment that ends on the object itself (going down
+    to touch, grasp or place) is left alone for that object. One object per segment per pass, nearest first, so
+    overlapping footprints still give a clean bridge.
     -> (pts, attrs, lifted names, n_prefix) where n_prefix points were added before the first one (from `start`)."""
     objs = world.get("objects") or {}
     clr = float(world.get("clearance", CLEARANCE))
-    below, foot = hand_extent(world)
-    drop = max(float(world.get("carry_drop", 0.0)), below)
+    hand_r = float(world.get("hand_r", HAND_R))
+    drop = float(world.get("carry_drop", 0.0))
+    shape = _shape(world)
     seq = ([np.asarray(start, float)] if start is not None else []) + [np.asarray(p, float) for p in pts]
     att = ([{"_start": True}] if start is not None else []) + list(attrs)
     lifted = []
-    R = {n: float(o.get("r", 0.03)) + foot + 0.02 for n, o in objs.items()}
+    R = {n: float(o.get("r", 0.03)) + hand_r + 0.02 for n, o in objs.items()}
 
     def need_at(p):
+        if shape is not None:
+            return max([float(_need(o, np.asarray(p, float)[None, :2], shape, clr)[0]) for o in objs.values()] + [0.0])
         return max([_top(o) + clr + drop for n, o in objs.items()
                     if math.hypot(p[0] - o["pos"][0], p[1] - o["pos"][1]) < R[n] + 1e-3] or [0.0])
 
@@ -1036,7 +1103,8 @@ def lift_over_obstacles(pts, attrs, world, start=None, passes=16):
         for a, b, aa, ab in zip(seq[:-1], seq[1:], att[:-1], att[1:]):
             best = None
             for name, o in objs.items():
-                got = _bridge(a, b, o, R[name], _top(o) + clr + drop, need_at)
+                got = (_bridge(a, b, o, R[name], _top(o) + clr + drop, need_at) if shape is None
+                       else _bridge_shaped(a, b, o, shape, clr, need_at))
                 if got is not None and (best is None or got[0] < best[0]):
                     best = (got[0], got[1], name)
             if best is not None:
@@ -1078,15 +1146,18 @@ def lead_in(start, goal, world):
     clr = float(world.get("clearance", CLEARANCE))
     below, foot = hand_extent(world)
     drop = max(float(world.get("carry_drop", 0.0)), below)
+    shape = _shape(world)
     surface = float(world.get("surface", 0.74))
     rise = a[2]
     if world.get("edge") is not None and a[2] < surface + 0.06 and a[0] < float(world["edge"]) + 0.05:
         rise = max(rise, surface + max(0.10, clr + drop))
     for o in objs.values():
-        c = np.asarray(o["pos"], float)
-        inside = math.hypot(a[0] - c[0], a[1] - c[1]) < float(o.get("r", 0.03)) + foot + 0.02
-        goal_on = math.hypot(b[0] - c[0], b[1] - c[1]) < float(o.get("r", 0.03)) + 0.01
-        if inside and not goal_on:
+        c, r = np.asarray(o["pos"], float), float(o.get("r", 0.03))
+        if math.hypot(b[0] - c[0], b[1] - c[1]) < r + 0.01:
+            continue                              # the goal is on it
+        if shape is not None:
+            rise = max(rise, float(_need(o, a[None, :2], shape, clr)[0]))
+        elif math.hypot(a[0] - c[0], a[1] - c[1]) < r + foot + 0.02:
             rise = max(rise, _top(o) + clr + drop)
     via = [np.array([a[0], a[1], rise])] if rise > a[2] + 1e-3 else []
     seq, _, _, _ = lift_over_obstacles([b], [{}], world, start=via[-1] if via else a)

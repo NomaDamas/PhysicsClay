@@ -267,6 +267,22 @@ def test_keypoint_lifts_clear_a_hanging_gripper():
     assert any(abs(p["p"][2] - (top + T.CLEARANCE + 0.09)) < 1e-6 for p in tr["points"])
 
 
+def test_keypoint_lifts_count_only_the_parts_of_the_hand_over_the_object():
+    """A gripper that reaches back from its TCP (the G1's hand turned up: the gripper hangs behind and below the TCP) is
+    lifted where that part passes over the vase, not where only the TCP's empty side does."""
+    behind = [[-0.08, dy, -0.06] for dy in (-0.02, 0.0, 0.02)]
+    world = dict(WORLD, hand_shape=behind, hand_r=0.02)
+    vase = WORLD["objects"]["vase"]
+    top = vase["pos"][2] + vase["h"]
+    past = {"keypoints": [{"xyz": [0.51, -0.25, 0.95]}, {"xyz": [0.51, 0.25, 0.95]}]}      # TCP 9 cm in front of the vase
+    tr, _ = T.from_keypoints(past, world)
+    low = min(p[2] for p in T.densify(tr)["p"] if abs(p[1]) < vase["r"] + 0.02 + 0.02)    # the gripper over the vase
+    assert "vase" in tr["meta"]["lifted"] and low >= top + T.CLEARANCE + 0.06 - 0.005
+    short = {"keypoints": [{"xyz": [0.33, -0.25, 0.95]}, {"xyz": [0.33, 0.25, 0.95]}]}     # 9 cm behind it: the gripper is away
+    tr, _ = T.from_keypoints(short, world)
+    assert "vase" not in tr["meta"]["lifted"] and len(tr["points"]) == 2
+
+
 def test_lead_in_to_the_start_is_lifted_with_the_gripper():
     """The move from the hand to a trajectory's start goes over what is in the way with the gripper's extent, up first
     from below the surface's near edge or off an object the hand is over; straight when nothing is in the way."""
