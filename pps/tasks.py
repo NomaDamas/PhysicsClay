@@ -21,6 +21,7 @@ REGIONS = {  # robot frame: x forward, y left
 HOVER = 0.08
 PLACE_GAP = 0.004        # physics: the object's bottom this far above the surface when the hand stops to let go
 CRIT_TOL = 0.015         # physics: the plan must bring the jaws this close to the grasp and the drop point
+RELEASE_OPEN = 0.35      # physics: letting go, the jaws open this fraction of their travel past where they came free
 LIFT = 0.08              # physics: lift this far off the surface (higher only to clear what it passes over)
 HANDOVER_Z = 0.14        # two-arm handover: the hands meet this far above the surface ...
 HANDOVER_END = 0.022     # ... each gripper holds the object this far in from its end ...
@@ -377,15 +378,29 @@ class Tasks:
     def _free_spot(self, dest, moving):
         """free_spot, resumable: yields between the (physics) reach tests of its candidates."""
         r_me = self.objs[moving]["r"] if moving in self.objs else 0.04
+        jaws = None
         if self.plant is not None and self.plant.grip:   # physics: the hand that sets it down has to fit there too
             r_me = max(r_me, min(g.get("depth", 0.0) for g in self.plant.grip.values()) + 0.01)
+            room = min(g.get("room", 0.0) for g in self.plant.grip.values())
+            prof = getattr(self.rt, "profile", None)
+            if room and moving in self.objs and prof is not None and (prof.physics or {}).get("grasp", prof.grasp) == "side":
+                sh = self.rt.retargeter.robot_shoulders[self.picker(moving)]   # side jaws close level, across the heading
+                hd = self.mug_center(moving)[:2] - np.asarray(sh, float)[:2]  # they took it with (kept to set it down):
+                hd = hd / (np.linalg.norm(hd) or 1.0)                         # they reach `room` past its sides as they
+                jaws = (np.array([-hd[1], hd[0]]), self._half_w(moving) + room, 0.025)   # open to let go
         others = [(n, o["pos"], o["r"]) for n, o in self.obstacles.items()] + \
                  [(n, self.mug_center(n), o["r"]) for n, o in self.objs.items() if n != moving]
 
         def blocker_at(p):
             for n, c, r in others:
-                if np.linalg.norm(np.asarray(p)[:2] - np.asarray(c)[:2]) < r + r_me + 0.01:
+                dv = np.asarray(c, float)[:2] - np.asarray(p, float)[:2]
+                if np.linalg.norm(dv) < r + r_me + 0.01:
                     return n
+                if jaws is not None:
+                    a, hl, hw = jaws
+                    da, db = abs(float(np.dot(dv, a))), abs(float(a[0] * dv[1] - a[1] * dv[0]))
+                    if np.hypot(max(da - hl, 0.0), max(db - hw, 0.0)) < r + 0.005:
+                        return n
             return self.keepout.at(p, r_me) if self.keepout else None
 
         who = blocker_at(dest)
@@ -612,6 +627,16 @@ class Tasks:
         out = [(self.mug_center(n), self._radius(n), o["half_h"], n) for n, o in self.objs.items() if n not in skip]
         return out + [(ob["pos"], ob["r"], ob["h"], n) for n, ob in self.obstacles.items() if n not in skip]
 
+    def _half_w(self, name):
+        """Half the width a gripper closes across: a box's smaller half side, a cylinder's radius, the mug's body."""
+        o, m = self.objs[name], self.rt.model
+        if (self.plant is not None and self.plant.objects.get(name, {}).get("kind") == "mug") or name == "mug":
+            from .physics import MUG
+            return MUG["R"] * o["r"] / 0.065
+        if m.geom_type[o["geom"]] == mujoco.mjtGeom.mjGEOM_BOX:
+            return float(min(m.geom_size[o["geom"]][:2]))
+        return o["r"]
+
     def _radius(self, name):
         """Horizontal radius of a movable object's outline (a box's corners stick out past its half width)."""
         o, m = self.objs[name], self.rt.model
@@ -658,6 +683,30 @@ class Tasks:
             t = float(np.clip(np.dot(c[:2] - ca, ab) / (float(np.dot(ab, ab)) or 1.0), 0.0, 1.0))
             if np.linalg.norm(c[:2] - (ca + t * ab)) < rb + r + 0.008:
                 need = max(need, float(c[2]) + hb + margin + hh + float(off[2]))
+        return need
+
+    def _hang(self, palm, side=True):
+        """Physics: how far the open hand reaches below its TCP (side grasps: the pads' half height; from above: the
+        fingertips past the TCP)."""
+        g = self.plant.grip.get(self.role(palm)) if self.plant is not None else None
+        if g is None:
+            return 0.03
+        return float(g.get("pad_h", 0.018)) + 0.01 if side else float(g["tip"])
+
+    def _clear_z(self, a, b, palm, side, placed=None, margin=0.03):
+        """Physics: the TCP height at which the open hand, going straight from a to b, passes over every movable object near
+        that line (`placed`: (name, centre) of one just set down, counted where it now stands) with `margin`; -inf if none.
+        Fixed obstacles (the vase) are not flown over: the planner keeps the hand clear of them."""
+        hang, need = self._hang(palm, side), -np.inf
+        g = self.plant.grip.get(self.role(palm)) if self.plant is not None else None
+        foot = max(float(g.get("span", 0.0)), float(g["width"]) / 2) if g else 0.05
+        bodies = [(c, r, hh, n) for c, r, hh, n in self._bodies(skip=tuple(self.obstacles)) if not placed or n != placed[0]]
+        if placed:
+            o = self.objs[placed[0]]
+            bodies.append((np.array([placed[1][0], placed[1][1], TABLE_TOP + o["half_h"]]), self._radius(placed[0]), o["half_h"], placed[0]))
+        for c, r, hh, n in bodies:
+            if _seg_dist(np.asarray(c, float)[:2], np.asarray(a, float)[:2], np.asarray(b, float)[:2]) < r + foot + 0.01:
+                need = max(need, float(c[2]) + hh + hang + margin)
         return need
 
     def tick(self):
@@ -779,7 +828,14 @@ class Tasks:
                     if self.task:
                         self.task["step"] = "grasped"
             elif ph["phase"] == "open":           # wait until the jaws are off it (they open over ~0.8 s)
-                if (now - ph["t0"] > 0.35 and not any(pl.touching(role, obj))) or now - ph["t0"] > 1.2:
+                g, touch = pl.grip[role], any(pl.touching(role, obj))
+                ph["off"] = None if touch else (ph.get("off") or (now, g.get("ctrl")))
+                if ph.get("free") is None and ph["off"] is not None and now - ph["off"][0] > 0.08:
+                    ph["free"] = ph["off"][1]     # the jaws let go here: open a little further, not all the way (a wide
+                if g["cmd"] == "open" and ph.get("free") is not None and g.get("ctrl") is not None and (   # gripper opening
+                        abs(g["ctrl"] - ph["free"]) > RELEASE_OPEN * abs(g["open"] - g["close"]) or pl.hand_bump(role, obj)):
+                    pl.grip_cmd(role, "hold")      # fully next to a neighbour would push it, or jam against it)
+                if (now - ph["t0"] > 0.35 and not touch) or now - ph["t0"] > 1.2:
                     self.holding[palm] = None
                     self.held.pop(palm, None)
                     self.cur = obj
@@ -1300,9 +1356,14 @@ class Tasks:
             self.place_at = (name, place_c)
             if held is None:
                 self.plant.grip_cmd(self.role(palm), "open")
-        kps += [retreat] + ([np.array([home[0], home[1], TABLE_TOP + 0.10])] if over else []) + [home]
+        kps += [retreat]
         if n is not None:                         # physics: backed off: from here the hand keeps clear of what it set down
-            ev[len(kps) - 2 - int(over)] = "clear"
+            ev[len(kps) - 1] = "clear"
+            nxt = np.array([home[0], home[1], TABLE_TOP + 0.10]) if over else home
+            zl = self._clear_z(retreat, nxt, palm, sidegrasp, placed=(name, place_c))
+            if zl > retreat[2] + 0.005:           # ... and goes up over it (and its neighbours) before heading home
+                kps.append(np.array([retreat[0], retreat[1], zl]))
+        kps += ([np.array([home[0], home[1], TABLE_TOP + 0.10])] if over else []) + [home]
         quats = None
         if n is not None:                         # the hand turns to the grasp orientation, keeps it, and turns back home
             # (back over the table's edge with the home orientation already)

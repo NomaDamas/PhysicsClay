@@ -97,14 +97,32 @@ def _built(width, approach=(0, 0, 1), axis=(0, 1, 0), length=0.06, base=0.0):
 
 
 def _native(act, open_, close, a, b, width, tcp=(0, 0, 0), approach=(0, 0, 1), axis=(0, 1, 0), boost=1.0, pads=None,
-            nocollide=(), nocollide_bodies=(), jaw=None, up=None, pad_h=None):
+            nocollide=(), nocollide_bodies=(), jaw=None, up=None, pad_h=None, parallel=None):
     """The model's own gripper: actuator, open/closed commands, the bodies of each side's pads, TCP (site frame).
     pads: {"a": [{"body", "pos", "size", "quat"}], "b": [...]} flat pads added to the finger bodies (their frames);
     nocollide: geom names on the pad bodies whose contact is replaced by those pads; nocollide_bodies: bodies whose geoms
-    don't touch things (hulls that don't match the real finger)."""
+    don't touch things (hulls that don't match the real finger); parallel: spring-loaded parallel pads driven by the
+    gripper's joint (pps.physics._parallel_pads)."""
     return {"act": act, "open": open_, "close": close, "a": a, "b": b, "width": width, "tcp": tcp, "approach": approach,
             "axis": axis, "boost": boost, "pads": pads or {}, "nocollide": tuple(nocollide), "nocollide_bodies": tuple(nocollide_bodies),
-            "jaw": jaw, **({"up": up} if up is not None else {}), **({"pad_h": pad_h} if pad_h is not None else {})}
+            "jaw": jaw, **({"up": up} if up is not None else {}), **({"pad_h": pad_h} if pad_h is not None else {}),
+            **({"parallel": parallel} if parallel is not None else {})}
+
+
+def _sg3_grip():
+    """Hello Robot's SG3 (Stretch 3). The real fingers are flexible strips with suction-cup-like rubber tips that swivel
+    flat against what they hold; the model's rigid hinged fingers close the tips along an arc, tilted up to 30°, so a
+    squeezed block or mug squirted out. Physics models the tips as two parallel, spring-loaded pads: each pad's carrier
+    follows where the real fingertip's inner face is across the jaws for the gripper's slide joint s (a cubic fitted to
+    the model's own finger kinematics: 1.5 cm at s = 0, 8.7 cm open), the pad sits on a slide joint behind it with a spring
+    (the finger's flex: 5 kN/m, damped, up to 1.2 cm) and the force comes from the gripper's own force-limited servo
+    through that coupling (boost: 2 x dx/ds, so each pad squeezes with about grip_force). The finger meshes rotate as
+    before (they're the visuals); the rubber tips' hulls are replaced by the pads (4 x 4 cm faces)."""
+    return dict(_native("gripper", 0.04, -0.02, ("pc_right_pad_a",), ("pc_right_pad_b",), 0.15, approach=(0, 0, 1), axis=(1, 0, 0),
+                        boost=3.7, up=(0, 1, 0), pad_h=0.02, nocollide_bodies=("rubber_tip_left", "rubber_tip_right"),
+                        parallel={"joint": "joint_gripper_slide", "x": (0.01502, 1.8295, 0.3927, -30.31), "z": 0.0,
+                                  "half": (0.02, 0.02), "t": 0.008, "k": 5000.0, "c": 20.0, "flex": 0.012}),
+                room=0.04)   # pad (0.8 cm) + the finger strip outside it (~1.5 cm) + 1.5 cm to open: a spot needs that beside it
 
 
 def _aloha_grip(r):
@@ -172,9 +190,7 @@ PROFILES: dict[str, RobotProfile] = {p.id: p for p in [
         physics={"payload": 1.5, "grasp": "side", "experimental": STRETCH,
                  "stiffer": [(("wrist",), 10.0)],         # the model's wrist servos (kp 10-50) let the fingers droop onto the table
                  "home": {"joint_lift": 0.75},             # the model's home has the fingers 2 cm inside the table top
-                 "grip": {"right": _native("gripper", 0.04, -0.02, ("rubber_tip_left", "link_gripper_finger_left"),
-                 ("rubber_tip_right", "link_gripper_finger_right"), 0.15, approach=(0, 0, 1), axis=(1, 0, 0), boost=3.4,
-                 up=(0, 1, 0), pad_h=0.02)}}),
+                 "grip": {"right": _sg3_grip()}}),
     RobotProfile(
         "tidybot", "Stanford TidyBot (Kinova on a mobile base)", "mobile_manipulator", EX + "stanford_tidybot/tidybot.xml",
         {"x": -0.30, "y": 0.0, "yaw": 0, "on": "floor"}, {"right": "pinch_site"}, "home", "mobile",
