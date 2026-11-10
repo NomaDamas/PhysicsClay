@@ -60,6 +60,8 @@ def trial(rt, tk, obj, target, rng, verbose=False):
     tk.pick_place("bench", obj, target, None, None, 4 / 3)
     st = dict(tk.task)
     if st["status"] != "running":
+        if verbose:
+            print(f"    {rt.profile.id} {obj:10s} NO  (not started) {st['message'][:240]}")
         return {"ok": False, "why": st["message"], "t": 0.0}
     t0 = pl.d.time
     palm = rt.path["palm"]

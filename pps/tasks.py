@@ -2,6 +2,7 @@
 (the physics verdict), then executed; the robot reports in one sentence what it will do or why it can't."""
 import json
 import os
+import re
 import sys
 import time
 
@@ -1089,8 +1090,11 @@ class Tasks:
                 if self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=last and k == 0, yaw=y):
                     return True
                 first = first or (dict(self.task), self.rt.path)
-                if getattr(self, "fail_reason", "reach") != "reach":
-                    break                         # (a turned hand may fit or reach where this one didn't)
+                msg = self.task.get("message", "")
+                miss = re.search(r"(\d+) of \d+ waypoints .* worst by (\d+) cm", msg)
+                if getattr(self, "fail_reason", "reach") != "reach" or not (
+                        "exactly to the spot" in msg or (miss and (int(miss[1]) == 1 or int(miss[2]) <= 3))):
+                    break     # (a turned hand may fit, or get past one awkward waypoint; it won't make up for a far spot)
             self.task, self.rt.path = first
             return False
         cur = d.site_xpos[self.rt.palm_sid[palm]].copy()
