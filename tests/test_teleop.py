@@ -90,6 +90,29 @@ def test_rate_limited_and_converges():
     assert np.allclose(ctx.rt.data.mocap_pos[0], target, atol=1e-6)
 
 
+def test_physics_rate_limit_runs_on_the_robots_clock():
+    """With physics the target's speed is per second of the robot's (sim) time: a busy machine that runs the plant at a
+    third of real time gets a third of the motion per wall second, so the arm can follow it."""
+    ctx = make_ctx()
+    ctx.rt.plant = SimpleNamespace(d=SimpleNamespace(time=10.0))
+    send(ctx, op="start")
+    p0 = ctx.rt.data.mocap_pos[0].copy()
+    target = (p0 + np.array([0.0, 0.3, 0.0])).tolist()
+    send(ctx, p=target)                                       # the first command: one frame's worth (1/30 s)
+    m1 = float(np.linalg.norm(ctx.rt.data.mocap_pos[0] - p0))
+    assert 0 < m1 <= TP.MAX_SPEED / 30 + 1e-9
+    time.sleep(0.05)                                          # wall time passes, but no robot time: the target stays
+    send(ctx, p=target)
+    assert np.isclose(float(np.linalg.norm(ctx.rt.data.mocap_pos[0] - p0)), m1)
+    ctx.rt.plant.d.time += 0.05                               # 50 ms of robot time: 5 cm more at 1 m/s
+    send(ctx, p=target)
+    assert np.isclose(float(np.linalg.norm(ctx.rt.data.mocap_pos[0] - p0)), m1 + TP.MAX_SPEED * 0.05)
+    ctx.rt.plant.d.time = 0.0                                 # a scene reset restarts the clock: no jump
+    p1 = ctx.rt.data.mocap_pos[0].copy()
+    send(ctx, p=target)
+    assert np.allclose(ctx.rt.data.mocap_pos[0], p1)
+
+
 def test_clamped_to_reach_and_surface():
     ctx = make_ctx()
     send(ctx, op="start")

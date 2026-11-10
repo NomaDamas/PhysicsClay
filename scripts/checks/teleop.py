@@ -31,9 +31,22 @@ def _dist(a, b):
 
 
 async def _stream(t, role, p, seconds, grip=None, q=None, hz=30):
+    """Stream one target for `seconds` of the robot's own time: sim time with physics (a loaded machine runs the plant
+    slower than real time, and the arm needs its time to get somewhere before the next target), capped at 8x that of
+    wall time; wall time in kinematic mode."""
     t0 = time.time()
-    n = 0
-    while time.time() - t0 < seconds:
+    n, sim, last = 0, 0.0, None
+    while True:
+        el = time.time() - t0
+        ph = t.state().get("physics") or {}
+        if ph.get("mode") == "dynamic":
+            now = float(ph.get("time") or 0.0)
+            sim += max(0.0, now - last) if last is not None and now >= last else 0.0   # (the clock restarts on a reset)
+            last = now
+            if sim >= seconds or el >= 8 * seconds:
+                break
+        elif el >= seconds:
+            break
         msg = {"type": "teleop", "role": role, "p": [round(x, 4) for x in p], "t": round((time.time() - t0) * 1000, 1) + n * 1e-3}
         if grip is not None:
             msg["grip"] = grip

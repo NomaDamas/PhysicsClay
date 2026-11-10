@@ -8,7 +8,9 @@
 
 Every command goes through the same runtime target path P3 mirroring uses (the hand's mocap target), after:
   * clamping: a sphere of the arm's reach around its shoulder, and above the work surface (plus what it carries);
-  * rate limiting: at most MAX_SPEED m/s and MAX_TURN rad/s, both multiplied by P5's `rt.safety_scale`;
+  * rate limiting: at most MAX_SPEED m/s and MAX_TURN rad/s of the robot's time (sim time with physics, so a loaded
+    machine running the plant slower than real time doesn't move the target faster than the arm can follow), both
+    multiplied by P5's `rt.safety_scale`;
   * safety: nothing moves during a protective stop (`rt.safety_scale <= 0` or `tasks.safety.stopped`), and a target
     inside the person's body zone (`tasks.safety.check_point`, P5) is not taken. There is no way to bypass this.
 `grip` goes to `rt.set_gripper(palm, g)` when the runtime has it (P0); otherwise closing the gripper next to an object
@@ -125,6 +127,23 @@ def over_edge(rt, palm, want):
     if ee[0] > x0 - 0.04 and y0 - 0.04 <= ee[1] <= y1 + 0.04:   # under the table: back out from under the edge
         return np.array([x0 - 0.08, ee[1], min(ee[2], top - 0.04)])
     return np.array([ee[0], ee[1], top + 0.08])                 # beside it: straight up, then over
+
+
+def robot_clock(rt, now):
+    """The clock the hand target's speed limits run on: with physics the robot's own (sim) time, which runs slower
+    than the wall clock when a busy machine caps the plant's substeps (rtf < 1: plan and plant share that clock, P0);
+    a wall-clock limit would then move the target faster than the arm can follow in its time, so it trails, overshoots
+    and sweeps through what is near the path. Kinematic: the wall clock."""
+    pl = getattr(rt, "plant", None)
+    return float(pl.d.time) if pl is not None else float(now)
+
+
+def step_dt(rt, clock, last):
+    """Time since the last applied command on that clock (capped at 0.1 s). Physics: two commands in one server frame
+    share that frame's robot time (the second moves nothing more), and a scene reset (the clock restarts) gives 0."""
+    if getattr(rt, "plant", None) is not None:
+        return float(np.clip(clock - last, 0.0, 0.1)) if last is not None else 1 / 30
+    return float(np.clip(clock - (clock - 1 / 30 if last is None else last), 1 / 120, 0.1))
 
 
 def safety_hold(ctx, palm, p):
@@ -249,15 +268,16 @@ def command(ctx, s, msg):
         return
     want, clamped = clamp_target(rt, tasks, palm, p)
     why = safety_hold(ctx, palm, want)
+    clock = robot_clock(rt, now)
     if why:
         s["held"], s["clamped"] = why, clamped
-        s["applied"][palm] = now
+        s["applied"][palm] = clock
         return
     d, mid = rt.data, rt.hands_mid[palm]
     want = over_edge(rt, palm, want)
     scale = float(np.clip(float(getattr(rt, "safety_scale", 1.0)), 0.0, 1.0))
-    dt = float(np.clip(now - s["applied"].get(palm, now - 1 / 30), 1 / 120, 0.1))
-    s["applied"][palm] = now
+    dt = step_dt(rt, clock, s["applied"].get(palm))
+    s["applied"][palm] = clock
     cur = d.mocap_pos[mid].copy()
     delta = want - cur
     n = float(np.linalg.norm(delta))
