@@ -1,113 +1,254 @@
 # PhysicsClay
 
-### New Generation of interactive prompt for Physical AI
-**Turning human intent into spatial instructions that robots can understand and execute.**
+**Instruct robots the way you instruct people: say it, point at it, show it, draw it.
+The robot watches you, proposes a plan, and acts with real physics.**
 
-> Some tasks are nearly impossible to give a robot in text alone. You can't put everything you think into words —
-> where exactly, which path, what not to touch — and some motions (a Taekwondo kick, a sprinter's stride, a dance)
-> you can't describe at all. Showing beats describing. Physical AI needs its own prompt: a spatial one.
+English · [한국어](README.ko.md) · [Docs](docs/README.md) · [Changelog](CHANGELOG.md)
 
-| | |
+PhysicsClay is an open-source web app for giving tasks to simulated robots. You talk to it, point at the table, show
+it a motion on camera, or draw a route in 3D (or in VR). It turns that into a concrete plan for the robot body you
+picked, checks every waypoint against a MuJoCo model, shows you the plan and a ghost of the motion, and runs it only
+when you say "go". It runs locally in your browser with a Python server (MuJoCo + [mink](https://github.com/kevinzakka/mink)
++ aiohttp + three.js), works without any API keys, and speaks English and Korean.
+
+The core idea:
+
+* **Say · point · show.** Words carry *what* and *why*; a point carries *where*; a demonstration carries *how*.
+  Text alone can't say "exactly there, around the vase, slowly", and some motions can't be described at all.
+* **The robot proposes, you correct.** Nothing moves before you see the plan. If something is wrong you fix only that
+  part: point at a new spot, drag a waypoint, say "higher there". If the robot can't do it, it says why ("13 cm too
+  low") and offers the nearest thing it can do.
+* **Real physics.** Robots are simulated dynamically at 2 ms: grasps hold by contact, objects have mass and friction,
+  slips and too-heavy loads fail honestly. Nothing is teleported into the hand.
+* **It watches you.** Your body, hands and the tool you hold are in the robot's world. It can mirror you, learn a
+  demonstration, follow standing rules ("when I hold my hand out, give me the wrench"), assist, or coach, and it slows
+  down and stops around you.
+* **A data engine for robot learning.** Every task can be recorded as a LeRobot dataset episode, and one intent can be
+  replayed as many randomized episodes across robots, rooms and physics parameters.
+
+## Screenshots
+
+These are from earlier builds (UX 2.0 and the hackathon); the layout is the same today.
+
+| The robot proposes: plan card + ghost | "Which one?" when your words fit several objects |
 |---|---|
-| **Demo video (2 min)** | [`docs/hackathon/demo/physicsclay_demo.mp4`](docs/hackathon/demo/physicsclay_demo.mp4) |
-| **Live app** | https://physicsclay.jinminseong.com (phone camera + mic over HTTPS) |
-| **Narrated pitch** | https://physicsclay.jinminseong.com/static/present.html |
-| **Browser physics lab** | https://physicsclay.jinminseong.com/static/lab.html (MuJoCo WASM + React) |
-| **Track** | YC RFS Fall 2026 · *New Operating System for the Physical World* |
+| ![Plan card with a proposed pick and place](docs/ux2/ux2-propose.png) | ![The robot asks which block](docs/ux2/ux2-which-one.png) |
+| **Keep-out zone: "stay away from the vase"** | **Phone layout** |
+| ![A keep-out zone around the vase](docs/ux2/ux2-zone.png) | ![The app on a phone](docs/ux2/shell-phone.png) |
+| **A route drawn in 3D carries the mug over the vase** | **Teach by showing: the robot reads back what it understood** |
+| ![A drawn route over the vase](docs/readme/carry.jpg) | ![Teach by showing](docs/readme/teach.jpg) |
 
-## 3 key features
+Still to capture for this README (contributions welcome, our own footage only): a physics pick & place on the Panda;
+a drawer opened in a generated kitchen; Watch → Coach in the gym pack; a path drawn in the air on a Quest; a photo
+turned into a graspable object; the Korean UI.
 
-### ① Video → Robot action
-Show a video; the robot learns the motion with its own body (arms, torso twist, squats, kicks), balance-checked, saved as a reusable skill.
+## Quickstart (60 seconds)
 
-| Seated: the robot sits like the person | Duet: two robots dance the same clip |
-|---|---|
-| ![seated](docs/readme/seated.jpg) | ![duet](docs/readme/duet.jpg) |
+You need macOS or Linux with [uv](https://docs.astral.sh/uv/), git and curl. Datasets also need `ffmpeg`.
 
-### ② Real-time trajectory lining + pointing, with real-time voice
-Say what, draw where. A text-only command is refused by physics; a route drawn in 3D over the vase succeeds; point and say "there".
-
-| Text only: refused (13 cm too low) | 3D route: carried over the vase |
-|---|---|
-| ![refuse](docs/readme/refuse.jpg) | ![carry](docs/readme/carry.jpg) |
-
-### ③ Real-time video understanding
-Your camera is part of the prompt: YOLO11 segmentation, SAM 2.1 masks, 33 MediaPipe pose joints, Gemini Live (voice + video)
-and Gemini Robotics-ER (pointing). Teach the robot like a friend: show & tell → it asks back → practices in sim → you correct.
-
-| Vision stack on a person's video | Teach by showing: the robot asks back |
-|---|---|
-| ![vision](docs/readme/vision.jpg) | ![teach](docs/readme/teach.jpg) |
-
-## How it works
-```
-You: show (camera / video) · say (voice / text) · point & draw (robot view / 3D)
-  -> intent: Gemini Live + Robotics-ER, YOLO11-seg, SAM 2.1, MediaPipe Pose      (understanding)
-  -> spatial task spec: steps, targets, constraints ("avoid the vase", "slowly")   (the new prompt)
-  -> physics: IK pre-check of every waypoint on a real Unitree G1 model, joint limits, collisions, balance
-  -> refuse with a reason + a reachable alternative, or execute in MuJoCo; same spec compiles for a UR5e arm
-```
-Worlds: a table, or a generated home or industrial site (a cluttered kitchen with drawers, doors, a sink and a fridge; a
-dining room, living room, laundry; an assembly line with a running conveyor, a warehouse with totes and racks, a CNC
-cell, an electronics bench, a lab, a packing station), every seed a different layout, drawers and doors on real joints
-the robot opens by their handles ([docs/worlds.md](docs/worlds.md)).
-Business: free browser playground (users) -> paid per robot for robot teams (humanoid makers, integrators, labs).
-Roadmap: VR/XR teaching at true scale -> real robots -> learning from corrections across robots.
-
-## Install
-You need [uv](https://docs.astral.sh/uv/), git and curl, on macOS or Linux.
 ```bash
-make setup                         # = ./scripts/setup.sh: .venv, deps (pyproject.toml), robot models, MediaPipe models
-PC_EXTRAS=vision,data,dev ./scripts/setup.sh   # choose extras; `yolo` (Ultralytics, AGPL-3.0) is opt-in, see NOTICE
+git clone https://github.com/NomaDamas/PhysicsClay && cd PhysicsClay
+make setup        # = ./scripts/setup.sh: .venv, Python deps, robot models, MediaPipe models
+make run          # http://127.0.0.1:8780 here, https://<LAN IP>:8781 for phones and Quest
 ```
 
-## Run
-```bash
-make run                           # http://127.0.0.1:8777 (synthetic person; add ARGS="--webcam" for your camera)
-make run ARGS="--https --mock"     # + https://<lan-ip>:8443 so a phone can use its mic (accept the cert warning)
-make run ARGS="--byok"             # public deployment: visitors bring their own API keys (see SECURITY.md)
-./scripts/web.sh                   # the old launcher: same server on 8777, opens the browser
-```
-New here? Press **?** (Help) in the top bar for the in-app guide, or read [docs/USAGE.md](docs/USAGE.md)
-([한국어](docs/USAGE.ko.md)): the three ways to instruct, the plan card, tools, Watch modes, camera and phone camera,
-gestures, packs, datasets, VR, safety and example commands.
+Open **http://127.0.0.1:8780** in Chrome, Edge or Safari, type "put the mug on the right" and press **Run** on the
+plan card. Press **?** in the top bar for the in-app guide.
 
-Open Settings in the page and paste a Gemini API key, which is stored only in the browser. You can also put server
-keys in `.env`, which is never committed. Without a key, the page falls back to browser speech recognition and a
-rule parser.
-`web.sh` restarts only its own server (same `--port`), never others. YOLO segmentation is optional
-(`uv pip install --python .venv/bin/python ultralytics`, AGPL-3.0); without it the camera overlay uses the
-MediaPipe object detector.
+* **Keys are optional.** Without any, an offline rule parser (English and Korean) and the browser's speech recognition
+  take your commands, and `make run ARGS="--mock"` adds a scripted offline brain. For Gemini Live (voice + vision),
+  paste a Gemini key in **Settings → AI** (stored only in your browser). Server keys go in `.env` (git-ignored):
+  `GEMINI_API_KEY`, `OPENAI_API_KEY` (robot voice), and `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL` for the LLM agent
+  (any OpenAI-compatible Responses API). On a `--byok` server each visitor enters their own keys in Settings.
+* **Phones and Quest.** `make run` also serves https on 8781 with a self-signed certificate (created in `certs/` on
+  first start), because phones only share their camera and microphone over https. Accept the warning once. The
+  terminal prints the phone address (`https://<LAN IP>:8781/phone`); in the app, **Use my phone** shows it as a QR code.
+* **Options.** `make run HTTPS=0` (http only), `make run PORT=9000 HTTPS_PORT=9001`, `ARGS="--webcam"` (this computer's
+  camera on the server), `ARGS="--kinematic"` (no physics), `ARGS="--byok"` (a public server: visitors bring their own
+  keys, see [SECURITY.md](SECURITY.md)).
 
-## Test
-```bash
-make lint                          # ruff
-make test                          # pytest unit suite (pure functions, a few seconds)
-make selftest                      # end-to-end self test on an isolated server (PC_SELFTEST_OFFLINE=1 without keys)
-```
-Real camera, end to end (headless Chrome plays your own clip as its webcam; needs Chrome + ffmpeg, see
-`scripts/e2e_camera.py` for how to record the clips):
-`PC_CAM_POINT=point.mov PC_CAM_HAND=hand.mov PC_CAM_SQUAT=squats.mov .venv/bin/python scripts/e2e_camera.py`.
+Full user guide: [docs/USAGE.md](docs/USAGE.md) ([한국어](docs/USAGE.ko.md)).
 
-Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · Architecture: [docs/architecture.md](docs/architecture.md) ·
-Security: [SECURITY.md](SECURITY.md)
+## Feature tour
 
-## License
-PhysicsClay is licensed under Apache-2.0 (see [LICENSE](LICENSE)). Third-party models, assets and libraries keep
-their own licenses, which are listed in [NOTICE](NOTICE). The optional `yolo` extra (Ultralytics) is AGPL-3.0.
+### Robots
+
+Eleven bodies from [MuJoCo Menagerie](https://github.com/google-deepmind/mujoco_menagerie) (via mink's examples) and
+Unitree. Switch from the robot pill in the top bar (or ask the agent). The same intent compiles for each body.
+
+| Robot | Kind | Gripper (physics) | Contact pick & place, mug · block (10 trials each) | Status |
+|---|---|---|---|---|
+| Unitree G1 | humanoid | two-pad palm gripper (built, 15 cm) | 10/10 · 10/10 | ok |
+| Franka Emika Panda | arm | own fingers | 10/10 · 10/10 | ok |
+| Universal Robots UR5e | arm | parallel jaws (built, 14 cm) | 10/10 · 10/10 | ok |
+| uFactory xArm7 | arm | own gripper | 10/10 · 10/10 | ok |
+| KUKA LBR iiwa 14 | arm | parallel jaws (built, 14 cm) | 10/10 · 10/10 | ok |
+| ALOHA | two arms | own fingers; two-arm handover | 10/10 · 9/10 | ok |
+| Apptronik Apollo | humanoid | two-pad palm gripper (built) | 10/10 · 10/10 | ok |
+| Hello Robot Stretch 3 | mobile manipulator | spring-loaded parallel pads | 10/10 · 10/10 | ok |
+| Stanford TidyBot | mobile manipulator | own Robotiq 2F-85 | 10/10 · 10/10 | ok |
+| Boston Dynamics Spot | quadruped + arm | own claw | 10/10 · 10/10 | ok |
+| Unitree H2 | humanoid | hands not driven | no pick | experimental (reach, paths) |
+
+Numbers are from `scripts/bench_grasp.py -n 10` (seed 0; the method and the history are in [docs/V1.md](docs/V1.md)).
+Humanoids and Spot stand on a harness that follows the planned base: no walking or dynamic balance. Mobile bases drive,
+with the wheels abstracted. `PC_PHYSICS=0` (or `--kinematic`) is the old kinematic mode: IK poses the robot and a
+picked object rides the hand.
+
+### Worlds
+
+A wooden table, a kitchen counter, a shelf, a floor mat and a gym floor, plus **generated rooms**: four homes
+(kitchen, dining room, living room, laundry) and six industrial sites (assembly line with a running conveyor,
+warehouse, CNC machine tending, electronics bench, lab, packing station). Every seed is a different layout; drawers and
+doors are on real joints and the robot opens them by their handles. Multi-step requests ("take the spoon out of the top
+drawer and put it in the sink") become one plan card. Guide: [docs/worlds.md](docs/worlds.md).
+
+### Real photos → simulated objects and spaces
+
+Photograph one object and it becomes a physics-ready object with its real size, mass and friction that robots can
+grasp; photograph your table and the scene is rebuilt with the same layout. Works offline with simple shapes; better
+depth, recognition and meshes with optional models or keys. Guide: [docs/RECON.md](docs/RECON.md).
+
+### Watching the person
+
+With your camera (laptop, phone or Quest) the robot tracks your body, hands and the tool you hold, and reads what you
+are doing (activity, phase, reps). Modes: **mirror** (copies you live), **learn** (records a demonstration it can
+repeat), **respond** (standing rules), **assist** (force-limited help when you stall), **coach** (counts reps, one cue
+per rep). See [Watch modes](docs/USAGE.md#watch-modes).
+
+### Trajectories and VR
+
+Paths are full 3D trajectories: height, wrist orientation, speed, force, grip and tolerance per point, shown as a ghost
+gripper with handles you can drag, turn and edit by voice ("higher there", "slower near the vase"). Draw them from words
+(agent), keyframes, a stroke in the robot's view, a demonstration, or in the air with a Meta Quest (VR or passthrough MR,
+with live teleop). Guides: [Trajectories](docs/USAGE.md#trajectories), [docs/vr.md](docs/vr.md).
+
+### Skills and demo packs
+
+A demonstration becomes a parametric skill relative to the scene: `weave_seam`, `wipe`, `stir`, `press`, `spot`,
+`mirror_motion`. "Geometry gives precision, the person gives style": the seam comes from the scene, the weave from your
+hand. Three packs set up a story in one click: a **weld cell**, a **gym** and a **workshop helper**. Guides:
+[docs/skills.md](docs/skills.md), [docs/packs.md](docs/packs.md).
+
+### Safety around people
+
+Speed and separation monitoring in the spirit of ISO/TS 15066: the robot slows within about half a metre of you, makes
+a protective stop before contact (sooner near your head and torso), resumes when you step back, and caps force where
+contact is allowed (hands and forearms, in assist and handovers). It can't be turned off. It is **not** a certified
+safety system. Guide: [docs/safety.md](docs/safety.md).
+
+### Datasets
+
+Press **Record** and every task becomes a LeRobot v2.1 episode (joint states, actions, front and wrist video, your
+words, success labels, your pose). `scripts/generate.py` replays one intent as many randomized episodes across robots,
+rooms, lighting and physics. Guide: [docs/datasets.md](docs/datasets.md).
+
+### Real-to-sim calibration
+
+Probe motions (swing, press, lift, slide) and system identification fit friction, mass, damping, stiffness and latency
+so the simulation matches a robot; the same ranges drive domain randomization. A `RobotDriver` interface (sim driver
+plus LeRobot / ROS 2 stubs) is where real hardware would plug in. Guide: [docs/calibration.md](docs/calibration.md).
+
+### Languages
+
+English and Korean throughout: the offline parser understands both, the LLM agent and Gemini answer in the language you
+use, the in-app guide has both, and the server's messages (tasks, plans, safety, watch, skills, worlds, calibration…)
+and the UI's own labels follow **Settings → Language** (System / 한국어 / English). See
+[Voice and language](docs/USAGE.md#voice-and-language).
 
 ## Architecture
-```
-browser: Gemini Live (voice + your camera) --tool calls--> intents --WebSocket--> server
-         Robotics-ER pointing on the robot view                                    |
-server:  intent -> target (region / marker / raycast) -> hand path -> IK pre-check per waypoint
-         -> refuse with a reason, or execute (kinematic grasp) -> verdict back to Gemini, which says it out loud
-```
-Protocol: `docs/PROTOCOL.md`. Assets: Unitree G1 (mujoco_menagerie), Google Scanned Objects mug (CC-BY 4.0).
-Open source: MuJoCo, mink, MediaPipe, OpenCV, aiohttp; HUD patterns from CozyClay.
 
-## Roadmap
-1. Today: teach by showing (camera + voice + pointing + 3D routes) on a simulated Unitree G1 and a UR5e, physics-checked.
-2. **VR / XR teaching**: stand inside the robot's space with a headset, grab the 3D route and the objects with your hands,
-   and demonstrate at true scale; the same task spec and physics check carry over.
-3. Real robots: send approved task specs to hardware (sim-checked first), learn from corrections across robots.
+One Python process: an aiohttp server and a simulation worker thread. The browser sends what you say, point at and
+show over a WebSocket; the worker grounds it in a MuJoCo world, plans with mink IK, runs it on the physics plant and
+streams state and video back; three.js draws the shared 3D stage.
+
+```
+browser (web/)                                     server (pps/, one process)
+  voice · text · camera · pointing · 3D · VR  ──ws──▶  features (pps/features/*): plan, candidates, zones, goal,
+  Gemini Live / Robotics-ER (optional)                   copresence, watch, safety, traj, skills, fixtures, recon …
+  plan card · ghost · 3D stage (three.js)    ◀──ws──   tasks (pps/tasks.py, pps/manip.py) → IK planner (mink)
+                                                         → physics plant (pps/physics.py, MuJoCo mj_step)
+  LLM agent (pps/agent.py) acts like a browser ──────▶   → state + frames (localized by pps/i18n.py) → browser
+```
+
+Details: [docs/architecture.md](docs/architecture.md) · wire protocol: [docs/PROTOCOL.md](docs/PROTOCOL.md) · the v1
+workstream contract and "as built" notes: [docs/V1.md](docs/V1.md).
+
+## Extending
+
+Most additions never touch `pps/app.py` or `web/index.html`:
+
+* **A robot**: a `RobotProfile` in `pps/world/profiles.py` plus its prompts ([how](CONTRIBUTING.md#add-a-robot)).
+* **A scene template or a generated room**: `pps/world/scene.py` ([how](CONTRIBUTING.md#add-a-scene-template)),
+  `pps/world/rooms.py` and `pps/world/fixtures.py` ([how](docs/worlds.md#adding-your-own)); a demo pack in
+  `pps/world/packs/` ([how](docs/packs.md#adding-a-pack)).
+* **A feature**: `pps/features/<name>.py` (decorators for messages, tasks, state, ticks, overlays) and
+  `web/ui/<name>.js` on the `PCUI` registry ([how](CONTRIBUTING.md#add-a-feature-server--ui)).
+* **A check**: `scripts/checks/<name>.py` with `async def run(t)`; every feature has one
+  ([how](CONTRIBUTING.md#add-a-check)).
+* **A language**: the server's messages go through `pps/i18n.py`; the catalog is `pps/locale/ko_*.py` (English
+  template → Korean), checked by `tests/test_i18n.py` ([how it works](docs/PROTOCOL.md#v17--language-of-server-messages)).
+
+## Testing
+
+```bash
+make lint                       # ruff
+make test                       # pytest unit suite: pure functions, no server, seconds
+node --test tests/*.mjs         # browser-side pure modules (XR alignment, QR)
+make selftest                   # end-to-end: an isolated server driven over the real protocol by scripts/checks/*
+```
+
+* `PC_SELFTEST_OFFLINE=1 make selftest` runs without keys or network, as CI does; `PC_SELFTEST_CHECKS=physics,paths`
+  runs only those checks; `PC_SELFTEST_PORT=8791` picks the port. `PC_PHYSICS=0 make selftest` tests the kinematic mode.
+* `scripts/e2e_ui.py`: the UI in headless Chrome with real input events (zoom, theme contrast, help, voice, camera,
+  phone camera). `scripts/e2e_camera.py`: the real-camera path with your own clips as a fake webcam.
+* `scripts/bench_grasp.py -n 10`: the contact pick & place benchmark per robot. `scripts/calibrate.py --demo`: the
+  hidden-robot calibration demo.
+* `scripts/check_links.py`: relative links in the docs (also a unit test).
+
+## Limitations
+
+PhysicsClay is a simulator and a research tool. Honestly:
+
+* **Simulation only.** No real robot has been driven by it; the hardware bridge is an interface with stubs. Calibration
+  was proven against a "hidden" simulated robot, not hardware.
+* **Not a safety system.** The person is a pose estimate from one camera; the safety layer models the idea of speed
+  and separation monitoring and must never guard a real robot.
+* **No walking.** Humanoids and Spot stand on a harness that follows the planned base; mobile bases slide (no wheel
+  contact). The Unitree H2's hands aren't driven.
+* **Reactive IK, not a motion planner.** Rarely a hand wedges between objects or a reachable spot is refused; the
+  robot says so instead of trying something unsafe. The G1's side grasp places reliably only in a band in front of it.
+* **Simplified world.** Objects are rigid (no cloth, liquids or deformables); no welding arc or melt (the bead is the
+  torch path); handles are grasped from above; photo reconstruction from one view guesses the hidden side.
+* **Sim-to-real gap.** Rendered images, primitive objects and joint-target actions are far from a real robot's data.
+* **VR** was tested with an emulator and a mocked `navigator.xr`; a real Quest session is a manual test.
+* **Language.** Server messages that aren't in the catalog yet stay in English.
+
+Each guide ends with its own limitations section.
+
+## License and credits
+
+PhysicsClay is licensed under [Apache-2.0](LICENSE). Third-party models, assets and libraries keep their own licenses,
+listed in [NOTICE](NOTICE): robot models from MuJoCo Menagerie and the vendors (one, TidyBot, has no license file
+upstream; check before redistributing), the Google Scanned Objects mug (CC BY 4.0), MediaPipe and Depth Anything V2
+Small models (Apache-2.0). The optional `yolo` extra (Ultralytics) is **AGPL-3.0** and is not installed by default.
+
+Built on [MuJoCo](https://github.com/google-deepmind/mujoco), [mink](https://github.com/kevinzakka/mink),
+[MediaPipe](https://github.com/google-ai-edge/mediapipe), [three.js](https://threejs.org), OpenCV and aiohttp. The
+HUD and path-drawing interaction were inspired by [CozyClay](https://github.com/HaD0Yun/CozyClay) (no code included).
+The interface's design pass followed the [unslop](https://heydamir.design/unslop) method by Damir Sokolovsky
+(CC BY 4.0; no unslop images or code included).
+
+Contributing: [CONTRIBUTING.md](CONTRIBUTING.md) · [Code of Conduct](CODE_OF_CONDUCT.md) · [Security](SECURITY.md)
+
+## History
+
+PhysicsClay started at a hackathon (YC RFS Fall 2026, *New Operating System for the Physical World*) as "a new
+generation of interactive prompt for Physical AI": video → robot motion, routes drawn in 3D with voice, and real-time
+video understanding on a Unitree G1. v1 added real physics, more robots and worlds, watching the person, skills,
+safety, datasets and calibration ([CHANGELOG.md](CHANGELOG.md)).
+
+* Hackathon demo video (2 min): [docs/hackathon/demo/physicsclay_demo.mp4](docs/hackathon/demo/physicsclay_demo.mp4)
+* Hackathon live demo: https://physicsclay.jinminseong.com and its narrated pitch
+  https://physicsclay.jinminseong.com/static/present.html (a demo deployment; it may not run the latest version)
+* Pitch script and stills: [docs/hackathon/](docs/hackathon/README.md); the UX 2.0 design: [docs/UX2.md](docs/UX2.md)

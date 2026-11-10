@@ -19,21 +19,27 @@ You need macOS or Linux with [uv](https://docs.astral.sh/uv/), git and curl.
 ```bash
 git clone https://github.com/NomaDamas/PhysicsClay && cd PhysicsClay
 make setup                  # .venv, Python deps, robot models, MediaPipe models
-make run ARGS="--https"     # http://127.0.0.1:8777 here, plus https://<LAN IP>:8443 for phones and Quest
+make run                    # http://127.0.0.1:8780 here, plus https://<LAN IP>:8781 for phones and Quest
 ```
 
-Open **http://127.0.0.1:8777** in Chrome, Edge or Safari on the same computer. The terminal prints the phone and
-Quest addresses.
+Open **http://127.0.0.1:8780** in Chrome, Edge or Safari on the same computer. The terminal prints the https address,
+the phone address (`https://<LAN IP>:8781/phone`) and the Quest address; in the app, **Use my phone** shows the phone
+address as a QR code.
 
 | You want | Do this |
 |---|---|
-| Laptop only | Plain `make run` is enough (http on 8777; browsers allow the camera on 127.0.0.1). |
-| Phone camera or Quest | Keep `--https`. Plain `make run` has **no HTTPS**. Port 8443, self-signed certificate: accept the warning once. |
-| Other ports | `make run PORT=9000 ARGS="--https --https-port 9443"` |
-| No API keys | It works: an offline rule parser and the browser's speech recognition. Add keys later in Settings. |
-| Offline demo brain | `make run ARGS="--https --mock"` (scripted replies and gestures, no keys). |
-| A public server | `make run ARGS="--https --byok"`: visitors bring their own keys ([SECURITY.md](../SECURITY.md)). |
+| Laptop only | `make run` and http://127.0.0.1:8780 (browsers allow the camera on 127.0.0.1). |
+| Phone camera or Quest | Nothing extra: `make run` also serves **https on 8781** with a self-signed certificate (made in `certs/` on first start, valid 30 days). Accept the warning once. |
+| http only | `make run HTTPS=0` |
+| Other ports | `make run PORT=9000 HTTPS_PORT=9001` |
+| No API keys | It works: an offline rule parser (English and Korean) and the browser's speech recognition. Add keys later in Settings. |
+| Offline demo brain | `make run ARGS="--mock"` (scripted replies and gestures, no keys). |
+| No physics | `make run ARGS="--kinematic"` (the old kinematic mode, also `PC_PHYSICS=0`). |
+| A public server | `make run ARGS="--byok"`: visitors bring their own keys ([SECURITY.md](../SECURITY.md)). |
+| Korean messages | Settings → **Language** → 한국어 ([Voice and language](#voice-and-language)). |
 | A guided tour | Press **Demo** in the top bar. |
+
+`python -m pps.app` without `make` keeps its own defaults: http on 8777, and https on 8443 only with `--https`.
 
 ## The idea in one minute
 
@@ -170,8 +176,8 @@ The camera is **off by default**.
 
 **Your phone as the camera** (useful when the laptop can't see your whole upper body)
 
-1. Start the server with `--https` ([Quick start](#quick-start)).
-2. Press **Use my phone**. A QR code and an address appear: `https://<laptop LAN IP>:8443/phone`.
+1. Start the server with `make run` (it serves https on 8781; [Quick start](#quick-start)).
+2. Press **Use my phone**. A QR code and an address appear: `https://<laptop LAN IP>:8781/phone`.
 3. On the phone, on the **same Wi-Fi**, scan the code or type the address.
 4. Accept the certificate warning once. Safari: **Show Details → visit this website**. Chrome: **Advanced → Proceed**.
 5. Tap **Start camera** and allow it. The laptop shows "Phone connected · streaming 15 fps".
@@ -179,8 +185,8 @@ The camera is **off by default**.
 
 | Problem | Fix |
 |---|---|
-| The phone can't open the page | Server started with `--https`? Use `https://`, port 8443, the LAN IP the terminal printed, the same Wi-Fi (guest networks often isolate devices). |
-| "camera not available (needs https)" | You opened `http://<IP>:8777`. Use the https address, or 127.0.0.1 on the laptop itself. |
+| The phone can't open the page | Started with `make run` (not `HTTPS=0`)? Use `https://`, port 8781, the LAN IP the terminal printed, the same Wi-Fi (guest networks often isolate devices). |
+| "camera not available (needs https)" | You opened `http://<IP>:8780`. Use the https address, or 127.0.0.1 on the laptop itself. |
 | Permission denied | Allow the camera in the site settings (lock icon in the address bar) and reload. macOS: also System Settings → Privacy & Security → Camera for your browser. |
 | "No person detected", gestures never fire | Step back until your head, shoulders, elbows and hands are in view; face the camera; add light. |
 | The mannequin or your pointing is off | Face the camera squarely and keep only one person in view. |
@@ -231,7 +237,7 @@ Format and headless generation: [docs/datasets.md](datasets.md).
 
 ## VR / MR (Quest)
 
-1. `make run ARGS="--https"`. The terminal prints a `Quest :` line with `https://<LAN IP>:8443`.
+1. `make run`. The terminal prints a `Quest :` line with `https://<LAN IP>:8781`.
 2. Quest on the same Wi-Fi → Quest browser → that address → **Advanced → Proceed** once.
 3. Next to **3D / Robot eye**, press **Enter VR** or **Enter MR**. Allow hand tracking (and spatial data for MR).
 
@@ -246,7 +252,7 @@ Format and headless generation: [docs/datasets.md](datasets.md).
 * **MR**: pinch your real table's near-left corner, then its near-right corner: the robot stands on your table.
   **Scan → Use my room** turns what is on your table into obstacles.
 * Nothing runs until **Go** (menu) or "go". Safety applies in VR too.
-* Without the certificate: USB + `adb reverse tcp:8777 tcp:8777`, then `http://localhost:8777`.
+* Without the certificate: USB + `adb reverse tcp:8780 tcp:8780`, then `http://localhost:8780`.
   Full guide: [docs/vr.md](vr.md).
 
 ## Safety
@@ -268,8 +274,12 @@ What the robot does near you:
 * **Talk**: **Space** or the mic. With a Gemini API key (Settings → AI) it is a live voice conversation with Gemini
   Live, which also sees your camera when "Send my camera to Gemini" is on. Without a key the browser's speech
   recognition is used (Chrome, Edge or Safari) in the language of Settings → AI → **Speech language**.
-* **Language**: English and Korean both work. The LLM agent and Gemini Live answer in the language you use; the
-  offline parser's replies are in English.
+* **Language**: English and Korean both work, typed or spoken. The LLM agent and Gemini Live answer in the language
+  you use, and the offline parser understands Korean too ("빨간 컵을 그릇 옆으로 옮겨줘").
+* **The robot's messages** (task results, plan cards, safety, Watch, skills, worlds, calibration…) follow Settings →
+  **Language**: *System* (your browser's language), *한국어* or *English*. The server keeps one language for everyone
+  connected (the last browser to choose wins). A sentence that isn't translated yet stays in English. How it works:
+  [PROTOCOL.md](PROTOCOL.md#v17--language-of-server-messages).
 * **The robot's voice**: Settings → **Voice**: pick a voice for English and for Korean, press **Test**. With an
   OpenAI key (Settings → AI) the robot uses the natural OpenAI voice; otherwise the best voice of your browser or OS.
 * **Better system voices**: macOS: System Settings → Accessibility → Spoken Content → System voice → Manage Voices,
@@ -283,6 +293,7 @@ Press **Settings** (gear) in the top bar.
 | Section | What |
 |---|---|
 | Appearance | System / Light / Dark |
+| Language | System / 한국어 / English: the language of the robot's messages |
 | Voice | the robot's voice per language, Test |
 | Robot | G1 humanoid or UR5e arm (all robots and scenes: the robot pill) |
 | Camera | use this device's camera, switch front / back |
@@ -358,7 +369,7 @@ camera. Motion commands show a plan card first.
 | The robot pill says "connecting" | The server isn't running or was restarted: check the terminal, then reload the page. |
 | "I didn't catch an action" | The offline parser didn't recognise it. Rephrase like the [examples](#example-commands), or add an LLM key (Settings → Agent brain, or `.env`). |
 | Talk does nothing | Allow the microphone for the site. Without a Gemini key, use Chrome, Edge or Safari. On a phone, use the https address. |
-| The phone or Quest can't connect | Run with `--https`; open `https://<LAN IP>:8443` on the same Wi-Fi; accept the certificate once. |
+| The phone or Quest can't connect | Run `make run` (https is on by default); open `https://<LAN IP>:8781` on the same Wi-Fi; accept the certificate once. |
 | It can't see you, gestures don't fire | Step back so your upper body and hands are in view, add light, hold the gesture still. Gestures pause during the demo, teaching and mirroring. |
 | "Can't do this" on the plan card | Read the reason; take the offered alternative, press **Fix**, draw a route around the obstacle, or move it first. |
 | The robot stopped and waits | Safety: step back and it resumes by itself. After a force-limit stop, press **I'm clear**. |
