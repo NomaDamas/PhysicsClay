@@ -182,7 +182,7 @@ class Runtime:
         if base is None:
             base = self._oc_base = [float(np.max(t.orientation_cost)) for t in self.hand_tasks]
         for t, b in zip(self.hand_tasks, base):
-            t.set_orientation_cost(max(b, 0.6) if on else b)
+            t.set_orientation_cost(0.6 if on and b < 0.2 else b)    # arms keep their own weight
 
     def solve(self, cfg, dt):
         """IK velocity. If the limits can't all hold at once (a joint starting outside its range, a contact the plant made),

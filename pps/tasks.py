@@ -485,6 +485,7 @@ class Tasks:
         active = (self.kind in ("task", "path") and (rt.mode == "FOLLOW" or (self.ph or {}).get("phase") == "press")) \
             or (self.kind == "skill" and rt.mode == "PREVIEW") or (self.kind == "drive" and getattr(rt, "driving", False))
         if self.kind and not active:
+            rt.orient(False)                      # the next reach / mirroring moves the hand freely again
             if self.task and self.task["status"] == "running":
                 bad = self._placed_badly() if self.task.get("action") == "pick_place" else None
                 if bad:
@@ -514,6 +515,7 @@ class Tasks:
         self._hold_path(False)
         rt.mode = "MIRROR"
         rt.hold_here()
+        rt.orient(False)
         self.kind = None
         if obj in self.objs:
             self.cur = obj
@@ -559,8 +561,8 @@ class Tasks:
                     self._hold_path(False)
                     if self.task:
                         self.task["step"] = "grasped"
-            elif ph["phase"] == "open":
-                if now - ph["t0"] > 0.35:
+            elif ph["phase"] == "open":           # wait until the jaws are off it (they open over ~0.8 s)
+                if (now - ph["t0"] > 0.35 and not any(pl.touching(role, obj))) or now - ph["t0"] > 1.2:
                     self.holding[palm] = None
                     self.held.pop(palm, None)
                     self.cur = obj
@@ -1226,6 +1228,7 @@ class Tasks:
         self.kind = None
         if self.plant is not None:                # stop where the arm *is*, not where the plan was heading
             self.ph, self.place_at, rt.follow_hold = None, None, False
+            rt.orient(False)
             rt.hold_here()
         self.set_task(tid, "stop", "done", "Stopped. Holding this pose.")
 
@@ -1236,6 +1239,7 @@ class Tasks:
         rt.engaged, rt.mode, rt.path, self.kind = False, "MIRROR", None, None
         if self.plant is not None:
             self.ph, self.place_at, rt.follow_hold = None, None, False
+            rt.orient(False)
         if reset_scene:
             self.holding = {h: None for h in self.holding}
             self.grasp_off = None
