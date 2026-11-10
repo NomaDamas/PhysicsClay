@@ -54,10 +54,14 @@ async def main():
         tid = f"{action}-{time.time():.3f}"
         await ws.send_str(json.dumps({"type": "task", "id": tid, "action": action, **kw}))
         t0 = time.time()
-        while time.time() - t0 < wait:
+        deadline = t0 + wait
+        while time.time() < deadline:
             await pump(0.2)
-            if st.get("task") and st["task"]["id"] == tid and st["task"]["status"] != "planning":
+            cur = st.get("task") or {}
+            if cur.get("id") == tid and cur.get("status") != "planning":
                 break
+            if cur.get("id") == tid:              # still working out how (a pick search runs a slice per frame): its verdict
+                deadline = max(deadline, min(time.time() + 0.5, t0 + wait + 60))
         return st.get("task") or {}
 
     async def until_done(limit=25):
@@ -66,7 +70,7 @@ async def main():
         t0, sim, last = time.time(), 0.0, None
         while time.time() - t0 < 4 * limit:
             await pump(0.3)
-            if st.get("task", {}).get("status") != "running":
+            if st.get("task", {}).get("status") not in ("running", "planning"):   # (planning: a pick search, one slice per frame)
                 break
             ph = st.get("physics") or {}
             if ph.get("mode") != "dynamic":

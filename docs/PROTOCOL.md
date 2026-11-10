@@ -338,6 +338,8 @@ below reports `mode: "kinematic"` and the `physics` message is refused. Details 
 - `{type:"task", action:"press", target, force: N, hold_s}`: move over the spot (or an object's top), come down, track
   `force` along the approach axis with an admittance loop for `hold_s` seconds, retreat. The task message reports the
   mean and peak force (and "capped by the ... impedance limit" when the limit was lower than asked). Physics only.
+- `pick_place` with physics first works out how (`state.task.status: "planning"`, "Working out how to pick up …", a
+  slice per frame) and then runs or is refused; clients wait past `planning` for the verdict.
 - `pick_place` with physics: the jaws open on the way in, close at the grasp (the path waits), and the object is held
   only by friction. The task fails honestly with "It slipped: ..." (the object didn't come up / fell out), "Too heavy:
   ... I can lift X kg" (weight sensed once it hangs free), "I let go of ... but it fell over / ended up N cm from the

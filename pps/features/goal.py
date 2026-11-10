@@ -270,7 +270,7 @@ def _dispatch(ctx, g, step, via=None):
     g["message"] = (f"Move {step['i'] + 1} of {len(g['sequence'])}: {what}" + (" (over the obstacle)" if via else "")
                     + (" again, to land it exactly" if g["fixing"] else "") + ".")
     with _exact(tasks, step["object"], step["to"]):
-        tasks.pick_place(tid, step["object"], "goal", None, None, ctx.aspect, via_pts=via)
+        tasks.pick_place(tid, step["object"], "goal", None, None, ctx.aspect, via_pts=via, sliced=True)
 
 
 def _busy(ctx):

@@ -70,6 +70,15 @@ def densify(pts, step=0.035):
     return np.array(out)
 
 
+def _drain(gen):
+    """Run a resumable step (a generator that yields between slices of work) to the end -> its return value."""
+    while True:
+        try:
+            next(gen)
+        except StopIteration as e:
+            return e.value
+
+
 def _seg_dist(p, a, b):
     """Distance from point p to the segment a-b (any dimension)."""
     p, a, b = (np.asarray(v, float) for v in (p, a, b))
@@ -137,6 +146,7 @@ class Tasks:
         self.held = {}           # physics: palm -> what the slip monitor knows about the object in that hand
         self.place_at = None     # physics: where the current pick & place should leave the object (checked at the end)
         self.seq, self.seq_tid = [], None   # the rest of a multi-step task (two-arm handover): run as each path ends
+        self.search = None       # a time-sliced pick search in progress: (task id, generator); search_tick() advances it
         self.task = None         # {"id","action","status","message","step"}
         self.events = {}         # waypoint index -> event name
         self.fired = set()
@@ -362,6 +372,10 @@ class Tasks:
 
     def free_spot(self, dest, moving):
         """dest is occupied by an obstacle or another object? -> nearest free point on the table, plus who was in the way."""
+        return _drain(self._free_spot(dest, moving))
+
+    def _free_spot(self, dest, moving):
+        """free_spot, resumable: yields between the (physics) reach tests of its candidates."""
         r_me = self.objs[moving]["r"] if moving in self.objs else 0.04
         if self.plant is not None and self.plant.grip:   # physics: the hand that sets it down has to fit there too
             r_me = max(r_me, min(g.get("depth", 0.0) for g in self.plant.grip.values()) + 0.01)
@@ -397,11 +411,14 @@ class Tasks:
         if self.plant is not None and moving in self.objs:   # physics: the nearest spot the hand can really set it down on
             hh, hand = self.objs[moving]["half_h"], self.picker(moving)
             frm = None if self.holding.get(hand) == moving else self.mug_center(moving)
-            self.rt.set_obstacles((moving,))
+            if frm is not None and np.linalg.norm(frm - np.asarray(self.rt.retargeter.robot_shoulders[hand])) > self._reach_bound(hand):
+                return cands[0][2], who           # (it can't even be picked up: no use testing where it would go)
             for _, _, cand in cands[:8]:
+                self.rt.set_obstacles((moving,))
                 p = np.array([cand[0], cand[1], TABLE_TOP + hh])
                 if self._reach_err(p, hand, frm=frm) < CRIT_TOL:
                     return cand, who
+                yield
         return cands[0][2], who
 
     def _reach_err(self, p, palm, iters=50, frm=None):
@@ -646,6 +663,9 @@ class Tasks:
     def tick(self):
         """Call after every rt.step: fire waypoint events, carry the mug, finish tasks."""
         rt, d = self.rt, self.rt.data
+        if self.search is not None and time.time() - getattr(self, "_search_t", 0.0) > 0.05:
+            self.search_tick()                    # (a slice of a pick search, about once a frame)
+            self._search_t = time.time()
         if rt.path is not None and self.kind in ("task", "path") and (rt.mode == "FOLLOW" or self.plant is not None):
             i = rt.path["i"]                      # (physics: also an event on the last waypoint, fired as the path ends)
             for idx, name in sorted(self.events.items()):
@@ -1016,7 +1036,7 @@ class Tasks:
                 self.task["step"] = "placed"
 
     # ------------------------------------------------------------------ actions
-    def pick_place(self, tid, obj, target, target_uv, cam, aspect, via_pts=None, grasp=None):
+    def pick_place(self, tid, obj, target, target_uv, cam, aspect, via_pts=None, grasp=None, sliced=False):
         caps = getattr(self.rt, "capabilities", None)
         if caps is not None and "pick_place" not in caps:
             prof = getattr(self.rt, "profile", None)
@@ -1058,52 +1078,140 @@ class Tasks:
         if not self.on_table(dest):
             self.set_task(tid, "pick_place", "failed", f"I can't place it there: {label} is not on the {SURFACE}.")
             return
+        if self.plant is None:
+            if via is None:
+                free, blocker = self.free_spot(dest, name)
+                if free is None:
+                    self.set_task(tid, "pick_place", "failed", f"{label[0].upper() + label[1:]} is taken by {self.pretty(blocker)} and there is no free spot nearby.")
+                    return
+                if blocker:
+                    dest, label = free, f"{label} (beside {self.pretty(blocker)}, which is there)"
+            held = next((h for h, o in self.holding.items() if o == name), None)
+            c = self.mug_center()
+            palm = held or self.hand_for(c)
+            self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, None, self.rt.data.mocap_quat[self.rt.hands_mid[palm]].copy())
+            return
+        search = self._pick_all(tid, name, dest, label, via, via_pts, grasp)
+        if not sliced:
+            _drain(search)
+            return
+        self.search = (tid, search)               # the server loop: one way in per tick, so a long search (a refusal tries
+        self.set_task(tid, "pick_place", "planning", f"Working out how to pick up {self.pretty(name)}.")   # them all)
+        self.search_tick()
+        self._search_t = time.time()
+
+    def search_tick(self, budget=0.25):
+        """Advance a time-sliced pick search (pick_place(..., sliced=True)): ways in until about `budget` s of wall time
+        is used, so the loop never stalls for a whole search. Dropped if another command took over."""
+        if self.search is None:
+            return
+        tid, gen = self.search
+        if not self.task or self.task.get("id") != tid or self.task.get("status") != "planning":
+            gen.close()
+            self.search = None
+            return
+        t0 = time.time()
+        while True:
+            try:
+                next(gen)
+            except StopIteration:
+                self.search = None
+                return
+            if time.time() - t0 > budget:
+                self.set_task(tid, "pick_place", "planning", self.task.get("message") if self.task.get("status") == "planning"
+                              else f"Working out how to pick up {self.pretty(self.cur)}.")
+                self.rt.path = None
+                return
+
+    def _reach_bound(self, palm):
+        """A hand's reach can't exceed its arm stretched out: the sum of the link lengths from the shoulder to the hand
+        (an upper bound, plus room for a waist or legs leaning; mobile bases drive, so no bound)."""
+        cache = self.__dict__.setdefault("_bounds", {})
+        if palm in cache:
+            return cache[palm]
+        rt = self.rt
+        prof = getattr(rt, "profile", None)
+        R = np.inf
+        if prof is None or prof.base != "mobile":
+            m, d = rt.configuration.model, rt.ik_data
+            sh = np.asarray(rt.retargeter.robot_shoulders[palm], float)
+            sid = rt.palm_sid[palm]
+            b = m.site_bodyid[sid]
+            L = float(np.linalg.norm(d.site_xpos[sid] - d.xpos[b]))
+            while b != 0:
+                pb = m.body_parentid[b]
+                L += float(np.linalg.norm(d.xpos[b] - d.xpos[pb]))
+                if np.linalg.norm(d.xpos[pb] - sh) < 0.03:
+                    R = L + (0.15 if prof is not None and prof.base == "legged" else 0.10)
+                    break
+                b = pb
+        cache[palm] = R
+        return R
+
+    def _pick_all(self, tid, name, dest, label, via, via_pts, grasp):
+        """Physics pick & place after the words are resolved, resumable: where it can go (free spot), then the ways in."""
         if via is None:
-            free, blocker = self.free_spot(dest, name)
+            free, blocker = yield from self._free_spot(dest, name)
             if free is None:
                 self.set_task(tid, "pick_place", "failed", f"{label[0].upper() + label[1:]} is taken by {self.pretty(blocker)} and there is no free spot nearby.")
                 return
             if blocker:
                 dest, label = free, f"{label} (beside {self.pretty(blocker)}, which is there)"
         held = next((h for h, o in self.holding.items() if o == name), None)
+        self.cur = name
         c = self.mug_center()
         palm = held or self.hand_for(c)
-        d = self.rt.data
-        mid = self.rt.hands_mid[palm]
-        q_now = d.mocap_quat[mid].copy()
-        if self.plant is None:
-            self._pick_plan(tid, name, palm, held, c, dest, label, via, via_pts, grasp, None, q_now)
-            return
         grasp = (self.rt.profile.physics or {}).get("grasp", grasp) if getattr(self.rt, "profile", None) else grasp
         self.rt.set_obstacles((name,))            # the planner keeps the gripper clear of everything else on the table
         palms = [palm] if held else [palm] + [h for h in self.hands if h != palm]   # two hands: the other one may get there
+        yield from self._pick_search(tid, name, palms, held, c, dest, label, via, via_pts, grasp)
+
+    def _pick_search(self, tid, name, palms, held, c, dest, label, via, via_pts, grasp):
+        """The ways in, one by one (a generator: it yields after each failed one). Hands whose arm can't stretch to the
+        object or the spot at all are out at once; if no hand can, the main way is planned once for the message, the red
+        waypoints and the nearest spot it can reach. All failing: the first (main) way's verdict stands."""
+        d = self.rt.data
+        sh = self.rt.retargeter.robot_shoulders
+        place_p = np.array([dest[0], dest[1], TABLE_TOP + self.mug_half_h])
+        far = lambda p, q: float(np.linalg.norm(np.asarray(q, float) - np.asarray(sh[p], float))) > self._reach_bound(p)
+        able = [p for p in palms if not ((held != p and far(p, c)) or (via is None and far(p, place_p)))]
+        tries = len(SIDE_WAYS) + 2 if able else 1
+        palms = able or palms[:1]
         stop, first = False, None
         marks, nm = list(self.markers), self.next_marker   # a failed first way may offer a closer spot as a marker
-        for k, p in enumerate(palms):
-            mid = self.rt.hands_mid[p]
-            q_now = d.mocap_quat[mid].copy()
-            for variant in range(len(SIDE_WAYS) + 2):  # physics: a few ways in (approach direction / jaw yaw); first feasible wins
-                d.mocap_quat[mid] = q_now
-                off, n, why = self.grasp_plan(name, p, grasp, held, variant)
-                if off is None:
-                    if why is not None and k == 0 and not held:
-                        self.set_task(tid, "pick_place", "failed", why)
+        quats = {p: d.mocap_quat[self.rt.hands_mid[p]].copy() for p in palms}
+        try:
+            for k, p in enumerate(palms):
+                mid = self.rt.hands_mid[p]
+                q_now = quats[p]
+                for variant in range(tries):      # physics: a few ways in (approach direction / jaw yaw); first feasible wins
+                    d.mocap_quat[mid] = q_now
+                    off, n, why = self.grasp_plan(name, p, grasp, held, variant)
+                    if off is None:
+                        if why is not None and k == 0 and not held:
+                            self.set_task(tid, "pick_place", "failed", why)
+                            return
+                        break
+                    if self._pick_plan(tid, name, p, held, c, dest, label, via, via_pts, grasp, (off, n), q_now, last=first is None):
+                        self.markers, self.next_marker = marks, nm   # (another way got there after all)
+                        quats = {}
                         return
+                    if first is None:             # all failing: report the first (main) way and its suggestion
+                        first = (dict(self.task), self.rt.path)
+                    if getattr(self, "fail_reason", "reach") != "reach" or held:
+                        stop = True
+                        break
+                    d.mocap_quat[mid] = q_now
+                    yield
+                d.mocap_quat[mid] = q_now
+                if stop:
                     break
-                if self._pick_plan(tid, name, p, held, c, dest, label, via, via_pts, grasp, (off, n), q_now, last=first is None):
-                    self.markers, self.next_marker = marks, nm   # (another way got there after all)
-                    return
-                if first is None:                 # all failing: report the first (main) way and its suggestion
-                    first = (dict(self.task), self.rt.path)
-                if getattr(self, "fail_reason", "reach") != "reach" or held:
-                    stop = True
-                    break
-            d.mocap_quat[mid] = q_now
-            if stop:
-                break
-        if first is not None and not stop:
-            self.task, self.rt.path = first
-        self.fail_reason = "reach"
+            if first is not None and not stop:
+                self.task, self.rt.path = first
+            self.fail_reason = "reach"
+        finally:
+            for p, q in quats.items():            # dropped half way (another command): the hands' targets as they were
+                d.mocap_quat[self.rt.hands_mid[p]] = q
 
     def _pick_plan(self, tid, name, palm, held, c, dest, label, via, via_pts, grasp, plan, q_now, last=True, yaw=None):
         """Keypoints of a pick & place (approach, grasp, carry, release, retreat) -> _launch. plan: (offset, approach) with

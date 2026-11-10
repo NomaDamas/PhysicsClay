@@ -803,6 +803,8 @@ def worker(args, shared):
         t_phys = now
         if rt.plant is not None:                 # the plant may use ~40 % of a frame; heavier models run slower (rtf < 1)
             rt.plant.budget(0.4 / max(fps, 10.0) / IK_ITERS)
+            dt = min(dt, rt.plant.sub_cap * physics.DT)   # plan and plant share one clock: under load the plan must not
+                                                          # run ahead of what the plant could simulate (grasps slip)
         for _ in range(IK_ITERS):
             rt.step(dt)
             tasks.tick()
@@ -951,7 +953,7 @@ def dispatch(tasks, rt, c, cam):
         tasks.set_task(tid, a, "failed", f"{need[1]} needs a humanoid body: the {label} can't do that. Switch to the Unitree G1 for it.")
         return
     if a == "pick_place":
-        tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT)
+        tasks.pick_place(tid, c.get("object", "mug"), c.get("target"), c.get("target_uv"), cam, ASPECT, sliced=True)
     elif a == "handover":                         # between a two-armed robot's hands (to the person: pps/features/copresence.py)
         tasks.handover_arms(tid, c.get("object"), c.get("to"), c.get("target"), cam, ASPECT)
     elif a == "press":
