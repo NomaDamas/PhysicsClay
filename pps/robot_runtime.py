@@ -506,7 +506,7 @@ class Runtime:
         saved = task.transform_target_to_world
         mid = self.hands_mid[palm]
         quat = self.data.mocap_quat[mid].copy()
-        ok, dists = [], []
+        ok, dists, poses = [], [], []
         if quats is not None:
             quats = [np.asarray(q, float) for q in quats]
         start = cfg.data.site_xpos[self.palm_sid[palm]].copy()     # far first waypoint: lead in from the hand (unscored),
@@ -528,9 +528,11 @@ class Runtime:
             dist = float(np.linalg.norm(cfg.data.site_xpos[self.palm_sid[palm]] - p))
             dists.append(dist)
             ok.append(dist < self.validator.reach_tol)
+            poses.append(cfg.q.copy())
         if saved is not None:
             task.set_target(saved)
         self.last_precheck_dists = dists
+        self.last_precheck_q = poses           # the planner's posture at each waypoint (P2: the hand's real extent there)
         return ok
 
     # ------------------------------------------------------------- whole body

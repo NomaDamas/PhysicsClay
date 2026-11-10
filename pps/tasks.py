@@ -2160,7 +2160,7 @@ class Tasks(FixtureTasks):
             cur = rt.data.site_xpos[rt.palm_sid[palm]].copy()   # holds an obstacle for the planner
             rt.set_obstacles(tuple(o for o in self.holding.values() if o))
             pts = np.asarray(rt.path["pts"], float)
-            if np.linalg.norm(pts[0] - cur) > 0.03:
+            if np.linalg.norm(pts[0] - cur) > 0.03 and not rt.path.get("lead_in"):   # (a P2 trajectory leads in itself)
                 lead = [cur] + ([np.array([cur[0], cur[1], TABLE_TOP + 0.10])] if cur[2] < TABLE_TOP + 0.06 and cur[0] < TABLE_X[0] + 0.05 else [])
                 head = densify(lead + [pts[0]])
                 head = self.lift_over(head, palm, carrying=self.carrying(palm))[0][:-1]
