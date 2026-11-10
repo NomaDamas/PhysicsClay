@@ -1,6 +1,6 @@
 """Working with fixtures and containers (issue #48), mixed into pps.tasks.Tasks.
 
-Task actions (a `{"type": "task", "action": ...}` message, docs/PROTOCOL.md "v9 · Worlds"):
+Task actions (a `{"type": "task", "action": ...}` message, docs/PROTOCOL.md "v15 · Worlds"):
   * `open {fixture, amount (0..1, default 0.8)}` / `close {fixture}`: grasp the handle (a knob) from above, then move it
     along the joint (a drawer's slide, a door's arc) slowly and compliantly (the plant's impedance mode), let go and back
     off. Honest failures: no such part, out of reach (the whole motion is pre-checked), the jaws can't close on the knob,

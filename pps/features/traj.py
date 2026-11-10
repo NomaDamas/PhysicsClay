@@ -1,4 +1,4 @@
-"""P2 trajectories on the server (docs/V1.md P2, docs/PROTOCOL.md v7): the `traj` message, `state.traj`, checks,
+"""P2 trajectories on the server (docs/V1.md P2, docs/PROTOCOL.md v9): the `traj` message, `state.traj`, checks,
 the plan card, and execution through the runtime's path follower.
 
 {type:"traj", op:"propose", traj? | spec? | demo?, id?, task_id?}   compile (spec = language keypoints, pps/traj.py

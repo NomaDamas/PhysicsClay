@@ -218,7 +218,7 @@ export function buildStroke(samples, opts = {}) {
   return { ok: pts.length >= 2, points: pts, length: L, duration: dur, why: pts.length >= 2 ? null : "too short" };
 }
 
-// ------------------------------------------------------------------ trajectories (server's ghost, docs/PROTOCOL.md v7)
+// ------------------------------------------------------------------ trajectories (server's ghost, docs/PROTOCOL.md v9)
 /** Nearest key point within radius -> index, or -1. */
 export function nearestHandle(keys, p, radius = 0.035) {
   let best = -1, bd = radius;

@@ -401,6 +401,71 @@ async def camera_checks(cdp, s):
             pass
 
 
+async def recon_checks(cdp, photo=None):
+    """Real tool (#50): a photo + "10 cm tall" -> outline, 3D preview and facts -> Add to scene puts the object in
+    state.world; the card fits a phone screen. The photo is a render of a red cup (MuJoCo), like the server check."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("checks_recon", ROOT / "scripts" / "checks" / "recon.py")
+    rc = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rc)
+    tmpd = Path(tempfile.mkdtemp(prefix="pc_e2e_recon_"))
+    try:
+        if photo is None:
+            photo = tmpd / "cup.jpg"
+            photo.write_bytes(rc.render([rc.CUP], [0.42, 0.0, 0.79], 0.40, 200, -32)[0])
+        table = tmpd / "table.jpg"
+        table.write_bytes(rc.render(rc.TABLE, [0.42, 0.0, 0.74], 0.95, 0, -48)[0])
+    except Exception as e:
+        print(f"SKIP  recon UI: can't render a test photo ({str(e)[:60]})", flush=True)
+        return
+    await load(cdp)
+    await cdp.js("PCUI.selectTool('real')")
+    ok = await until(cdp, "!document.querySelector('.rc-card').hidden && document.querySelector('[data-i=provider]').options.length > 0", 15)
+    check("recon: the Real tool opens its card (providers listed)", ok)
+    doc = await cdp.call("DOM.getDocument", {"depth": 1})
+    node = await cdp.call("DOM.querySelector", {"nodeId": doc["root"]["nodeId"], "selector": '.rc-file[data-f="object"]'})
+    await cdp.call("DOM.setFileInputFiles", {"files": [str(photo)], "nodeId": node["nodeId"]})
+    ok = await until(cdp, "!document.querySelector('[data-r=go-object]').disabled && !!document.querySelector('[data-ph=object] img')", 15)
+    check("recon: a chosen photo shows up and enables Reconstruct", ok)
+    await cdp.js("document.querySelector('[data-i=size]').value = '10 cm tall'; document.querySelector('[data-r=go-object]').click()")
+    ok = await until(cdp, "!document.querySelector('[data-res=object]').hidden && /cm/.test(document.querySelector('.rc-facts').textContent)", 180)
+    facts = (await cdp.js("document.querySelector('.rc-facts') && document.querySelector('.rc-facts').innerText") or "").replace("\n", " · ")
+    check("recon: photo -> outline, 3D preview, size and mass", ok and "what you said" in facts, facts[:160])
+    await asyncio.sleep(1.0)
+    await cdp.shot("e2e_ui_recon_desk")
+    rev = await cdp.js("PC.state.world.rev")
+    await cdp.js("document.querySelector('[data-r=add]').click()")
+    ok = await until(cdp, f"PC.state.world.rev > {rev} && PC.state.world.scene.objects.some((o) => o.mesh)", 90)
+    check("recon: Add to scene puts the object in the world", ok)
+    # My table: a photo (no depth: relative depth or colours) -> objects listed -> Use this layout builds them
+    await cdp.js("document.querySelector('[data-mode=space]').click()")
+    node = await cdp.call("DOM.querySelector", {"nodeId": (await cdp.call("DOM.getDocument", {"depth": 1}))["root"]["nodeId"],
+                                                "selector": '.rc-file[data-f="space"]'})
+    await cdp.call("DOM.setFileInputFiles", {"files": [str(table)], "nodeId": node["nodeId"]})
+    await until(cdp, "!document.querySelector('[data-r=go-space]').disabled", 15)
+    await cdp.js("document.querySelector('[data-r=go-space]').click()")
+    ok = await until(cdp, "!document.querySelector('[data-res=space]').hidden && document.querySelectorAll('.rc-objs li .nm').length > 0", 180)
+    found = await cdp.js("[...document.querySelectorAll('.rc-objs li')].map((l) => l.innerText.replace(/\\s+/g, ' ')).join('; ')") or ""
+    n = found.count(";") + 1 if found else 0
+    check("recon: scan my table lists what's on it", ok and 2 <= n <= 4, f"{n}: {found[:140]}")
+    await asyncio.sleep(0.6)
+    await cdp.shot("e2e_ui_recon_table")
+    rev = await cdp.js("PC.state.world.rev")
+    await cdp.js("document.querySelector('[data-r=use]').click()")
+    ok = await until(cdp, f"PC.state.world.rev > {rev} && PC.state.world.scene.objects.length === {n}", 90)
+    check("recon: Use this layout builds that scene", ok)
+    await cdp.size(390, 844, 2, True)
+    await asyncio.sleep(1.0)
+    fits = await cdp.js("(() => { const c = document.querySelector('.rc-card'); if (!c || c.hidden) return 'hidden';"
+                        " const r = c.getBoundingClientRect(); return r.width > 0 && r.left >= -1 && r.right <= innerWidth + 1"
+                        " && [...c.querySelectorAll('button')].filter((b) => b.offsetParent).every((b) => b.getBoundingClientRect().height >= 40); })()")
+    await cdp.js("document.querySelector('.rc-card').scrollIntoView({block: 'start'})")
+    await asyncio.sleep(0.4)
+    await cdp.shot("e2e_ui_recon_phone")
+    check("recon: the Real card fits a phone screen (390 px), buttons >= 40 px", fits is True, str(fits))
+    await cdp.size(1440, 900, 1, False)
+
+
 async def screenshots(cdp):
     if not SHOTS:
         return
@@ -466,6 +531,10 @@ async def main():
                 await camera_checks(cdp, s)
             except Exception as e:
                 check("camera checks ran", False, repr(e)[:200])
+            try:
+                await recon_checks(cdp)
+            except Exception as e:
+                check("recon UI checks ran", False, repr(e)[:200])
             await screenshots(cdp)
             errs = [e for e in cdp.errors if "favicon" not in e]
             check("no errors in the page console", not errs, "; ".join(errs[:4]))

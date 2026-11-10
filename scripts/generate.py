@@ -27,6 +27,8 @@ Randomization (--randomize, comma list):
                (an object named with a colour in the seed keeps it: the words must stay true), 0-2 distractors
     lighting   light directions and intensity of the dataset cameras        (strength --lighting, default 0.6)
     camera     camera position / angle jitter of the dataset cameras        (metres --camera-jitter, default 0.02)
+    library    objects imported from photos (library/objects/, docs/RECON.md) join the distractors, at x0.9-1.1 of their
+               measured size; --library-only uses only them. A seed's scene may name one directly: {"mesh": "<id>"}
     physics    {type: "physics", op: "set", params: {friction_scale, mass_scale, damping_scale, kp_scale, latency_ms}} per
                episode when the server has P0 physics (state.physics); skipped otherwise. Drawn by P6's shared
                randomizer (pps/calib/randomize.py, the robot's ranges, seeded); the ranges go into each episode's metadata
@@ -106,20 +108,45 @@ def base_objects(kind, seed):
     return out
 
 
-def randomize_scene(template, objs, rng, rand_objects):
-    """-> scene spec. Named objects keep their names (and named colours); positions spread over the reachable band."""
+def library_objects():
+    """Objects imported from photos (pps/recon/library.py): [{"id", "name", "kind", "size"}]."""
+    from pps.recon import library
+    return [{"id": m["id"], "name": world_scene._slug(m.get("label") or m["id"]) or "thing", "kind": m.get("kind") or "box",
+             "size": m.get("size")} for m in library.listing(200) if m.get("size")]
+
+
+def randomize_scene(template, objs, rng, rand_objects, lib=(), lib_only=False):
+    """-> scene spec. Named objects keep their names (and named colours); positions spread over the reachable band.
+    lib: library objects (real things imported from photos) that may join as distractors."""
     s = world_scene.surface(template)
     near = s["x"][0]
     out, taken = [], []
     pool = [dict(o) for o in objs]
     if rand_objects:
         for _ in range(int(rng.integers(0, 3))):
+            if lib and (lib_only or rng.random() < 0.5):          # a real thing from the person's library
+                m = lib[int(rng.integers(len(lib)))]
+                pool.append({"name": f"{m['name']}_{len(pool)}", "kind": m["kind"], "mesh": m["id"], "movable": True})
+                continue
             k = str(rng.choice([d for d in DISTRACTORS if d not in {world_scene._kind(o) for o in objs}]))
             pool.append({"name": f"{k}_{len(pool)}", "kind": k, "color": str(rng.choice(COLORS)), "movable": True})
     for o in pool:
         o = {k: v for k, v in o.items()}
         named = o.pop("_named", False)
         kind = world_scene._kind(o)
+        if rand_objects and o.get("mesh"):                       # a library mesh: scale it, keep its look
+            m = next((x for x in lib if x["id"] == o["mesh"]), None)
+            o["scale"] = round(float(o.get("scale") or 1.0) * float(rng.uniform(0.9, 1.1)), 4)
+            size = [v * o["scale"] for v in (m["size"] if m else world_scene.KINDS.get(kind, world_scene.KINDS["box"])[0])]
+            r = max(size[0], size[1]) / 2
+            for _ in range(60):
+                xy = [float(rng.uniform(near + 0.07, near + 0.21)), float(rng.uniform(-0.28, 0.28))]
+                if all(np.hypot(xy[0] - p[0], xy[1] - p[1]) > r + q + 0.04 for p, q in taken):
+                    break
+            o["pos"] = [round(xy[0], 3), round(xy[1], 3)]
+            taken.append((xy, r))
+            out.append(o)
+            continue
         if rand_objects:
             base = world_scene.KINDS[kind][0]
             sc = float(rng.uniform(0.85, 1.15))
@@ -221,6 +248,9 @@ async def generate(a, kind, seed):
     language = seed.get("language") or seed.get("utterance") or seed.get("label")
     language = [language] if isinstance(language, str) else list(language or [])
     objs = base_objects(kind, seed)
+    lib = library_objects() if ("library" in rand or a.library_only) else []
+    if ("library" in rand or a.library_only) and not lib:
+        print("note: the object library is empty (import real objects from photos first, docs/RECON.md)")
     c = Client(a.server or f"http://127.0.0.1:{a.port}")
     await c.open()
     tally = defaultdict(lambda: {"tries": 0, "episodes": 0, "success": 0, "refused": 0, "errors": 0})
@@ -252,7 +282,7 @@ async def generate(a, kind, seed):
                         spec = {"template": template, "seed": int(rng.integers(1_000_000)),
                                 "objects": [{k2: v for k2, v in o.items() if k2 not in ("pos", "_named")} for o in objs]}
                     else:
-                        spec = randomize_scene(template, objs, rng, "objects" in rand)
+                        spec = randomize_scene(template, objs, rng, "objects" in rand, lib, a.library_only)
                     wid = f"gen-w{k}"
                     await c.send(type="world", op="set", robot=robot, scene=spec, id=wid)
                     w = await c.until(lambda s: (s.get("task") or {}).get("id") == wid and s["task"]["status"] in ("done", "failed")
@@ -342,7 +372,8 @@ def main():
     ap.add_argument("--robots", default="panda")
     ap.add_argument("--scenes", default="table")
     ap.add_argument("--n", type=int, default=5, help="episodes per robot x scene")
-    ap.add_argument("--randomize", default="objects,lighting,camera", help="objects,lighting,camera,physics")
+    ap.add_argument("--randomize", default="objects,lighting,camera", help="objects,lighting,camera,physics,library")
+    ap.add_argument("--library-only", action="store_true", help="distractors only from the object library (real things from photos)")
     ap.add_argument("--lighting", type=float, default=0.6, help="lighting randomization strength 0..1")
     ap.add_argument("--camera-jitter", type=float, default=0.02, help="camera position jitter, metres")
     ap.add_argument("--name", default=None, help="dataset name (datasets/<name>/<robot>/)")

@@ -6,7 +6,7 @@
 //   the ring around a point ..... turn the wrist (yaw); tilt, speed, force, grip and tolerance are chips in the popover
 //   Path tool (dock) ............ click 2-5 spots to drop ghost grippers: they connect into a checked path
 // Keyboard (a point selected): arrows move it 1 cm (Shift 5 cm), PageUp/PageDown height, [ ] turn the wrist,
-// Delete removes it, Esc deselects. Messages: {type:"traj", op:"propose"|"edit"|"run"|"clear"} (docs/PROTOCOL.md v7).
+// Delete removes it, Esc deselects. Messages: {type:"traj", op:"propose"|"edit"|"run"|"clear"} (docs/PROTOCOL.md v9).
 "use strict";
 (function () {
   const P = window.PCUI;

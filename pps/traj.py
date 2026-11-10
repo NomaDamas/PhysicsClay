@@ -15,7 +15,7 @@ Pure (numpy only, no server, no MuJoCo), so it is unit tested in tests/test_traj
 * `select` / `edit`: "higher there", "slower near the vase" -> point indices -> changes.
 * `follow_step(rt, dt)`: runtime glue (duck-typed): the robot's hand target follows the dense samples in time.
 
-The trajectory object (docs/V1.md P2, docs/PROTOCOL.md v7):
+The trajectory object (docs/V1.md P2, docs/PROTOCOL.md v9):
   {"id", "role": "right"|"left", "frame": "world"|"object:<name>", "source": "draw|vr|language|demo|keyframes|skill",
    "label", "points": [{"p": [x,y,z], "q": [w,x,y,z]|null, "t": s|null, "grip": 0..1|null, "speed": m/s|null,
                         "force": N|null, "tol": m|null, "note": str|null, + optional "yaw" (deg), "tilt" (deg), "roll" (deg),

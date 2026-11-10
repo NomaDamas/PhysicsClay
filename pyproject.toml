@@ -36,6 +36,7 @@ dependencies = [
     "opencv-python>=4.8",
     "imageio>=2.30",
     "imageio-ffmpeg>=0.4",
+    "trimesh>=4.0",           # pps/recon: meshes from photos (watertight repair, inertia, convex hulls); pure Python
 ]
 
 [project.optional-dependencies]
@@ -44,6 +45,12 @@ vision = ["mediapipe>=0.10"]
 # YOLO11 segmentation (the "yolo-seg" spatial model) and SAM 2.1 masks (scripts/vision_clip.py).
 # Ultralytics is AGPL-3.0 (see NOTICE): installing this extra makes AGPL terms apply to a deployment that uses it.
 yolo = ["ultralytics>=8.3"]
+# Real photos -> simulated objects (docs/RECON.md). Depth Anything V2 Small runs on onnxruntime (the ~99 MB Apache-2.0
+# weights are fetched on first use; `pip install onnxruntime` alone is enough for that), CoACD splits concave meshes
+# into convex pieces, scipy speeds up nearest-vertex lookups. The rest is for the opt-in local TripoSR provider (MIT;
+# also needs the TripoSR source in vendor/TripoSR, torchmcubes, and PC_TRIPOSR=1 for its one-time 1.7 GB download).
+recon = ["onnxruntime>=1.17", "coacd>=1.0", "scipy>=1.10", "torch>=2.1", "omegaconf>=2.3", "einops>=0.7",
+         "transformers>=4.35", "Pillow>=10"]
 # LeRobot v2 datasets (docs/V1.md P1).
 data = ["pyarrow>=14"]
 dev = ["ruff>=0.6", "pytest>=8"]

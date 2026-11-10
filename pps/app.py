@@ -168,6 +168,9 @@ def scene_payload(m, world=None, key=None):
     """/scene.json: every visible geom of the current world (+ the work surface, so the 3D view can raycast it)."""
     if world is not None and not world.legacy:
         out = world_payload(m, world, key)
+        if any(o.get("mesh") for o in world.spec["objects"]):   # objects imported from photos: vertex colours (pps/recon)
+            from .recon import sim as recon_sim
+            recon_sim.annotate_payload(m, out)
     else:
         out = legacy_payload(m)
     s = world.surface if world is not None else world_scene.surface("table")
@@ -446,6 +449,8 @@ def run_server(shared, port, https_port):
         app.router.add_get("/ui/modules.json", ui_modules)
         app.router.add_get("/phone", phone_page)
         app.router.add_get("/phone/info", phone_info)
+        from .recon import http as recon_http        # real photos -> simulated objects and spaces (docs/RECON.md)
+        recon_http.add_routes(app)
         app["http_port"], app["https_port"] = port, https_port
         sm = mujoco.MjModel.from_xml_path(str(ROOT / "assets" / "unitree_g1" / "scene_pc.xml"))
         app["model"], app["scene"] = sm, scene_payload(sm)

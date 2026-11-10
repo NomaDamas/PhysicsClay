@@ -1,4 +1,4 @@
-"""P2b live teleop (docs/vr.md, docs/PROTOCOL.md v8) over the real protocol, default world (G1 at the table):
+"""P2b live teleop (docs/vr.md, docs/PROTOCOL.md v10) over the real protocol, default world (G1 at the table):
 
 1. state.teleop is there; {op:"start"} takes the hand;
 2. a 30 Hz stream of {role, p, q, t} moves the end effector; rate, lag and the echoed client time are reported;

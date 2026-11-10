@@ -1,4 +1,4 @@
-"""Fixtures and multi-step plans (issue #48, docs/worlds.md, docs/PROTOCOL.md "v9 · Worlds").
+"""Fixtures and multi-step plans (issue #48, docs/worlds.md, docs/PROTOCOL.md "v15 · Worlds").
 
 * `{type: "fixture", op: "run" | "stop", name?, speed?}`: start / stop a conveyor (the only one when no name).
   `op: "lock" | "unlock", name`: jam a drawer / door (a check proves the robot reports it honestly);

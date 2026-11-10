@@ -1,4 +1,4 @@
-"""P2b live teleoperation (docs/vr.md, docs/PROTOCOL.md v8): a VR hand or controller drives one end effector.
+"""P2b live teleoperation (docs/vr.md, docs/PROTOCOL.md v10): a VR hand or controller drives one end effector.
 
 {type:"teleop", op:"start", role?, src?, id?}     take over: stops a running path / task / camera follow-me / watch mirror;
                                                  the hand holds where it is until commands arrive

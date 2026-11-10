@@ -87,7 +87,7 @@ conveyors, racks, totes, a CNC, tube racks...) and objects with an exact 3D `pos
 headless physics drop) and the container they are `in`. More object kinds (`pps/world/objects.py`): utensils,
 tableware, towels, books, tools, industrial parts, lab items. Fixtures' moving parts are mocap bodies in the planner and
 jointed bodies in the plant (`fx_<fixture>_<part>`); `state.world.fixtures` / `containers` report them and the task
-actions `open`, `close`, `pick_from`, `place_in` and `sequence` work with them (`docs/PROTOCOL.md` "v11 · Worlds").
+actions `open`, `close`, `pick_from`, `place_in` and `sequence` work with them (`docs/PROTOCOL.md` "v15 · Worlds").
 Up to 60 objects in a generated world (16 on a template).
 
 ## 2. Brain (owner: Brain workstream) — `pps/agent.py`

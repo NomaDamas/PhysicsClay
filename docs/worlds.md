@@ -98,7 +98,7 @@ or got wedged is left out. Results are cached per `(template, seed)`.
 
 ## Working with fixtures
 
-Task actions (`docs/PROTOCOL.md` "v11 · Worlds"):
+Task actions (`docs/PROTOCOL.md` "v15 · Worlds"):
 
 * `open {fixture, amount 0..1 (default 0.8)}` / `close {fixture}`: the gripper comes down on the knob, closes, and
   moves it along the drawer's slide or the door's arc (planned on the real joint geometry, every point reach-checked)

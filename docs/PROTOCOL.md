@@ -443,7 +443,7 @@ list: [same, last 30], root, datasets: [LeRobot roots written], pending (frames 
 cost_ms: {snapshot, render}, randomize, error, message, reply}`. `outcome`: `done` | `failed` | `interrupted` |
 `world_changed` | `timeout` | `finished` (the motion ended but its status was superseded).
 
-## v7 · Trajectories in 3D (v1 P2, `pps/traj.py`, `pps/features/traj.py`, `web/ui/traj.js`)
+## v9 · Trajectories in 3D (v1 P2, `pps/traj.py`, `pps/features/traj.py`, `web/ui/traj.js`)
 Language first: the agent writes a few keypoints relative to what it sees, the server turns them into a smooth, checked
 3D path and shows it as a ghost; the person fixes only what is wrong (drag a handle, Alt-drag / wheel for height, the
 wrist ring, per point chips, or "higher there"). Drawing from scratch (strokes, 3D waypoints, keyframes) still works and
@@ -543,9 +543,9 @@ from the hand to the first point is checked too ("on the way to the start").
   `ok`, `axis`). Live teleoperation (`{type:"teleop", role, p, q, grip}`) is not registered by P2; P3's mirror mode
   already uses it when a handler exists.
 
-## v8 · VR / MR and live teleop (v1 P2b, `web/xr.js`, `web/xr-core.js`, `pps/features/teleop.py`; guide: `docs/vr.md`)
+## v10 · VR / MR and live teleop (v1 P2b, `web/xr.js`, `web/xr-core.js`, `pps/features/teleop.py`; guide: `docs/vr.md`)
 The headset is the same page (Quest browser, https on the LAN). It sends only the messages above: a pinch stroke is a
-v7 `traj` `propose` with `source: "vr"`, `frame: "world"` (≤ 60 points, every 1.5 cm, `speed` per point when "Speed: as
+v9 `traj` `propose` with `source: "vr"`, `frame: "world"` (≤ 60 points, every 1.5 cm, `speed` per point when "Speed: as
 drawn / pinch" is on); a grabbed handle is `{op:"edit", index, world:true, point:{p, q?}}` (`q` = the wrist turn applied
 to the point's orientation, sent when it is over 10°); a keyframe is `{op:"edit", insert:{after, p}}` (or a 2-point
 `propose` with `source:"keyframes"`); Undo re-proposes the previous trajectory; Go is `{op:"run"}`; "Use my room" is
@@ -570,7 +570,7 @@ start; 3 s without a command ends teleop.
 `state.teleop = {active, role, src, rate (commands in the last second), lag_ms (age of the newest), stale, echo (its t),
 held (why the last command was not applied | null), clamped, scale (safety speed scale), hands: {right|left: {p, q, ee,
 grip, holding}}, reply, events}`.
-## v8 · Skills from demonstration + demo packs (v1 P4, `pps/skills/`, `pps/features/skills.py`, `web/ui/skills.js`)
+## v11 · Skills from demonstration + demo packs (v1 P4, `pps/skills/`, `pps/features/skills.py`, `web/ui/skills.js`)
 Details: `docs/skills.md` and `docs/packs.md`; as-built notes in `docs/V1.md` (P4).
 - `{type:"skill", op:"extract", demo?, kind?, name?, target?, propose?}` a demonstration (default: the last `learn`) →
   a parametric skill saved in `skills/<name>.json` and, when the scene has something to apply it to, proposed as a P2
@@ -597,7 +597,7 @@ Details: `docs/skills.md` and `docs/packs.md`; as-built notes in `docs/V1.md` (P
 - With P0 physics the server sends itself `{type:"physics", op:"set", params:{impedance, force_limit}}` around spotting.
 - Agent tools: `learn_skill_from_demo`, `list_skills`, `apply_skill`, `edit_skill_params`, `load_pack`.
 
-## v9 · Physics (v1 P0, `pps/physics.py`)
+## v12 · Physics (v1 P0, `pps/physics.py`)
 Physics is the default; `python -m pps.app --kinematic` (or `PC_PHYSICS=0`) keeps the kinematic mode, where everything
 below reports `mode: "kinematic"` and the `physics` message is refused. Details and limits: `docs/V1.md` (P0, as built).
 - `state.physics = {mode: "dynamic"|"kinematic", dt: 0.002, rtf, substeps, time, grasp: {role: object|null},
@@ -627,7 +627,7 @@ below reports `mode: "kinematic"` and the `physics` message is refused. Details 
   end, the first lets go), then put it on `target`. `state.task.action` is `handover` throughout; one-armed bodies and
   objects too short for two grippers are refused with the reason. `preview: true` gives a plan card (#B).
 
-## v10 · Calibration (v1 P6, `pps/calib/`, `pps/features/calib.py`, `web/ui/calib.js`)
+## v13 · Calibration (v1 P6, `pps/calib/`, `pps/features/calib.py`, `web/ui/calib.js`)
 Method, math and results: `docs/calibration.md`.
 - `{type:"physics", op:"set"}` also takes `armature_scale` and `frictionloss_scale` (the robot joints' rotor inertia and
   Coulomb friction); `latency_ms` now delays the servo setpoint per 2 ms substep (interpolated), not per server tick.
@@ -642,7 +642,7 @@ Method, math and results: `docs/calibration.md`.
   {err_before, err_after, seconds, evals, budget, stages, logs: [{probe, before, after}]} | null, applied, defaults}`.
 - Agent tool `calibrate_here {budget?}` (physics only): probe + fit + apply, answers with `state.calib.summary`.
 
-## v11 · UX polish: camera in, phone camera, voice, view zoom
+## v14 · UX polish: camera in, phone camera, voice, view zoom
 
 * **Camera in.** `state.cam_in = {fps, mobile} | null`: a browser camera is streaming `0x10 + JPEG` frames to the server
   (fps over the last 2 s; `mobile` when the last sender's user agent is a phone or tablet). The laptop UI shows
@@ -657,7 +657,7 @@ Method, math and results: `docs/calibration.md`.
 * **Server views zoom.** `{type: "camera", zoom}`: one proportional factor per message (the browser sums wheel deltas
   and sends at most every 30 ms); the server clamps it to 0.25–4 and the distance to 0.35–8 m.
 
-## v11 · Worlds: homes and industrial sites (issue #48, `pps/world/{fixtures,objects,rooms}.py`, `pps/manip.py`, `pps/features/fixtures.py`)
+## v15 · Worlds: homes and industrial sites (issue #48, `pps/world/{fixtures,objects,rooms}.py`, `pps/manip.py`, `pps/features/fixtures.py`)
 Guide, templates, fixtures, per-robot results and how to add your own: `docs/worlds.md`.
 - `{type:"world", op:"set", template: "kitchen_full"|"dining"|"living_room"|"laundry"|"assembly_line"|"warehouse"|
   "machine_tending"|"electronics_bench"|"lab"|"packing", seed?, robot?}` builds a generated world (same seed, same
@@ -693,3 +693,41 @@ Guide, templates, fixtures, per-robot results and how to add your own: `docs/wor
 - Agent tools: `open_fixture`, `close_fixture`, `pick_from`, `place_in`, `plan_steps`, `conveyor`; `load_world {name, seed?}` and
   `build_scene` take the world templates and a `seed`; the context has `world.fixtures`, `world.containers` and each
   object's `in`.
+
+## v16 · Real photos → simulated objects and spaces (#50, `pps/recon/`, `pps/features/recon.py`, `web/ui/recon.js`; guide: `docs/RECON.md`)
+
+HTTP (multipart; keys in headers `X-Gemini-Key`, `X-Fal-Key`, `X-Meshy-Key`, used for that one job, never stored):
+
+* `POST /recon/import` — `photo` (1–4), `depth`? (16-bit PNG in mm or `.npy` in m, for photo 1), `meta` = JSON
+  `{provider: "primitive" | "triposr" | "fal_trellis" | "meshy", hints: {label?, size? ("9 cm tall"), material?,
+  crop? [u0, v0, u1, v1] 0–1, reference? "card" | "a4", mass_kg?, vlm? false}, K? [fx, fy, cx, cy], tag?}` →
+  `{ok, job}` (400 `{ok: false, message}` for a bad upload).
+* `POST /recon/scan` — `photo`, `depth`?, `meta` `{hints: {surface?, template?, vlm?}, K?, tag?}` → `{ok, job}`.
+* `GET /recon/job/<id>` → the job in full: `{id, kind: "object" | "space", status: queued | running | ready | failed |
+  added, step, progress, message, error, steps: [{id, label, state}], seconds, added, summary}`. Object summary:
+  `{label, kind, material, hollow, recognized_by, provider: {id, label, license}, shape, size_cm [x, y, z], mass_g,
+  mass_source, friction, scale: {source, label, confidence, factor}, scales [...], confidence, views, mask: {source,
+  rect}, depth: metric | relative | none, faces, hulls, collision, watertight, notes, marker?}`. Space summary:
+  `{count, surface, template, layout: {surface, scale, objects: [{name, label, kind, color, size_m [x, y, z], xy, box}]},
+  spec, spec_real?, objects_brief, notes}`.
+* `GET /recon/job/<id>/mesh.bin` (preview: `[nv, nf]` u32, verts f32, faces u32, then RGB u8 per vertex),
+  `/recon/job/<id>/overlay.jpg` (outline or boxes), `/recon/colors/<lib>.bin` (RGB u8 per visual vertex of a library
+  object), `/recon/library.json`, `/recon/library/<id>/photo.jpg`, `/recon/info.json` (providers with licenses, depth
+  model status, library, marker), `/recon/marker.png` (print-at-home ArUco, DICT_4X4_50 id 0, 5 cm).
+
+Websocket:
+
+* `{type: "recon", op: "import", source: "camera", provider?, hints?, keys?: {gemini, fal, meshy}, tag?, add?}` — the
+  freshest phone / browser camera frame (else the laptop webcam); `add: true` adds it to the scene when ready (agent).
+* `{type: "recon", op: "scan", source: "camera", hints?, keys?, use?, shapes?}` — `use: true` builds the scene when ready.
+* `{type: "recon", op: "add", job, height_m?, name?, movable?}` — save to the library, then `{type: "world", op:
+  "add_object", object: {name, kind, mesh: <lib id>, scale, movable}}`.
+* `{type: "recon", op: "use_layout", job, shapes?: "primitive" | "real", template?}` — `world set` with the layout
+  (`real`: each object reconstructed and saved first).
+* `{type: "recon", op: "add_library", id, height_m?, name?}` · `{type: "recon", op: "delete_library", id}`.
+
+State: `recon = {jobs: [last 3 job summaries], providers: {id: usable}, depth: "ready" | "on first use" | "downloading"
+| "off", library: <count>, reply: {id, ok, op, message, job?, lib?, name?}}`.
+
+Scene specs: an object may carry `mesh: <library id>` and `scale` (its kind stays a scene kind: cup, can, bottle, bowl,
+plate, fruit, vase, block, box). `/scene.json` mesh entries of imported objects add `colors: "/recon/colors/<lib>.bin"`.

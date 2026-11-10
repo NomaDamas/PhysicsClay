@@ -6,7 +6,7 @@ no app to install: it is the same page, opened in the Quest browser.
 
 Code: `web/xr.js` (WebXR glue), `web/xr-core.js` (the pure part: alignment, gestures, strokes, the input → message
 pipeline, room → scene), `pps/features/teleop.py` (live teleoperation). Trajectories are the P2 object
-(`docs/PROTOCOL.md` → v7); teleop and the VR additions are in `docs/PROTOCOL.md` → v8.
+(`docs/PROTOCOL.md` → v9); teleop and the VR additions are in `docs/PROTOCOL.md` → v10.
 
 ## Open it on a Quest
 

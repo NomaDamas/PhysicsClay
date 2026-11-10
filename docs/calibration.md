@@ -216,7 +216,7 @@ numbers from the saved logs, `--report <json>` to print the tables again).
 
 ## In the server
 
-`{type: "calib", op: "probe" | "fit" | "apply" | "reset" | "run" | "stop"}` (`docs/PROTOCOL.md` v7). `probe` runs the
+`{type: "calib", op: "probe" | "fit" | "apply" | "reset" | "run" | "stop"}` (`docs/PROTOCOL.md` v13). `probe` runs the
 routine on the robot as a task (the plan card shows "Calibrating", the step is the probe running; other tasks are
 refused until it is done, `stop` ends it); the probe runner drives the plant through a `SimDriver`, taking over the
 runtime's plant step while it runs (the IK keeps planning). `fit` replays the logs headlessly in two worker processes

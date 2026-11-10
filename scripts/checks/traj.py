@@ -1,4 +1,4 @@
-"""P2 trajectories (docs/V1.md P2, docs/PROTOCOL.md v7) end to end, no LLM:
+"""P2 trajectories (docs/V1.md P2, docs/PROTOCOL.md v9) end to end, no LLM:
 
 1. language keypoints -> a checked ghost + plan card; nothing moves; a path over the vase clears it;
 2. edit a handle's height (the desktop handles' message) and a voice-style edit ("higher at the end");
