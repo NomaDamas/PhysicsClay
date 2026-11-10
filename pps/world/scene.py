@@ -27,6 +27,9 @@ import mujoco
 import numpy as np
 
 from .. import physics as phys
+from . import fixtures as FX
+from . import objects as OBJ
+from . import rooms as ROOMS
 from .profiles import DEFAULT_ROBOT, ROOT, RobotProfile, get
 
 G1_DIR = ROOT / "assets" / "unitree_g1"
@@ -64,16 +67,22 @@ KINDS = {
 SIZE_LIMITS = {"steel_plate": (0.004, 0.60), "bench": (0.02, 1.50), "barbell": (0.02, 1.60)}   # default (0.02, 0.40)
 ROUND = ("cyl", "tool")          # footprint is a circle (sx = sy)
 TOOLS = {"torch": {"label": "welding torch", "tcp": 0.16}}
-KIND_ALIASES = {"cube": "block", "brick": "block", "glass": "cup", "tumbler": "cup", "dish": "plate", "apple": "fruit", "plate_steel": "steel_plate", "steel": "steel_plate", "workpiece": "steel_plate",
+KIND_ALIASES = {"cube": "block", "brick": "block", "tumbler": "cup", "dish": "plate", "plate_steel": "steel_plate", "steel": "steel_plate", "workpiece": "steel_plate",
                 "spanner": "wrench", "bar": "barbell", "weight_bench": "bench",
-                "orange": "fruit", "banana": "fruit", "lemon": "fruit", "ball": "fruit", "carton": "box", "crate": "box",
-                "jar": "can", "tin": "can", "soda": "can", "coffee mug": "mug", "flask": "bottle"}
+                "orange": "fruit", "lemon": "fruit", "crate": "box",
+                "tin": "can", "soda": "can", "coffee mug": "mug"}
 COLORS = {
     "red": (0.92, 0.36, 0.33), "green": (0.30, 0.72, 0.45), "blue": (0.24, 0.55, 0.93), "yellow": (0.98, 0.82, 0.25),
     "orange": (0.98, 0.58, 0.20), "purple": (0.58, 0.40, 0.85), "pink": (0.96, 0.55, 0.72), "white": (0.94, 0.94, 0.92),
     "black": (0.15, 0.15, 0.17), "gray": (0.55, 0.56, 0.60), "grey": (0.55, 0.56, 0.60), "silver": (0.75, 0.77, 0.80),
     "brown": (0.55, 0.38, 0.24), "cardboard": (0.74, 0.58, 0.40), "steel": (0.60, 0.62, 0.66),
 }
+# issue #48: utensils, tableware, household things, tools, industrial parts and lab items (pps/world/objects.py)
+for _k, _v in OBJ.KINDS.items():
+    KINDS[_k] = (tuple(_v["size"]), _v["color"], _v["shape"])
+    SIZE_LIMITS[_k] = tuple(_v["lim"])
+KIND_ALIASES.update({k: v for k, v in OBJ.ALIASES.items() if v in KINDS and k not in KINDS})
+MAX_OBJECTS, MAX_ROOM_OBJECTS = 16, 60
 
 # the UX 2.0 world, as a spec (G1 + this spec loads scene_pc.xml unchanged)
 DEFAULT_SCENE = {"template": "table", "objects": [
@@ -85,7 +94,12 @@ DEFAULT_SCENE = {"template": "table", "objects": [
 ]}
 
 
-def surface(template):
+def surface(template, spec=None):
+    """The main work surface: a template's, or a generated world's (spec["surface"], issue #48)."""
+    if template in ROOMS.ROOMS and isinstance((spec or {}).get("surface"), dict):
+        sf = spec["surface"]
+        return {"template": template, "top": float(sf["top"]), "x": tuple(float(v) for v in sf["x"]),
+                "y": tuple(float(v) for v in sf["y"]), "label": sf.get("label") or ROOMS.ROOMS[template]["label"]}
     t = TEMPLATES.get(template) or TEMPLATES["table"]
     return {"template": template if template in TEMPLATES else "table", "top": t["top"], "x": tuple(t["x"]), "y": tuple(t["y"])}
 
@@ -93,12 +107,21 @@ def surface(template):
 def regions(s):
     """Named spots, relative to the surface's near edge (the table template gives the UX 2.0 values exactly)."""
     near, far = s["x"]
-    return {"right": (round(near + 0.09, 3), -0.22), "left": (round(near + 0.09, 3), 0.22), "center": (round(near + 0.12, 3), 0.0),
-            "front": (round(near + 0.05, 3), 0.0), "back": (round(far - 0.16, 3), 0.0)}
+    y0, y1 = s["y"]
+    cy, side = round((y0 + y1) / 2, 3), round(min(0.22, (y1 - y0) / 2 - 0.06), 3)
+    return {"right": (round(near + 0.09, 3), round(cy - side, 3)), "left": (round(near + 0.09, 3), round(cy + side, 3)),
+            "center": (round(near + 0.12, 3), cy), "front": (round(near + 0.05, 3), cy), "back": (round(far - 0.16, 3), cy)}
 
 
 def templates():
-    return [{"id": k, "label": v["label"], "top": v["top"]} for k, v in TEMPLATES.items()]
+    """Surface templates (table, kitchen, ...), then the generated worlds (homes, industrial sites) with their group."""
+    return [{"id": k, "label": v["label"], "top": v["top"], "group": "basic"} for k, v in TEMPLATES.items()] + \
+        [{"id": r["id"], "label": r["label"], "group": r["group"], "summary": r["summary"], "seeded": True}
+         for r in ROOMS.listing()]
+
+
+def is_room(template):
+    return template in ROOMS.ROOMS
 
 
 def _num(v, lo, hi):
@@ -173,17 +196,60 @@ def _color(o, kind):
     return KINDS[kind][1]
 
 
+def _room_base(spec):
+    """A generated world (issue #48): its fixtures, surface and objects. Generated from (template, seed) unless the spec
+    already carries them (a world being edited: add / remove an object, switch the robot). Objects given with a fresh
+    template + seed are added on the surface (exact ones from another world are dropped)."""
+    tpl = spec["template"]
+    try:
+        seed = int(spec.get("seed") or 0) % 1_000_000
+    except (TypeError, ValueError):
+        seed = 0
+    if isinstance(spec.get("fixtures"), list) and isinstance(spec.get("surface"), dict) and spec["fixtures"]:
+        return {"template": tpl, "seed": seed, "surface": spec["surface"], "fixtures": spec["fixtures"],
+                "objects": list(spec.get("objects") or []), "room": spec.get("room") or {}}
+    gen = ROOMS.generate(tpl, seed)
+    gen["objects"] += [o for o in spec.get("objects") or [] if isinstance(o, dict) and not o.get("exact")]
+    return gen
+
+
+def _quat(q):
+    try:
+        q = np.array([float(v) for v in q][:4], float)
+    except (TypeError, ValueError):
+        return None
+    n = float(np.linalg.norm(q)) if len(q) == 4 and np.all(np.isfinite(q)) else 0.0
+    return None if n < 1e-6 else [round(float(v), 5) for v in q / n]
+
+
 def normalize(spec, profile=None):
     """-> (canonical spec with numeric positions, notes). Unknown kinds/colours fall back sensibly, positions are
-    clamped onto the surface and spread so objects don't overlap."""
+    clamped onto the surface and spread so objects don't overlap. Generated worlds keep their fixtures and the exact 3D
+    pose of every object (in drawers, sinks, totes, on shelves)."""
     spec = spec or {}
-    tpl = spec.get("template") if spec.get("template") in TEMPLATES else "table"
-    s = surface(tpl)
+    room = None
+    if is_room(spec.get("template")):
+        room = _room_base(spec)
+        spec = dict(spec, **{k: room[k] for k in ("objects",)})
+        tpl = room["template"]
+        s = surface(tpl, room)
+    else:
+        tpl = spec.get("template") if spec.get("template") in TEMPLATES else "table"
+        s = surface(tpl)
     reg = regions(s)
     notes, out, taken = [], [], []
     names = set()
-    for raw in list(spec.get("objects") or [])[:16]:
+    for raw in list(spec.get("objects") or [])[:MAX_ROOM_OBJECTS if room else MAX_OBJECTS]:
         if not isinstance(raw, dict):
+            continue
+        if room is not None and raw.get("exact") and isinstance(raw.get("pos"), (list, tuple)) and len(raw["pos"]) == 3:
+            o = _exact3d(raw, names)
+            if o is None:
+                continue
+            hz = o["size"][2] / 2
+            if abs(o["pos"][2] - hz - s["top"]) < 0.03 and s["x"][0] <= o["pos"][0] <= s["x"][1] and s["y"][0] <= o["pos"][1] <= s["y"][1]:
+                taken.append((o["pos"][:2], max(o["size"][:2]) / 2))
+            out.append(o)
             continue
         kind = _kind(raw)
         color = _color(raw, kind)
@@ -242,6 +308,11 @@ def normalize(spec, profile=None):
             o["mass"] = round(float(raw["mass"]), 3)
         out.append(o)
     spec_out = {"template": tpl, "objects": out}
+    if room is not None:
+        spec_out = {"template": tpl, "seed": room["seed"], "surface": {"top": s["top"], "x": list(s["x"]), "y": list(s["y"]),
+                                                                     "label": s.get("label")},
+                    "fixtures": FX.normalize(room["fixtures"]), "objects": out,
+                    "room": {"label": ROOMS.ROOMS[tpl]["label"], "group": ROOMS.ROOMS[tpl]["group"]}}
     if spec.get("pack"):
         spec_out["pack"] = _slug(spec["pack"])
     tool = _norm_tool(spec.get("tool"))
@@ -251,6 +322,38 @@ def normalize(spec, profile=None):
     if seams:
         spec_out["seams"] = seams
     return spec_out, notes
+
+
+def _exact3d(raw, names):
+    """An object a generated world placed exactly: pos is its centre [x, y, z], quat its orientation."""
+    kind = _kind(raw)
+    color = _color(raw, kind)
+    lo, hi = SIZE_LIMITS.get(kind, (0.02, 0.40))
+    size = raw.get("size")
+    if isinstance(size, (list, tuple)) and len(size) == 3 and all(isinstance(v, (int, float)) and v > 0 for v in size):
+        size = [float(np.clip(v, lo, hi)) for v in size]
+    else:
+        size = list(KINDS[kind][0])
+    if KINDS[kind][2] in ROUND:
+        size[1] = size[0]
+    try:
+        pos = [float(v) for v in raw["pos"]]
+    except (TypeError, ValueError):
+        return None
+    if not all(np.isfinite(pos)) or not (-5 < pos[0] < 5 and -5 < pos[1] < 5 and -0.1 < pos[2] < 3):
+        return None
+    base = _slug(raw.get("name")) or kind
+    name, k = base, 2
+    while name in names:
+        name, k = f"{base}_{k}", k + 1
+    names.add(name)
+    o = {"name": name, "kind": kind, "color": color, "size": [round(v, 4) for v in size], "pos": [round(v, 4) for v in pos],
+         "quat": _quat(raw.get("quat") or (1, 0, 0, 0)) or [1.0, 0.0, 0.0, 0.0], "movable": bool(raw.get("movable", True)), "exact": True}
+    if raw.get("in"):
+        o["in"] = _slug(raw["in"]) or None
+    if isinstance(raw.get("mass"), (int, float)) and raw["mass"] > 0:
+        o["mass"] = round(float(raw["mass"]), 3)
+    return o
 
 
 def _free_xy(s, r, taken, prefer=None):
@@ -299,13 +402,27 @@ def _f(*v):
 
 def _object_xml(o, top):
     kind, (sx, sy, sz) = o["kind"], o["size"]
-    x, y = o["pos"]
     movable = o["movable"]
     body = ("obj_" if movable else "obs_") + o["name"]
     rgba = _rgba(o["color"])
     vis = 'contype="0" conaffinity="0" group="2"'
     col = f'name="{body}_collision" rgba="0 0 0 0" contype="1" conaffinity="1" group="3"'
     mocap = ' mocap="true"' if movable else ""
+    if len(o["pos"]) == 3 or kind in OBJ.KINDS:          # generated worlds: exact centre + orientation; the new kinds
+        x, y = o["pos"][:2]
+        z = o["pos"][2] if len(o["pos"]) == 3 else top + sz / 2
+        quat = o.get("quat") or [1, 0, 0, 0]
+        if kind not in OBJ.KINDS:                         # a basic kind placed in 3D: write it at the origin, then move it
+            inner = _object_xml(dict(o, pos=[0.0, 0.0]), -sz / 2 if kind != "mug" else -0.068 * sx / 0.13)
+            inner = inner.split(">", 1)[1].rsplit("</body>", 1)[0]
+            return f'<body name="{body}" pos="{_f(x, y, z)}" quat="{_f(*quat)}"{mocap}>{inner}</body>'
+        half = (sx / 2, sy / 2, sz / 2)
+        geoms = OBJ.visual(kind, half, rgba)
+        typ = "cylinder" if KINDS[kind][2] == "cyl" else "box"
+        size = _f(half[0], half[2]) if typ == "cylinder" else _f(*half)
+        geoms += f'<geom {col} type="{typ}" size="{size}"/>'
+        return f'<body name="{body}" pos="{_f(x, y, z)}" quat="{_f(*quat)}"{mocap}>{geoms}</body>'
+    x, y = o["pos"]
     if kind == "mug":
         s = sx / 0.13
         h = 0.068 * s
@@ -412,7 +529,9 @@ def _target_xml(name, size=0.035, rgba=".3 .9 .4 .35"):
             f'<site type="sphere" size="0.01" rgba="0 0 1 1" group="1"/></body>')
 
 
-def _arena_xml(profile, spec, s):
+def _arena_xml(profile, spec, s, built=None):
+    """built: the fixtures of a generated world (pps/world/fixtures.py): their static geoms replace the template's
+    furniture, their moving parts go after the robot (with the objects) so the robot stays body 1."""
     top = s["top"]
     cam = profile.camera or {}
     if profile.kind == "humanoid":                    # a head camera, as on the G1 (its head stays where it is)
@@ -422,7 +541,7 @@ def _arena_xml(profile, spec, s):
     else:                                             # arms: a camera mounted above the base, clear of the arm
         cam_pos, cam_ax = [0.05, 0.0, top + 1.05], [0, -1, 0, 0.866, 0, 0.5]
     cam_pos, cam_ax = cam.get("pos") or cam_pos, cam.get("xyaxes") or cam_ax
-    parts = [_template_xml(s)]
+    parts = list(built.static) if built is not None else [_template_xml(s)]
     m = profile.mount
     if m.get("on") == "surface" and m.get("pedestal") and top > 0.05:
         parts.append(f'<geom name="pedestal" type="cylinder" size="{_f(0.085, top / 2)}" pos="{_f(m["x"], m["y"], top / 2)}" '
@@ -465,6 +584,7 @@ def _arena_xml(profile, spec, s):
     <mesh name="pc_mug" file="{mug}/model.obj"/>
   </asset>
   <worldbody>
+    {''.join(built.bodies) if built is not None else ''}
     {''.join(_object_xml(o, top) for o in spec["objects"])}
     {''.join(targets)}
   </worldbody>
@@ -487,6 +607,7 @@ class World:
     tool: dict | None = None                 # a tool mounted on the end effector (demo packs: the welding torch)
     ik_model: object = None                  # the IK planner's model (physics); None: the same as `model` (kinematic)
     physics: bool = False
+    fixtures: object = None                  # generated worlds: pps.world.fixtures.Built (joints, containers, belts)
 
     @property
     def kinds(self):
@@ -509,8 +630,9 @@ def _quat_mul(a, b):
     return out
 
 
-def _compile(sp, profile, kinds, physics, masses=None):
-    """-> (plant model, planner model). Kinematic: one model for both. masses: {object: kg} given by the scene spec."""
+def _compile(sp, profile, kinds, physics, masses=None, built=None):
+    """-> (plant model, planner model). Kinematic: one model for both. masses: {object: kg} given by the scene spec.
+    built: fixtures whose moving parts get their joints in the plant (the planner keeps them as mocap bodies)."""
     if not physics:
         m = sp.compile()
         return m, m
@@ -521,6 +643,8 @@ def _compile(sp, profile, kinds, physics, masses=None):
         if i < ik.nkey and len(q) == sum(7 if t == mujoco.mjtJoint.mjJNT_FREE else 1 for _, t in layout):
             ik.key_qpos[i] = phys.home_overrides(profile, ik, phys.remap_q(layout, q, ik))
     phys.plant_spec(sp, profile, kinds, masses)
+    if built is not None and built.parts:
+        phys.fixture_joints(sp, built)
     return sp.compile(), ik
 
 
@@ -531,7 +655,8 @@ def build(robot_id=None, spec=None, physics=None):
         raise ValueError(f"unknown robot '{robot_id}'")
     physics = phys.enabled() if physics is None else bool(physics)
     spec_n, notes = normalize(DEFAULT_SCENE if spec is None else spec, profile)
-    s = surface(spec_n["template"])
+    s = surface(spec_n["template"], spec_n)
+    built = FX.build(spec_n["fixtures"]) if spec_n.get("fixtures") else None
     kinds = {o["name"]: o["kind"] for o in spec_n["objects"]}
     masses = {o["name"]: o["mass"] for o in spec_n["objects"] if o.get("mass")}     # e.g. the gym's 20 kg barbell
     if is_default(profile.id, spec_n):
@@ -551,7 +676,7 @@ def build(robot_id=None, spec=None, physics=None):
         profile, tool, note = mount_tool(profile, child, spec_n["tool"])
         if note:
             notes.append(note)
-    arena_xml, props_xml = _arena_xml(profile, spec_n, s)
+    arena_xml, props_xml = _arena_xml(profile, spec_n, s, built)
     arena = mujoco.MjSpec.from_string(arena_xml)
     key = _home_key(profile, child)
     for k in list(child.keys):
@@ -587,7 +712,7 @@ def build(robot_id=None, spec=None, physics=None):
         arena.attach(mujoco.MjSpec.from_string(props_xml), frame=arena.worldbody.add_frame(), prefix="")
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
-            m, ik = _compile(arena, profile, kinds, physics, masses)
+            m, ik = _compile(arena, profile, kinds, physics, masses, built)
     except Exception as e:
         raise ValueError(f"could not build the scene: {e}") from e
     finally:
@@ -608,7 +733,7 @@ def build(robot_id=None, spec=None, physics=None):
         mujoco.mju_quat2Mat(R, qy)
         q[adr:adr + 3] = mpos + R.reshape(3, 3) @ np.array([p[0], p[1], 0.0]) + np.array([0, 0, p[2]])
         q[adr + 3:adr + 7] = _quat_mul(qy, q[adr + 3:adr + 7])
-    w = World(profile, spec_n, s, regions(s), m, q, False, notes=notes, tool=tool, ik_model=ik, physics=physics)
+    w = World(profile, spec_n, s, regions(s), m, q, False, notes=notes, tool=tool, ik_model=ik, physics=physics, fixtures=built)
     w.robot_bodies = _robot_bodies(m)
     return w
 
@@ -673,7 +798,7 @@ def _robot_bodies(m):
         n = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b) or ""
         root = m.body_rootid[b]
         rn = mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, root) or ""
-        if m.body_mocapid[root] >= 0 or rn.startswith(("obj_", "obs_", "pc_harness")) or rn.endswith("_target"):
+        if m.body_mocapid[root] >= 0 or rn.startswith(("obj_", "obs_", "pc_harness", "fx_")) or rn.endswith("_target"):
             continue
         if rn in ("mug", "vase", "red_block", "green_block", "blue_block"):
             continue

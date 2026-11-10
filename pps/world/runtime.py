@@ -412,4 +412,10 @@ def make_runtime(world, mirror=True):
     rt.profile = p
     rt.label = p.label
     rt.nq_r = rt.configuration.model.nq
+    rt.fixtures = None
+    if getattr(world, "fixtures", None) is not None:   # issue #48: drawers, doors, lids, conveyors of a generated world
+        from .fixtures import FixtureRuntime
+        rt.fixtures = FixtureRuntime(world.model, rt.data, world.fixtures, physics=plant is not None)
+        if plant is not None:
+            plant.fixtures = rt.fixtures
     return rt

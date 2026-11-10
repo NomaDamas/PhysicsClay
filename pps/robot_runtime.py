@@ -242,23 +242,54 @@ class Runtime:
         self.plant.hold_fingers = True
         self.plant.step(dt, self.configuration.q, self.base_pose())
 
-    def set_obstacles(self, exclude=()):
+    def sync_fixtures(self):
+        """The fixtures' moving parts (drawers, doors) are mocap bodies in the planner's model: copy their plant poses."""
+        fx = getattr(self, "fixtures", None)
+        if fx is None or self.plant is None:
+            return
+        mi, di, d = self.configuration.model, self.ik_data, self.data
+        for p in fx.parts:
+            mid = mi.body_mocapid[p["bid"]]
+            if mid >= 0 and p["kind"] not in ("slat", "roller"):
+                di.mocap_pos[mid] = d.xpos[p["bid"]]
+                di.mocap_quat[mid] = d.xquat[p["bid"]]
+
+    def set_obstacles(self, exclude=(), near=None, radius=0.35, fixtures=False):
         """Physics: the planner keeps the hand clear of the objects on the table (synced from the plant), except `exclude`
-        (the one being picked). Objects are mocap bodies in the planner's model, so their poses are copied over."""
+        (the one being picked). Objects are mocap bodies in the planner's model, so their poses are copied over.
+        Generated worlds (issue #48): `fixtures` adds the walls of drawers / doors / bins nearby (their floors and the
+        conveyor never count; a fixture part named in `exclude` is the one being operated); `near` (points) keeps only
+        what is within `radius` of them, so a cluttered room doesn't cost the IK a thousand distance checks."""
         if self.plant is None:
             return
         mi, pl = self.configuration.model, self.plant
+        fx = getattr(self, "fixtures", None)
         skip = {pl.objects[n]["bid"] for n in exclude if n in pl.objects}
+        if fx is not None:
+            skip |= {fx.by_name[n]["bid"] for n in exclude if n in fx.by_name}
         for o in pl.objects.values():
             b = o["bid"]
             mid = mi.body_mocapid[b]
             if mid >= 0:
                 self.ik_data.mocap_pos[mid] = self.data.xpos[b]
                 self.ik_data.mocap_quat[mid] = self.data.xquat[b]
+        self.sync_fixtures()
         mujoco.mj_kinematics(mi, self.ik_data)
         targets = {b for b in range(mi.nbody) if (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_BODY, b) or "").endswith("_target")}
+        fx_bodies = {p["bid"] for p in fx.parts} if fx is not None else set()
+        pts = None if near is None else np.asarray(near, float).reshape(-1, 3)
+
+        def keep(g):
+            b = mi.geom_bodyid[g]
+            if b in fx_bodies:
+                if not fixtures or "_floor" in (mujoco.mj_id2name(mi, mujoco.mjtObj.mjOBJ_GEOM, g) or "_floor"):
+                    return False
+            if pts is not None:
+                dist = np.min(np.linalg.norm(pts - self.ik_data.geom_xpos[g], axis=1)) - mi.geom_rbound[g]
+                return dist < radius
+            return True
         geoms = [g for g in range(mi.ngeom) if mi.geom_contype[g] and mi.geom_bodyid[g] not in pl.robot_bodies
-                 and mi.geom_bodyid[g] not in skip and mi.geom_bodyid[g] not in targets and mi.geom_bodyid[g] != 0]
+                 and mi.geom_bodyid[g] not in skip and mi.geom_bodyid[g] not in targets and mi.geom_bodyid[g] != 0 and keep(g)]
         if getattr(self, "_obstacle_limit", None) in self.limits:
             self.limits.remove(self._obstacle_limit)
         self._obstacle_limit = None
@@ -570,8 +601,9 @@ class Runtime:
         elif self.mode == "FOLLOW" and self.path is not None:
             pts, cum = self.path["pts"], self.path["cum"]
             if not getattr(self, "follow_hold", False):  # physics: the path waits while the gripper closes / opens
-                slow = any(a <= self.path["i"] < b for a, b in self.path.get("slow", ()))   # the last few cm into a grasp
-                self.follow_s += dt * self.follow_speed * self.speed_scale * (0.35 if slow else 1.0)
+                # the last few cm into a grasp (x0.35); a drawer / door being moved (its own factor, a third element)
+                slow = min([s[2] if len(s) > 2 else 0.35 for s in self.path.get("slow", ()) if s[0] <= self.path["i"] < s[1]] or [1.0])
+                self.follow_s += dt * self.follow_speed * self.speed_scale * slow
             i = int(np.searchsorted(cum, self.follow_s, side="right")) - 1
             i = max(0, min(i, len(pts) - 2))
             seg = cum[i + 1] - cum[i]
