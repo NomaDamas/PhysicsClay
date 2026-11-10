@@ -51,10 +51,10 @@
 .pca-tool .st { font: 600 10.5px var(--sans); padding: 1px 7px; border-radius: 999px; background: var(--deep); color: var(--t2); white-space: nowrap; }
 .pca-tool .rs { grid-column: 2 / 4; font-size: 12px; line-height: 1.4; color: var(--t2); overflow-wrap: anywhere; }
 .pca-tool .rs:empty { display: none; }
-.pca-tool[data-ok="true"] .ic { background: color-mix(in srgb, var(--ok) 16%, #fff); color: var(--ok-ink); }
-.pca-tool[data-ok="true"] .st { background: color-mix(in srgb, var(--ok) 14%, #fff); color: var(--ok-ink); }
-.pca-tool[data-ok="false"] .ic { background: color-mix(in srgb, var(--bad) 14%, #fff); color: var(--bad-ink); }
-.pca-tool[data-ok="false"] .st { background: color-mix(in srgb, var(--bad) 12%, #fff); color: var(--bad-ink); }
+.pca-tool[data-ok="true"] .ic { background: color-mix(in srgb, var(--ok) 16%, var(--raised)); color: var(--ok-ink); }
+.pca-tool[data-ok="true"] .st { background: color-mix(in srgb, var(--ok) 14%, var(--raised)); color: var(--ok-ink); }
+.pca-tool[data-ok="false"] .ic { background: color-mix(in srgb, var(--bad) 14%, var(--raised)); color: var(--bad-ink); }
+.pca-tool[data-ok="false"] .st { background: color-mix(in srgb, var(--bad) 12%, var(--raised)); color: var(--bad-ink); }
 .pca-tool[data-ok="false"] .rs { color: var(--bad-ink); }
 .pca-tool:not([data-ok]) .st::before { content: ""; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: var(--info); margin-right: 5px; vertical-align: 1px; animation: pulse 1s infinite; }
 .feed-list > .pca-note { flex: none; font-size: var(--fs-xs); color: var(--t2); padding-left: 2px; }

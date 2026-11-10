@@ -19,7 +19,7 @@
 @keyframes cand-in { from { opacity: 0; transform: translateY(-6px); } }
 .cand-head { display: flex; gap: 10px; align-items: flex-start; }
 .cand-head svg { flex: none; color: var(--hot, #f59145); margin-top: 1px; }
-.cand-kicker { margin: 0 0 2px; font: 600 var(--fs-xs, 12px)/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--hot, #f59145); }
+.cand-kicker { margin: 0 0 2px; font: 600 var(--fs-xs, 12px)/1.2 var(--sans); letter-spacing: .04em; text-transform: uppercase; color: var(--hot-ink); }
 .cand-q { margin: 0; font-weight: 500; }
 .cand-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0 10px; }
 .cand-chip { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px 0 6px; border-radius: 999px;
@@ -29,7 +29,7 @@
 .cand-chip:focus-visible, .cand-cancel:focus-visible, .cand-badge:focus-visible { outline: none; box-shadow: var(--ring); }
 .cand-num { display: inline-grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--accent); color: var(--on-accent, #fff);
   font: 600 15px var(--sans); }
-.cand-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--idle); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.cand-dot { width: 10px; height: 10px; border-radius: 3px; background: var(--idle); box-shadow: inset 0 0 0 1px var(--line2); }
 .cand-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .cand-hint { color: var(--t2); font-size: var(--fs-sm, 13px); }
 .cand-cancel { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; padding: 0 12px; border-radius: 999px; border: 0;

@@ -4,14 +4,22 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#fbfbfd">
+<meta name="color-scheme" content="light dark">
 <title>PhysicsClay · New Generation of interactive prompt for Physical AI</title>
+<link rel="icon" href="data:,">
+<script>/* theme before first paint: Settings → Appearance stores pc.theme = system | light | dark (web/shell.js) */
+(function () { var m = "system"; try { m = localStorage.getItem("pc.theme") || "system"; } catch (e) { /* storage blocked */ }
+  var dark = m === "dark" || (m !== "light" && !!(window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches));
+  document.documentElement.setAttribute("data-theme", dark ? "dark" : "light"); document.documentElement.setAttribute("data-theme-pref", m); })();</script>
 <link rel="stylesheet" href="/static/style.css">
 <script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}</script>
 </head>
 <body>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-mic" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
-  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M5.3 18.7l2.1-2.1M16.6 7.4l2.1-2.1"/></g></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><path d="M10.3 4.9 10.57 2.41h2.86l.27 2.49a7.3 7.3 0 0 1 2.11.88l1.96-1.58 2.03 2.03-1.58 1.96a7.3 7.3 0 0 1 .88 2.11l2.49.27v2.86l-2.49.27a7.3 7.3 0 0 1-.88 2.11l1.58 1.96-2.03 2.03-1.96-1.58a7.3 7.3 0 0 1-2.11.88l-.27 2.49h-2.86l-.27-2.49a7.3 7.3 0 0 1-2.11-.88l-1.96 1.58-2.03-2.03 1.58-1.96a7.3 7.3 0 0 1-.88-2.11l-2.49-.27v-2.86l2.49-.27a7.3 7.3 0 0 1 .88-2.11L4.2 6.23 6.23 4.2l1.96 1.58a7.3 7.3 0 0 1 2.11-.88z"/><circle cx="12" cy="12" r="3.1"/></g></symbol>
+  <symbol id="i-help" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.4a2.5 2.5 0 0 1 4.85.85c0 1.75-2.45 2.1-2.45 3.75M12 17.1v.15"/></g></symbol>
+  <symbol id="i-phone" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M11 18.5h2"/></g></symbol>
   <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6.5" y="6.5" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
   <symbol id="i-home" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" d="M4 11l8-7 8 7v9h-5v-6H9v6H4z"/></symbol>
   <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" fill="currentColor"/></symbol>
@@ -56,7 +64,8 @@
     <span id="mockPill" class="chip mock-pill" title="Mock AI: offline gestures + scripted replies" hidden>Mock AI</span>
     <span id="demoPill" class="demo-pill" role="status" hidden><i></i><span id="demoPillTxt">Demo</span></span>
     <button id="demoBtn" class="pill-btn" type="button" title="Run the guided demo">Demo</button>
-    <button id="settingsBtn" class="icon-btn" type="button" aria-label="Settings"><svg aria-hidden="true"><use href="#i-gear"/></svg></button>
+    <button id="helpBtn" class="icon-btn labelled" type="button" aria-label="Help: how to use PhysicsClay" title="How to use PhysicsClay" aria-haspopup="dialog"><svg aria-hidden="true"><use href="#i-help"/></svg><span class="btn-lbl">Help</span></button>
+    <button id="settingsBtn" class="icon-btn labelled" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog"><svg aria-hidden="true"><use href="#i-gear"/></svg><span class="btn-lbl">Settings</span></button>
   </div>
 </header>
 
@@ -257,6 +266,14 @@
   <form method="dialog" id="settingsForm">
     <header class="dlg-head"><h2 id="settingsTitle">Settings</h2><button class="icon-btn" value="cancel" aria-label="Close settings"><svg aria-hidden="true"><use href="#i-x"/></svg></button></header>
     <div class="dlg-body">
+      <section class="set-sec" id="secLook"><h3>Appearance</h3>
+        <div class="seg seg-lg" role="radiogroup" aria-label="Theme" id="themeSeg">
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="system" aria-checked="true" aria-pressed="true">System</button>
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="light" aria-checked="false" aria-pressed="false">Light</button>
+          <button type="button" class="seg-btn" role="radio" data-theme-pick="dark" aria-checked="false" aria-pressed="false">Dark</button>
+        </div>
+        <small class="muted">System follows your computer's light or dark setting. Applies right away.</small>
+      </section>
       <section class="set-sec" id="secRobot"><h3>Robot</h3>
         <div class="seg seg-lg" role="group" aria-label="Robot body" id="robotSeg">
           <button type="button" class="seg-btn" data-robot="g1" aria-pressed="true">G1 humanoid</button>

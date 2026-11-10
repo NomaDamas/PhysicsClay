@@ -24,16 +24,16 @@
 .pcz-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
 .pcz-row { display: flex; align-items: center; gap: 10px; min-height: 44px; border-top: 1px solid var(--divider); }
 .pcz-row:first-child { border-top: 0; }
-.pcz-sw { width: 14px; height: 14px; border-radius: 4px; flex: none; background: rgba(214, 69, 58, .22); border: 1.5px solid var(--bad); }
+.pcz-sw { width: 14px; height: 14px; border-radius: 4px; flex: none; background: color-mix(in srgb, var(--bad) 22%, transparent); border: 1.5px solid var(--bad); }
 .pcz-row[data-shape="circle"] .pcz-sw { border-radius: 50%; }
 .pcz-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
 .pcz-nm { font-size: var(--fs-sm, 13px); font-weight: 600; }
 .pcz-meta { font-size: var(--fs-xs, 12px); color: var(--t3); font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .pcz-row .pcz-btn { padding: 0; width: 44px; }
-.pcz-row .pcz-btn:hover { color: var(--bad); }
+.pcz-row .pcz-btn:hover { color: var(--bad-ink); }
 .pcz-hint { background: var(--raised); border: 1px solid var(--line); border-left: 3px solid var(--bad); border-radius: 14px; box-shadow: var(--shadow);
   padding: 10px 14px; max-width: 320px; font: 500 var(--fs-sm, 13px) var(--sans); color: var(--t1); }
-.pcz-hint b { color: var(--bad); font-weight: 600; }`;
+.pcz-hint b { color: var(--bad-ink); font-weight: 600; }`;
   const st = document.createElement("style"); st.id = "pcui-zones-css"; st.textContent = css; document.head.appendChild(st);
 
   // ------------------------------------------------------------------ state

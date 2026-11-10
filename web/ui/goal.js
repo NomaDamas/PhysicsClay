@@ -16,7 +16,7 @@
 .goal-card[hidden] { display: none; }
 .goal-head { display: flex; align-items: center; gap: 10px; }
 .goal-head h3 { margin: 0; font-size: 15px; font-weight: 650; flex: 1; letter-spacing: -.01em; }
-.goal-head .goal-ico { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--accent);
+.goal-head .goal-ico { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--accent-ink);
   background: var(--accent-tint); flex: none; }
 .goal-btn { min-height: 44px; min-width: 44px; padding: 0 16px; border-radius: 999px; border: 1px solid var(--line2);
   background: var(--raised); color: var(--t1); font: 500 13.5px var(--sans); cursor: pointer; display: inline-flex;
@@ -25,8 +25,8 @@
 .goal-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .goal-btn:disabled { opacity: .45; cursor: default; }
 .goal-btn.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
-.goal-btn.primary:hover:not(:disabled) { background: var(--ink); }
-.goal-btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+.goal-btn.primary:hover:not(:disabled) { background: var(--inv-bg); color: var(--inv-fg); }
+.goal-btn.danger { color: var(--bad-ink); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
 .goal-btn.icon { padding: 0; border-color: transparent; background: transparent; }
 .goal-seg { display: flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--field); }
 .goal-seg button { flex: 1; min-height: 44px; border: 0; border-radius: 999px; background: transparent; color: var(--t2);
@@ -52,8 +52,8 @@
 .goal-row .grow { flex: 1; }
 .goal-label { color: var(--t2); font-size: 12px; }
 .goal-status { padding: 10px 12px; border-radius: 14px; background: var(--field); color: var(--t1); min-height: 20px; }
-.goal-status[data-s="failed"], .goal-status[data-s="stopped"] { background: color-mix(in srgb, var(--bad) 10%, transparent); color: var(--bad); }
-.goal-status[data-s="done"] { background: color-mix(in srgb, var(--ok) 11%, transparent); color: var(--ok); }
+.goal-status[data-s="failed"], .goal-status[data-s="stopped"] { background: var(--bad-tint); color: var(--bad-ink); }
+.goal-status[data-s="done"] { background: var(--ok-tint); color: var(--ok-ink); }
 .goal-status[data-s="running"], .goal-status[data-s="locating"] { background: var(--accent-tint); }
 .goal-status:empty { display: none; }
 .goal-steps { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
@@ -61,9 +61,9 @@
 .goal-steps li .n { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; flex: none;
   font: 600 11px var(--mono); border: 1.5px solid var(--line2); color: var(--t2); }
 .goal-steps li[data-s="running"] { background: var(--accent-tint); }
-.goal-steps li[data-s="running"] .n { border-color: var(--accent); color: var(--accent); }
-.goal-steps li[data-s="done"] .n { border-color: var(--ok); background: var(--ok); color: #fff; }
-.goal-steps li[data-s="failed"] .n { border-color: var(--bad); background: var(--bad); color: #fff; }
+.goal-steps li[data-s="running"] .n { border-color: var(--accent); color: var(--accent-ink); }
+.goal-steps li[data-s="done"] .n { border-color: var(--ok); background: var(--ok); color: var(--on-accent); }
+.goal-steps li[data-s="failed"] .n { border-color: var(--bad); background: var(--bad); color: var(--on-accent); }
 .goal-steps li .t { flex: 1; }
 .goal-steps li .e { color: var(--t2); font: 11px var(--mono); }
 .goal-foot { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -36,13 +36,13 @@
   font: 13px/1.4 var(--sans, system-ui); min-width: 0; }
 .tj-card[hidden], .tj-pop[hidden], .tj-prof[hidden] { display: none !important; }
 .tj-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.tj-ico { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--accent, #5c77df); background: var(--accent-tint, rgba(92,119,223,.12)); flex: none; }
+.tj-ico { width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center; color: var(--accent-ink); background: var(--accent-tint, rgba(92,119,223,.12)); flex: none; }
 .tj-title { flex: 1; min-width: 0; }
 .tj-title b { display: block; font-size: 15px; font-weight: 650; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tj-title span { color: var(--t2, rgba(29,29,31,.64)); font-size: 12px; }
-.tj-state { --c: var(--accent, #5c77df); font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; color: var(--c); white-space: nowrap;
+.tj-state { --c: var(--accent, #5c77df); --ci: var(--accent-ink); font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 999px; color: var(--ci); white-space: nowrap;
   background: color-mix(in srgb, var(--c) 12%, transparent); }
-.tj-state[data-s="blocked"] { --c: var(--bad, #d6453a); } .tj-state[data-s="ready"] { --c: var(--ok, #1f8f55); } .tj-state[data-s="running"] { --c: var(--hot, #f59145); }
+.tj-state[data-s="blocked"] { --c: var(--bad, #d6453a); --ci: var(--bad-ink); } .tj-state[data-s="ready"] { --c: var(--ok, #1f8f55); --ci: var(--ok-ink); } .tj-state[data-s="running"] { --c: var(--hot, #f59145); --ci: var(--hot-ink); }
 .tj-sum { margin: 0; color: var(--t2, rgba(29,29,31,.64)); }
 .tj-sum.bad { color: var(--bad-ink, #b3342b); background: color-mix(in srgb, var(--bad, #d6453a) 8%, transparent); padding: 8px 10px; border-radius: 12px; }
 .tj-strip { display: flex; gap: 6px; overflow-x: auto; padding: 2px; scrollbar-width: thin; min-width: 0; }
@@ -60,13 +60,13 @@
 .tj-btn:disabled { opacity: .45; cursor: default; }
 .tj-btn.primary { background: var(--accent, #5c77df); border-color: transparent; color: var(--on-accent, #fff); flex: 1; }
 .tj-btn.primary:hover:not(:disabled) { filter: brightness(1.06); background: var(--accent, #5c77df); }
-.tj-btn.danger { color: var(--bad, #d6453a); }
+.tj-btn.danger { color: var(--bad-ink, #b3342b); }
 .tj-btn.icon { padding: 0; width: 44px; }
 .tj-tip { margin: 0; color: var(--t2, rgba(29,29,31,.64)); font-size: 12px; }
 .tj-tip kbd { font: 600 11px var(--mono, monospace); padding: 1px 5px; border-radius: 5px; background: var(--field, #f5f5f7); border: 1px solid var(--line, rgba(29,29,31,.1)); }
 /* popover next to the selected point (stage overlay) */
 .tj-pop { position: absolute; z-index: 9; width: 316px; max-width: calc(100% - 20px); box-sizing: border-box; padding: 8px 12px 12px; border-radius: 18px;
-  background: rgba(255,255,255,.97); color: var(--t1, #1d1d1f); box-shadow: 0 2px 6px rgba(0,0,0,.06), 0 18px 40px rgba(40,30,90,.18);
+  background: var(--glass-strong); color: var(--t1, #1d1d1f); box-shadow: var(--shadow-lg);
   border: 1px solid var(--line, rgba(29,29,31,.1)); font: 12.5px/1.35 var(--sans, system-ui); display: flex; flex-direction: column; gap: 8px; }
 .tj-pop header { display: flex; align-items: center; gap: 6px; }
 .tj-pop header b { flex: 1; font-size: 13.5px; }
@@ -85,7 +85,7 @@
 .tj-pop footer { display: flex; gap: 6px; padding-top: 2px; }
 .tj-pop footer .tj-chip { flex: 1; height: 34px; border: 1px solid var(--line2, rgba(29,29,31,.16)); background: var(--raised, #fff); }
 .tj-pop footer .tj-chip:hover { background: var(--active, #f0f0f3); }
-.tj-pop footer .tj-chip.danger { color: var(--bad, #d6453a); }
+.tj-pop footer .tj-chip.danger { color: var(--bad-ink, #b3342b); }
 .tj-pop .tj-bad { color: var(--bad-ink, #b3342b); font-size: 12px; margin: 0; }
 /* 2D fallback: height profile for a stroke on the robot's view */
 .tj-prof { display: inline-flex; align-items: center; gap: 6px; font-size: var(--fs-xs, 12px); font-weight: 500; color: var(--t2, rgba(29,29,31,.64)); }
