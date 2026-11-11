@@ -501,7 +501,13 @@
   document.querySelectorAll(".lang button").forEach((b) => b.addEventListener("click", () => setLang(b.dataset.lang)));
 
   // ------------------------------------------------------------------ websocket (auto-reconnect, 1 s -> 5 s backoff)
-  function wsUrl() { return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`; }
+  if (new URLSearchParams(location.search).get("t")) {               // reached through the phone domain: only this page
+    document.querySelectorAll(".applink").forEach((a) => { a.hidden = true; });
+  }
+  function wsUrl() {
+    const t = new URLSearchParams(location.search).get("t");          // pairing code from the QR (phone domain)
+    return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws${t ? "?t=" + encodeURIComponent(t) : ""}`;
+  }
   function connect() {
     clearTimeout(S.retryTimer); S.retryTimer = 0;
     if (S.ws) return;

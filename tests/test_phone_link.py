@@ -29,3 +29,8 @@ def test_lan_ip_already_on_https_keeps_the_origin():
 
 def test_no_https_means_no_link():
     assert phone_link("localhost:8780", "http", None)["url"] is None
+
+
+def test_own_phone_domain_with_pairing_code():
+    r = phone_link("localhost:8780", "http", 8781, phone_host="cam.example.com", token="abc")
+    assert r == {"url": "https://cam.example.com/phone?t=abc", "lan": False, "self_signed": False}

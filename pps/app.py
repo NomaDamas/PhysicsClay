@@ -16,6 +16,7 @@ import copy
 import asyncio
 import json
 import re
+import secrets
 import socket
 import ssl
 import subprocess
@@ -109,14 +110,46 @@ class Shared:
 
 
 # ------------------------------------------------------------------ server
+PHONE_PATHS = ("/phone", "/ws")       # all a phone needs; everything else stays local
+
+
+def via_phone_host(request):
+    """True when a request reached this (local) server through the phone domain (PC_PHONE_HOST, e.g. a Cloudflare
+    tunnel hostname). Those requests may only open /phone and stream a camera, with the pairing code from the QR."""
+    host = request.app.get("phone_host")
+    if not host:
+        return False
+    seen = (request.headers.get("X-Forwarded-Host") or request.host or "").split(":")[0].lower()
+    return seen == host or "Cf-Connecting-Ip" in request.headers
+
+
+@web.middleware
+async def phone_gate(request, handler):
+    if via_phone_host(request):
+        if request.path not in PHONE_PATHS:
+            raise web.HTTPForbidden(text="Only the phone camera page is available here.")
+        if not secrets.compare_digest(request.query.get("t", ""), request.app["pair_token"]):
+            raise web.HTTPForbidden(text="This camera link has expired. Scan the QR code on the computer again.")
+    return await handler(request)
+
+
 async def ws_handler(request):
     ws = web.WebSocketResponse(max_msg_size=0, heartbeat=20)
     await ws.prepare(request)
     shared = request.app["shared"]
     shared.clients.add(ws)
     mobile = bool(re.search(r"Android|iPhone|iPad|iPod|Mobile", request.headers.get("User-Agent", "")))
+    camera_only = via_phone_host(request)        # through the phone domain: camera frames in, nothing else
     try:
         async for msg in ws:
+            if msg.type == WSMsgType.TEXT and camera_only:
+                try:
+                    c = json.loads(msg.data)
+                except ValueError:
+                    continue
+                if isinstance(c, dict) and c.get("type") in ("hello", "streams") and "streams" in c:
+                    shared.want(ws, [])                  # no robot pictures over the internet; state frames only
+                continue
             if msg.type == WSMsgType.TEXT:
                 try:
                     c = json.loads(msg.data)
@@ -426,7 +459,7 @@ async def phone_page(request):
     return web.FileResponse(WEB / "phone.html", headers={"Cache-Control": "no-store"})
 
 
-def phone_link(host, proto, https_port, public_url="", ip=None):
+def phone_link(host, proto, https_port, public_url="", ip=None, phone_host=None, token=None):
     """The address a phone should open to stream its camera to this server (it needs https), and how it gets there.
 
     host/proto: how this page was reached (Host / X-Forwarded-Host, scheme / X-Forwarded-Proto: a tunnel or proxy such
@@ -435,6 +468,8 @@ def phone_link(host, proto, https_port, public_url="", ip=None):
       a proper certificate when it's a domain);
     * otherwise the computer's LAN address on the https port (same Wi-Fi, self-signed certificate);
     * no https at all: url None (phones can't share a camera over plain http)."""
+    if phone_host and token:                  # this server has its own phone domain (a tunnel with a real certificate)
+        return {"url": f"https://{phone_host}/phone?t={token}", "lan": False, "self_signed": False}
     if public_url:
         return {"url": public_url.rstrip("/") + "/phone", "lan": False, "self_signed": False}
     name = (host or "").rsplit(":", 1)[0] if not (host or "").startswith("[") else host.split("]")[0] + "]"
@@ -453,7 +488,8 @@ async def phone_info(request):
     a = request.app
     host = request.headers.get("X-Forwarded-Host") or request.host
     proto = (request.headers.get("X-Forwarded-Proto") or request.scheme or "http").split(",")[0].strip()
-    link = phone_link(host, proto, a["https_port"], os.environ.get("PC_PUBLIC_URL", ""))
+    link = phone_link(host, proto, a["https_port"], os.environ.get("PC_PUBLIC_URL", ""), phone_host=a.get("phone_host"),
+                      token=a.get("pair_token"))
     return web.json_response({"ip": lan_ip(), "port": a["http_port"], "https_port": a["https_port"] or None, **link})
 
 
@@ -498,8 +534,10 @@ def ensure_cert():
 
 def run_server(shared, port, https_port):
     async def main():
-        app = web.Application(client_max_size=320 * (1 << 20))
+        app = web.Application(client_max_size=320 * (1 << 20), middlewares=[phone_gate])
         app["shared"] = shared
+        app["phone_host"] = (os.environ.get("PC_PHONE_HOST") or "").strip().lower() or None
+        app["pair_token"] = secrets.token_urlsafe(18)    # new every start: a scanned QR stops working after a restart
         app.router.add_get("/", index)
         app.router.add_get("/ws", ws_handler)
         app.router.add_post("/upload", upload)
