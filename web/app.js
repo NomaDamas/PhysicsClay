@@ -1564,9 +1564,15 @@
     const dlg = $("phoneDlg"), qr = $("phoneQr");
     if (typeof dlg.showModal === "function") dlg.showModal(); else dlg.setAttribute("open", "");
     try { const r = await fetch("/phone/info", { cache: "no-store" }); phoneInfo = r.ok ? await r.json() : null; } catch (e) { phoneInfo = null; }
-    // a server reached over its LAN address already knows the right host; prefer the address bar's host then
-    const host = /^(localhost|127\.|\[?::1)/.test(location.hostname) ? phoneInfo && phoneInfo.ip : location.hostname;
-    const url = phoneInfo && phoneInfo.https_port ? `https://${host}:${phoneInfo.https_port}/phone` : null;
+    // the server knows how this page was reached (a domain or tunnel over https, the LAN, localhost) and answers with
+    // the address a phone can actually open; an old server without that field: the LAN address on the https port
+    let url = phoneInfo && "url" in phoneInfo ? phoneInfo.url : null;
+    if (!url && phoneInfo && phoneInfo.https_port && !("url" in phoneInfo)) {
+      const host = /^(localhost|127\.|\[?::1)/.test(location.hostname) ? phoneInfo.ip : location.hostname;
+      url = `https://${host}:${phoneInfo.https_port}/phone`;
+    }
+    $("phoneStepWifi").hidden = !!(phoneInfo && phoneInfo.lan === false);           // a public address works from anywhere
+    $("phoneStepCert").hidden = !!(phoneInfo && phoneInfo.self_signed === false);   // a real certificate: no warning
     $("phoneNoHttps").hidden = !!url || !phoneInfo; qr.hidden = !url;
     const a = $("phoneUrl"); a.textContent = url || (phoneInfo ? "https is off on this server" : "couldn't reach the server"); a.href = url || "#";
     $("phoneCopy").hidden = !url;

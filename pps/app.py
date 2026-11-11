@@ -426,11 +426,35 @@ async def phone_page(request):
     return web.FileResponse(WEB / "phone.html", headers={"Cache-Control": "no-store"})
 
 
+def phone_link(host, proto, https_port, public_url="", ip=None):
+    """The address a phone should open to stream its camera to this server (it needs https), and how it gets there.
+
+    host/proto: how this page was reached (Host / X-Forwarded-Host, scheme / X-Forwarded-Proto: a tunnel or proxy such
+    as the public deployment terminates https in front of us). Returns {url, lan, self_signed}:
+    * PC_PUBLIC_URL set, or the page already came over https on a real name: that same origin (works from anywhere,
+      a proper certificate when it's a domain);
+    * otherwise the computer's LAN address on the https port (same Wi-Fi, self-signed certificate);
+    * no https at all: url None (phones can't share a camera over plain http)."""
+    if public_url:
+        return {"url": public_url.rstrip("/") + "/phone", "lan": False, "self_signed": False}
+    name = (host or "").rsplit(":", 1)[0] if not (host or "").startswith("[") else host.split("]")[0] + "]"
+    local = name in ("localhost", "127.0.0.1", "[::1]", "::1", "")
+    is_ip = all(part.isdigit() for part in name.split(".")) and name.count(".") == 3
+    if proto == "https" and not local:
+        return {"url": f"https://{host}/phone", "lan": is_ip, "self_signed": is_ip}
+    if not https_port:
+        return {"url": None, "lan": True, "self_signed": True}
+    target = name if (is_ip and not local) else (ip or lan_ip())
+    return {"url": f"https://{target}:{https_port}/phone", "lan": True, "self_signed": True}
+
+
 async def phone_info(request):
     """Where a phone should open /phone (the laptop shows it as a QR code). Phones only share a camera over https."""
     a = request.app
-    return web.json_response({"ip": lan_ip(), "port": a["http_port"], "https_port": a["https_port"] or None,
-                              "url": f"https://{lan_ip()}:{a['https_port']}/phone" if a["https_port"] else None})
+    host = request.headers.get("X-Forwarded-Host") or request.host
+    proto = (request.headers.get("X-Forwarded-Proto") or request.scheme or "http").split(",")[0].strip()
+    link = phone_link(host, proto, a["https_port"], os.environ.get("PC_PUBLIC_URL", ""))
+    return web.json_response({"ip": lan_ip(), "port": a["http_port"], "https_port": a["https_port"] or None, **link})
 
 
 def cam_in_state(shared, now=None):
