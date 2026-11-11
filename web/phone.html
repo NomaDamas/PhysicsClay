@@ -732,7 +732,8 @@
       if (!r.ok) return;
       const j = await r.json();
       const port = j && Number(j.https_port);
-      if (port > 0 && port < 65536) S.httpsUrl = `https://${location.hostname}:${port}/phone`;
+      if (j && j.url) S.httpsUrl = j.url;                   // the server's own answer (domain, tunnel or LAN)
+      else if (port > 0 && port < 65536) S.httpsUrl = `https://${location.hostname}:${port}/phone`;
       else if (j && "https_port" in j) S.noHttps = true;
     } catch (e) { /* an older server without /phone/info: keep the generic hint */ }
     render();
