@@ -797,6 +797,7 @@ def worker(args, shared):
         sim_jpg_last[0] = jpg
         return jpg
     video_job = None   # {"name", "frames", "i", "prev_cap", "prev_dt", "prev_source", "prev_view"}
+    last_phone_t, last_phone = None, None   # newest phone frame already put through decode + pose (once per frame)
     grip_hist = {"l": [], "r": []}
     t_start, n, fps, t_fps, next_frame_t = time.time(), 0, 0.0, time.time(), time.time()
     t_phys = t_put = time.time()
@@ -835,15 +836,19 @@ def worker(args, shared):
         # ---------------- your camera (a phone/browser camera wins while it streams)
         phone = shared.phone if (shared.phone and time.time() - shared.phone[0] < 1.0 and video_job is None) else None
         if phone is not None:
-            frame = cv2.imdecode(np.frombuffer(phone[1], np.uint8), cv2.IMREAD_COLOR)
-            if frame is None:
-                continue
-            frame = cv2.resize(frame, (W, H))
-            if pose is None:
-                pose = Pose(str(ROOT / args.model))
-            pts, lm = pose(frame)
+            if phone[0] == last_phone_t and last_phone is not None:
+                frame, pts, lm = last_phone              # no new camera frame yet: don't redo the 40 ms pose pass
+                time.sleep(0.004)
+            else:
+                frame = cv2.imdecode(np.frombuffer(phone[1], np.uint8), cv2.IMREAD_COLOR)
+                if frame is None:
+                    continue
+                frame = cv2.resize(frame, (W, H))
+                if pose is None:
+                    pose = Pose(str(ROOT / args.model))
+                pts, lm = pose(frame)
+                last_phone_t, last_phone = phone[0], (frame, pts, lm)
             source = "phone"
-            time.sleep(0.02)
         elif cap is not None:
             if args.video:
                 now = time.time()

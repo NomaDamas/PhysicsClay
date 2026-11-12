@@ -301,9 +301,9 @@
 
   // ------------------------------------------------------------------ constants
   const FPS = 15;                     // target send rate
-  const OUT_W = 640, OUT_H = 360;     // the server resizes every frame to 16:9 without keeping aspect: pillarbox here
-  const JPEG_Q = 0.6;
-  const MAX_BUFFERED = 300000;        // backpressure: skip a frame while this much is still queued on the socket
+  const OUT_W = 480, OUT_H = 270;     // the server resizes every frame to 16:9 without keeping aspect: pillarbox here; pose needs no more
+  const JPEG_Q = 0.55;
+  const MAX_BUFFERED = 100000;        // backpressure: skip a frame while this much is still queued (bounds the lag on a slow link)
   const STATE_FRESH_MS = 3000;        // a server state older than this is not used for the status
   const WS_SILENT_MS = 6000;          // no message at all for this long -> the socket is dead, reconnect
   const UNREACHABLE_MS = 10000;       // without a connection for this long -> "Can't reach PhysicsClay"
@@ -596,7 +596,7 @@
     let st;
     try {
       st = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: S.facing, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false,
+        video: { facingMode: S.facing, width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 30 } }, audio: false,
       });
     } catch (e) {
       if (gen !== S.gen) return;
@@ -644,7 +644,7 @@
     return f === "user";
   }
 
-  // one frame: video -> 640x360 canvas (pillarboxed, aspect kept) -> JPEG -> [0x10][JPEG] on the socket
+  // one frame: video -> 480x270 canvas (pillarboxed, aspect kept) -> JPEG -> [0x10][JPEG] on the socket
   function tick() {
     const now = performance.now();
     if (!S.stream || document.hidden) return;
